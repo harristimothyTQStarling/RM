@@ -1,0 +1,16 @@
+{
+  "name": "tqs-resource-planner-api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "API for the TQStarling Resource Planner. Azure SQL stores the plan; Odoo is read-only.",
+  "main": "index.js",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test test/store.test.js",
+    "dev": "node src/server.js"
+  },
+  "dependencies": {
+    "@azure/functions": "^4.5.0",
+    "mssql": "^11.0.1"
+  }
+}

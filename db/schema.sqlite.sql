@@ -1,0 +1,67 @@
+-- TQStarling Resource Planner — local dev schema (SQLite).
+-- Mirrors db/schema.sql exactly in shape and semantics so the SAME handler code
+-- and the SAME concurrency logic run locally and on Azure SQL. Only the dialect
+-- differs (INTEGER PRIMARY KEY vs IDENTITY, TEXT dates vs DATE/DATETIME2).
+
+CREATE TABLE IF NOT EXISTS Allocation (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  scenario     TEXT NOT NULL DEFAULT 'baseline',
+  resource_key TEXT NOT NULL,            -- 'emp:110' | 'tbh:resource-3'
+  target_key   TEXT NOT NULL,            -- 'prj:119' | 'crm:222'
+  month        TEXT NOT NULL,            -- 'YYYY-MM-01'
+  hours        REAL NOT NULL CHECK (hours >= 0),
+  updated_by   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL,
+  version      INTEGER NOT NULL DEFAULT 1,
+  UNIQUE (scenario, resource_key, target_key, month)
+);
+CREATE INDEX IF NOT EXISTS IX_Allocation_scenario_month ON Allocation (scenario, month);
+
+CREATE TABLE IF NOT EXISTS CapacityOverride (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  scenario        TEXT NOT NULL DEFAULT 'baseline',
+  resource_key    TEXT NOT NULL,
+  hours_per_month REAL NOT NULL CHECK (hours_per_month >= 0),
+  updated_by      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL,
+  version         INTEGER NOT NULL DEFAULT 1,
+  UNIQUE (scenario, resource_key)
+);
+
+CREATE TABLE IF NOT EXISTS Tbh (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  scenario    TEXT NOT NULL DEFAULT 'baseline',
+  tbh_key     TEXT NOT NULL,
+  name        TEXT NOT NULL,
+  role        TEXT NOT NULL DEFAULT '',
+  dept        TEXT NOT NULL DEFAULT '',
+  start_month TEXT,
+  capacity    REAL,
+  updated_by  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL,
+  version     INTEGER NOT NULL DEFAULT 1,
+  UNIQUE (scenario, tbh_key)
+);
+
+CREATE TABLE IF NOT EXISTS ImportMap (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  scenario    TEXT NOT NULL DEFAULT 'baseline',
+  kind        TEXT NOT NULL CHECK (kind IN ('person','project')),
+  source_name TEXT NOT NULL,
+  target_key  TEXT NOT NULL,
+  updated_by  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL,
+  UNIQUE (scenario, kind, source_name)
+);
+
+CREATE TABLE IF NOT EXISTS AuditLog (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  at         TEXT NOT NULL,
+  actor      TEXT NOT NULL,
+  entity     TEXT NOT NULL,
+  entity_key TEXT NOT NULL,
+  action     TEXT NOT NULL,
+  old_value  TEXT,
+  new_value  TEXT
+);
+CREATE INDEX IF NOT EXISTS IX_AuditLog_at ON AuditLog (at DESC);

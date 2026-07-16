@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json.schemastore.org/staticwebapp.config.json",
+
+  "// auth": [
+    "Entra ID sign-in. Replace <TENANT_ID> with your tenant GUID.",
+    "AAD_CLIENT_ID / AAD_CLIENT_SECRET are app settings you set after creating the",
+    "app registration — they are never committed.",
+    "Planner.Editor / Planner.Viewer are App Roles on that registration; Entra puts",
+    "them in the token and SWA surfaces them as userRoles to the API."
+  ],
+  "auth": {
+    "identityProviders": {
+      "azureActiveDirectory": {
+        "registration": {
+          "openIdIssuer": "https://login.microsoftonline.com/<TENANT_ID>/v2.0",
+          "clientIdSettingName": "AAD_CLIENT_ID",
+          "clientSecretSettingName": "AAD_CLIENT_SECRET"
+        },
+        "login": { "loginParameters": ["domain_hint=tqstarling.com"] }
+      }
+    }
+  },
+
+  "// routes": [
+    "Everything requires sign-in — this is an internal tool with staff names and",
+    "rates on it. Write enforcement is NOT done here: the API checks Planner.Editor",
+    "itself, so a route misconfiguration cannot grant write access."
+  ],
+  "routes": [
+    { "route": "/.auth/login/github", "statusCode": 404 },
+    { "route": "/api/*", "allowedRoles": ["authenticated"] },
+    { "route": "/*", "allowedRoles": ["authenticated"] }
+  ],
+
+  "responseOverrides": {
+    "401": { "redirect": "/.auth/login/aad", "statusCode": 302 }
+  },
+
+  "navigationFallback": {
+    "rewrite": "/index.html",
+    "exclude": ["/api/*", "/*.{css,js,ico,png,svg}"]
+  },
+
+  "globalHeaders": {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Cache-Control": "no-store"
+  }
+}

@@ -1,0 +1,10 @@
+node_modules/
+*.db
+*.db-wal
+*.db-shm
+.dev.db*
+local.settings.json
+.env
+.azure/
+dist/
+*.log
