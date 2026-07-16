@@ -76,8 +76,11 @@ misconfigured deploy cannot fall open.
 ### Tests
 
 ```bash
-node --test api/test/store.test.js
+cd api && npm test          # or: node --test "api/test/*.test.js"
 ```
+
+(Pass the glob, not the directory — `node --test api/test/` misreads it as a
+module path and reports a spurious failure.)
 
 Covers the things that actually matter for multi-user: a stale write is **rejected
 rather than silently clobbering** a colleague, batch imports are **atomic**, viewers

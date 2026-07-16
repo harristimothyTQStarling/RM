@@ -6,7 +6,7 @@
   "main": "index.js",
   "engines": { "node": ">=20" },
   "scripts": {
-    "test": "node --test test/store.test.js",
+    "test": "node --test \"test/*.test.js\"",
     "dev": "node src/server.js"
   },
   "dependencies": {
