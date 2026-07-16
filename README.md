@@ -39,6 +39,25 @@ access plus a schema change).
 | SQL Basic, **not** serverless | Auto-pause means a 30–60s cold start. An interactive planner that hangs on first load feels broken. Basic never sleeps and costs less. |
 | Managed Identity for SQL | No database password exists anywhere. The Odoo service account is the entire secret footprint. |
 | No CData in the app | CData is a BI/query gateway — an extra hop and likely per-seat licensing. The API talks to Odoo directly. |
+| `EDITOR_UPNS` allowlist alongside App Roles | With a single editor, App Roles mean defining roles and assigning users in Entra for no benefit. An allowlist is one app setting. The role path still works, so growing to several editors needs no code change. |
+
+## Who can do what
+
+**One editor; everyone else in the tenant is read-only.**
+
+Write access is granted by *either*:
+
+- **`EDITOR_UPNS`** app setting — `tim@tqstarling.com`. Changing it takes effect
+  immediately, no redeploy. This is the simple path while it's just you.
+- **`Planner.Editor`** App Role — the path once several people edit.
+
+Anyone signed in can read. Nobody signed out can do anything. An empty allowlist
+denies rather than falling open, and `DEV_USER` impersonation is inert in Azure —
+both are covered by tests, because "accidentally world-writable" is the one bug
+that must never ship.
+
+Concurrency control is kept even with a single editor: you *will* eventually have
+the planner open in two tabs, and it costs nothing.
 
 ---
 
@@ -78,6 +97,7 @@ az group create -n rg-tqs-planner -l eastus
 # 2. infrastructure  (sqlAdminSid = object id of the Entra group/user that owns SQL)
 az deployment group create -g rg-tqs-planner -f infra/main.bicep \
    -p sqlAdminLogin="TQS Planner Admins" sqlAdminSid="<object-id>" \
+      editorUpns="tim@tqstarling.com" \
       odooUrl="https://<your>.odoo.com" odooDb="<db>" odooUser="svc_planner_ro"
 
 # 3. schema
@@ -92,13 +112,17 @@ az keyvault secret set --vault-name <keyVaultName> -n odoo-password --value "<pa
 
 ### Entra app registration
 
-1. Register an app; add **App Roles**: `Planner.Editor`, `Planner.Viewer`.
-2. Redirect URI: `https://<site>/.auth/login/aad/callback`.
-3. Put `<TENANT_ID>` into `web/staticwebapp.config.json`.
-4. Add `AAD_CLIENT_ID` / `AAD_CLIENT_SECRET` as Static Web App settings.
-5. Assign people to roles (Editor for delivery leads; everyone else reads).
+1. Register an app. Redirect URI: `https://<site>/.auth/login/aad/callback`.
+2. Put `<TENANT_ID>` into `web/staticwebapp.config.json`.
+3. Add `AAD_CLIENT_ID` / `AAD_CLIENT_SECRET` as Static Web App settings.
 
-Admin consent is required — you'll need to approve it as tenant admin.
+That's it while you're the only editor — `EDITOR_UPNS` handles write access, so
+there are **no App Roles to define and nobody to assign**. Admin consent is still
+required for sign-in; you approve it as tenant admin.
+
+**Later, to add editors:** either append to `EDITOR_UPNS` (instant, no redeploy),
+or add a `Planner.Editor` App Role and assign people to it — the API already
+honours both.
 
 ---
 

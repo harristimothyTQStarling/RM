@@ -35,6 +35,9 @@ param odooDb string = ''
 @description('Odoo service-account username (read-only).')
 param odooUser string = ''
 
+@description('Comma-separated UPNs allowed to EDIT the plan. Everyone else who signs in is read-only. Leave empty to rely solely on the Planner.Editor app role.')
+param editorUpns string = ''
+
 var suffix = uniqueString(resourceGroup().id)
 var sqlServerName = '${name}-sql-${suffix}'
 var dbName = '${name}-db'
@@ -126,6 +129,7 @@ resource swaSettings 'Microsoft.Web/staticSites/config@2023-12-01' = {
     DB_DRIVER: 'mssql'
     DB_SERVER: '${sqlServerName}${environment().suffixes.sqlServerHostname}'
     DB_NAME: dbName
+    EDITOR_UPNS: editorUpns
     ODOO_URL: odooUrl
     ODOO_DB: odooDb
     ODOO_USER: odooUser

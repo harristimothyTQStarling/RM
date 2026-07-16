@@ -6,9 +6,15 @@
  * a base64 JSON `x-ms-client-principal` header. We never parse tokens ourselves
  * and never see a credential.
  *
- * Roles come from the Entra app registration:
- *   Planner.Editor -> may write
- *   Planner.Viewer -> read only (also the default for anyone in the tenant)
+ * Two ways to grant write access — either is sufficient:
+ *
+ *   1. EDITOR_UPNS  — comma-separated allowlist, e.g. "tim@tqstarling.com".
+ *      Simplest path while there is a single editor: one app setting, no App
+ *      Roles to define and nobody to assign in Entra.
+ *   2. Planner.Editor App Role — the scalable path once several people edit.
+ *
+ * Everyone else who signs in is read-only. Note there is no "deny" list: if the
+ * allowlist is empty AND no role is present, the answer is simply no.
  *
  * Local dev: set DEV_USER / DEV_ROLES to impersonate. Guarded so it can only
  * ever work outside Azure — a misconfigured deploy must not fall open.
@@ -39,6 +45,18 @@ function getUser(headers = {}) {
   return null;
 }
 
-const canEdit = (user) => !!user && user.roles.includes(ROLE_EDITOR);
+/** Allowlisted UPNs, lower-cased. Read per call so changing the app setting takes
+ *  effect without a redeploy. */
+function editorUpns() {
+  return (process.env.EDITOR_UPNS || "")
+    .split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
+}
 
-module.exports = { getUser, canEdit, ROLE_EDITOR };
+function canEdit(user) {
+  if (!user) return false;
+  if (user.roles.includes(ROLE_EDITOR)) return true;              // App Role path
+  const upn = (user.upn || "").toLowerCase();
+  return !!upn && editorUpns().includes(upn);                     // allowlist path
+}
+
+module.exports = { getUser, canEdit, editorUpns, ROLE_EDITOR };
