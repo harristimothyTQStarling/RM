@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "//": "Copy to main.parameters.json and fill in. Deploy with:  az deployment group create -g rg-tqs-planner -f infra/main.bicep -p @infra/main.parameters.json",
+  "parameters": {
+    "sqlAdminLogin": { "value": "<your-upn-or-entra-group-name>" },
+    "sqlAdminSid":   { "value": "<object-id from: az ad signed-in-user show --query id -o tsv>" },
+    "editorUpns":    { "value": "<your-upn>" },
+    "odooUrl":       { "value": "https://<your>.odoo.com" },
+    "odooDb":        { "value": "<odoo-db-name>" },
+    "odooUser":      { "value": "<odoo-read-only-username>" }
+  }
+}

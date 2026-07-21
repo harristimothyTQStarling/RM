@@ -8,3 +8,6 @@ local.settings.json
 .azure/
 dist/
 *.log
+
+# real parameter/config files (may hold environment values)
+infra/main.parameters.json
