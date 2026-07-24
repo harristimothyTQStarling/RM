@@ -9,13 +9,17 @@
  *
  *   cd C:\Users\timha\tqs-resource-planner
  *   ODOO_URL=https://tq-starling.odoo.com ODOO_DB=tq-starling \
- *   ODOO_USER=<service-account> ODOO_PASSWORD=<password> \
+ *   ODOO_USER= ODOO_PASSWORD= \
  *   node scripts/verify-odoo.js
  *
  * On Windows PowerShell:
  *   $env:ODOO_URL="https://tq-starling.odoo.com"; $env:ODOO_DB="tq-starling"
- *   $env:ODOO_USER="<service-account>"; $env:ODOO_PASSWORD="<password>"
+ *   $env:ODOO_USER="<service-account-login>"; $env:ODOO_PASSWORD="<password>"
  *   node scripts/verify-odoo.js
+ *
+ * NEVER put real credentials in this file — it is committed to git. Set them as
+ * environment variables in your shell session (above) or in .env, which is
+ * gitignored.
  *
  * Everything it calls is read-only (search_read / fields_get). It cannot modify Odoo.
  */
