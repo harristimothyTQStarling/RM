@@ -106,15 +106,15 @@ CREATE TABLE IF NOT EXISTS ref_person (
   role      VARCHAR(128) NOT NULL DEFAULT '',
   dept      VARCHAR(128) NOT NULL DEFAULT '',
   type      VARCHAR(16)  NOT NULL DEFAULT 'employee',   -- employee | contractor
-  active    BOOLEAN      NOT NULL DEFAULT true
+  active    SMALLINT     NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS ref_project (
   id        INT PRIMARY KEY,                     -- odoo project_project.id
   name      VARCHAR(256) NOT NULL,
   client    VARCHAR(256) NOT NULL DEFAULT '',
-  billable  BOOLEAN      NOT NULL DEFAULT true,
-  active    BOOLEAN      NOT NULL DEFAULT true
+  billable  SMALLINT     NOT NULL DEFAULT 1,
+  active    SMALLINT     NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS ref_opportunity (
@@ -122,7 +122,7 @@ CREATE TABLE IF NOT EXISTS ref_opportunity (
   name      VARCHAR(256) NOT NULL,
   client    VARCHAR(256) NOT NULL DEFAULT '',
   stage     VARCHAR(64)  NOT NULL DEFAULT '',
-  active    BOOLEAN      NOT NULL DEFAULT true   -- false once Won/Lost
+  active    SMALLINT     NOT NULL DEFAULT 1   -- false once Won/Lost
 );
 
 -- Actual timesheet hours for closed months, by person/project/month.
@@ -138,6 +138,6 @@ CREATE TABLE IF NOT EXISTS sync_state (
   source     VARCHAR(32) PRIMARY KEY,            -- people | projects | opportunities | actuals
   synced_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   row_count  INT         NOT NULL DEFAULT 0,
-  ok         BOOLEAN     NOT NULL DEFAULT true,
+  ok         SMALLINT    NOT NULL DEFAULT 1,
   message    TEXT
 );

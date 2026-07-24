@@ -184,7 +184,10 @@ async function replaceAll(db, table, rows, columns) {
   await db.tx(async () => {
     await db.run(`DELETE FROM ${table}`);
     for (const r of rows) {
-      const vals = columns.map((c) => r[c]);
+      // booleans are stored as SMALLINT 0/1 in both schemas — node:sqlite won't
+      // bind a JS boolean, and Postgres won't accept 1 for a BOOLEAN column, so
+      // one integer representation keeps a single code path working on both.
+      const vals = columns.map((c) => { const v = r[c]; return typeof v === "boolean" ? (v ? 1 : 0) : v; });
       await db.run(
         `INSERT INTO ${table} (${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`,
         vals
@@ -203,15 +206,22 @@ async function replaceAll(db, table, rows, columns) {
 async function syncAll(db, odoo, { actualsFrom, actualsTo } = {}) {
   const out = {};
   await odoo.login();
-  out.ref_person = await replaceAll(db, "ref_person", await readPeople(odoo),
-    ["id", "name", "role", "dept", "type", "active"]);
-  out.ref_project = await replaceAll(db, "ref_project", await readProjects(odoo),
-    ["id", "name", "client", "billable", "active"]);
-  out.ref_opportunity = await replaceAll(db, "ref_opportunity", await readOpportunities(odoo),
-    ["id", "name", "client", "stage", "active"]);
+  const people = await readPeople(odoo);
+  const projects = await readProjects(odoo);
+  const opps = await readOpportunities(odoo);
+  out.ref_person = await replaceAll(db, "ref_person", people, ["id", "name", "role", "dept", "type", "active"]);
+  out.ref_project = await replaceAll(db, "ref_project", projects, ["id", "name", "client", "billable", "active"]);
+  out.ref_opportunity = await replaceAll(db, "ref_opportunity", opps, ["id", "name", "client", "stage", "active"]);
   if (actualsFrom && actualsTo) {
-    out.ref_actual = await replaceAll(db, "ref_actual", await readActuals(odoo, actualsFrom, actualsTo),
-      ["employee_id", "project_id", "month", "hours"]);
+    // Keep only actuals for people/projects we actually show. Odoo returns
+    // timesheet lines for everyone (incl. "Internal" admin time and non-delivery
+    // staff); storing those would bloat ref_actual and inflate any totals with
+    // rows nothing renders. Scope to the synced roster + project list.
+    const personIds = new Set(people.map((p) => p.id));
+    const projectIds = new Set(projects.map((p) => p.id));
+    const actuals = (await readActuals(odoo, actualsFrom, actualsTo))
+      .filter((a) => personIds.has(a.employee_id) && projectIds.has(a.project_id));
+    out.ref_actual = await replaceAll(db, "ref_actual", actuals, ["employee_id", "project_id", "month", "hours"]);
   }
   return out;
 }
