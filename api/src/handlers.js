@@ -27,6 +27,14 @@ async function handle(db, req) {
   if (method === "GET" && path === "/api/plan") {
     return json(200, await store.getPlan(db, scenario));
   }
+  if (method === "GET" && path === "/api/reference") {
+    return json(200, await store.getReference(db));
+  }
+  if (method === "GET" && path === "/api/bootstrap") {
+    // One round-trip for page load: identity + reference + plan.
+    const [reference, plan] = await Promise.all([store.getReference(db), store.getPlan(db, scenario)]);
+    return json(200, { me: { upn: user.upn, name: user.name, canEdit: canEdit(user) }, reference, plan });
+  }
   if (method === "GET" && path === "/api/audit") {
     const rows = await db.all("SELECT at, actor, entity, entity_key, action, old_value, new_value FROM AuditLog ORDER BY at DESC, id DESC LIMIT 200");
     return json(200, { entries: rows });
@@ -61,6 +69,19 @@ async function handle(db, req) {
     if (method === "PUT" && path === "/api/importmap") {
       if (!body.kind || !body.sourceName) return json(400, { error: "kind and sourceName required" });
       return json(200, await store.putImportMap(db, user, { ...body, scenario }));
+    }
+    if (method === "POST" && path === "/api/sync") {
+      // Refresh the Odoo reference cache on demand. Read-only against Odoo.
+      const { Odoo, syncAll } = require("./odoo");
+      const odoo = new Odoo();
+      if (!odoo.configured) return json(503, { error: "Odoo is not configured (ODOO_URL / ODOO_DB / ODOO_USER / ODOO_PASSWORD)" });
+      const year = new Date().getUTCFullYear();
+      try {
+        const counts = await syncAll(db, odoo, { actualsFrom: `${year}-01-01`, actualsTo: `${year}-12-31` });
+        return json(200, { ok: true, counts });
+      } catch (e) {
+        return json(502, { error: `Odoo sync failed: ${e.message}` });
+      }
     }
   } catch (e) {
     if (e && e.code === "conflict") {

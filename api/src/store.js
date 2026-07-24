@@ -45,6 +45,35 @@ async function getPlan(db, scenario = "baseline") {
   };
 }
 
+/* ------------------------------------------------------- reference (Odoo) -- */
+/**
+ * The Odoo-derived reference data the UI renders against: who exists, what they
+ * can be staffed on, and what actually happened in closed months.
+ *
+ * Actuals are returned SEPARATELY from allocations and are never written to the
+ * plan tables. Past months are a fact from Odoo, not something anyone forecasts —
+ * keeping them apart is what stops the plan being polluted with history.
+ */
+async function getReference(db) {
+  const [people, projects, opportunities, actuals, sync] = await Promise.all([
+    db.all("SELECT id, name, role, dept, type FROM ref_person WHERE active = 1 ORDER BY name"),
+    db.all("SELECT id, name, client, billable FROM ref_project WHERE active = 1 ORDER BY name"),
+    db.all("SELECT id, name, client, stage FROM ref_opportunity WHERE active = 1 ORDER BY name"),
+    db.all("SELECT employee_id, project_id, month, hours FROM ref_actual"),
+    db.all("SELECT source, synced_at, row_count, ok, message FROM sync_state"),
+  ]);
+  return {
+    people: people.map(p => ({ id: p.id, name: p.name, role: p.role || "", dept: p.dept || "", type: p.type })),
+    projects: projects.map(p => ({ id: p.id, name: p.name, client: p.client || "", billable: !!p.billable })),
+    opportunities: opportunities.map(o => ({ id: o.id, name: o.name, client: o.client || "", stage: o.stage || "" })),
+    actuals: actuals.map(a => ({
+      employeeId: a.employee_id, projectId: a.project_id,
+      month: String(a.month).slice(0, 7), hours: Number(a.hours),
+    })),
+    sync: sync.map(s => ({ source: s.source, at: String(s.synced_at), rows: s.row_count, ok: !!s.ok, message: s.message })),
+  };
+}
+
 /* -------------------------------------------------------- write allocation -- */
 /** hours === 0 deletes the row: an empty cell and a 0h cell are the same thing. */
 async function putAllocation(db, user, a) {
@@ -174,4 +203,4 @@ async function putImportMap(db, user, m) {
   return { ok: true };
 }
 
-module.exports = { getPlan, putAllocation, putAllocations, putCapacity, putTbh, deleteTbh, putImportMap, Conflict, monthKey };
+module.exports = { getPlan, getReference, putAllocation, putAllocations, putCapacity, putTbh, deleteTbh, putImportMap, Conflict, monthKey };

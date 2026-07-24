@@ -1,1 +1,1587 @@
-<!doctype html><title>placeholder</title><h1>UI port pending</h1>
+<title>TQStarling Resource Planner</title>
+<style>
+  :root{
+    --bg:#eef1f5; --surface:#ffffff; --surface-2:#f6f8fb; --surface-3:#eff3f8;
+    --ink:#16202e; --ink-2:#42505f; --muted:#71808f; --faint:#9aa7b4;
+    --line:#dde3ea; --line-strong:#c8d1db;
+    --accent:#0f7f8c; --accent-ink:#0b5d67; --accent-wash:#e4f2f3;
+    --tbh:#8a5cf6; --tbh-wash:#efe9fe;
+    /* utilization semantic scale (separate from accent) */
+    --u-none:#eef1f5; --u-none-ink:#8b97a4;
+    --u-under:#dbeafe; --u-under-ink:#2c5a9e;
+    --u-good:#d7f0dd; --u-good-ink:#1f7a44;
+    --u-full:#fdeecc; --u-full-ink:#8a6410;
+    --u-over:#fcdcd9; --u-over-ink:#b23b32;
+    --u-orange:#ffe3c2; --u-orange-ink:#b25e15;
+    --u-greenx:#9fd9ae; --u-greenx-ink:#0b5a2c;
+    --shadow:0 1px 2px rgba(20,32,46,.06),0 6px 20px rgba(20,32,46,.06);
+    --radius:11px; --radius-sm:7px;
+    --mono:"SFMono-Regular",ui-monospace,"Cascadia Mono","Segoe UI Mono",Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0e141c; --surface:#161f2b; --surface-2:#1a2531; --surface-3:#202c3a;
+      --ink:#eaf0f6; --ink-2:#b9c6d3; --muted:#8496a6; --faint:#61707f;
+      --line:#26323f; --line-strong:#33424f;
+      --accent:#3bc4cf; --accent-ink:#8fe3ea; --accent-wash:#123138;
+      --tbh:#a98bff; --tbh-wash:#241a44;
+      --u-none:#1c2733; --u-none-ink:#7d8b98;
+      --u-under:#1a3350; --u-under-ink:#8fb8ea;
+      --u-good:#153a2a; --u-good-ink:#68d295;
+      --u-full:#3d3316; --u-full-ink:#e6c266;
+      --u-over:#43211f; --u-over-ink:#f0928a;
+      --u-orange:#40260f; --u-orange-ink:#f0b06e;
+      --u-greenx:#1e5836; --u-greenx-ink:#84e6a6;
+      --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#eef1f5; --surface:#ffffff; --surface-2:#f6f8fb; --surface-3:#eff3f8;
+    --ink:#16202e; --ink-2:#42505f; --muted:#71808f; --faint:#9aa7b4;
+    --line:#dde3ea; --line-strong:#c8d1db;
+    --accent:#0f7f8c; --accent-ink:#0b5d67; --accent-wash:#e4f2f3;
+    --tbh:#8a5cf6; --tbh-wash:#efe9fe;
+    --u-none:#eef1f5; --u-none-ink:#8b97a4;
+    --u-under:#dbeafe; --u-under-ink:#2c5a9e;
+    --u-good:#d7f0dd; --u-good-ink:#1f7a44;
+    --u-full:#fdeecc; --u-full-ink:#8a6410;
+    --u-over:#fcdcd9; --u-over-ink:#b23b32;
+    --u-orange:#ffe3c2; --u-orange-ink:#b25e15;
+    --u-greenx:#9fd9ae; --u-greenx-ink:#0b5a2c;
+    --shadow:0 1px 2px rgba(20,32,46,.06),0 6px 20px rgba(20,32,46,.06);
+  }
+  :root[data-theme="dark"]{
+    --bg:#0e141c; --surface:#161f2b; --surface-2:#1a2531; --surface-3:#202c3a;
+    --ink:#eaf0f6; --ink-2:#b9c6d3; --muted:#8496a6; --faint:#61707f;
+    --line:#26323f; --line-strong:#33424f;
+    --accent:#3bc4cf; --accent-ink:#8fe3ea; --accent-wash:#123138;
+    --tbh:#a98bff; --tbh-wash:#241a44;
+    --u-none:#1c2733; --u-none-ink:#7d8b98;
+    --u-under:#1a3350; --u-under-ink:#8fb8ea;
+    --u-good:#153a2a; --u-good-ink:#68d295;
+    --u-full:#3d3316; --u-full-ink:#e6c266;
+    --u-over:#43211f; --u-over-ink:#f0928a;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.35);
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1320px;margin:0 auto;padding:20px 20px 80px;}
+  h1,h2,h3{margin:0;font-weight:650;letter-spacing:-.01em;}
+  .tnum{font-variant-numeric:tabular-nums;}
+  button{font-family:inherit;font-size:13px;cursor:pointer;}
+  a{color:var(--accent-ink);}
+
+  /* ---------- Header ---------- */
+  header.top{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;justify-content:space-between;margin-bottom:14px;}
+  .brand{display:flex;align-items:center;gap:12px;}
+  .glyph{width:38px;height:38px;border-radius:10px;background:linear-gradient(150deg,var(--accent),var(--accent-ink));
+    display:grid;place-items:center;color:#fff;flex:0 0 auto;box-shadow:var(--shadow);}
+  .glyph svg{width:22px;height:22px;}
+  .brand .title{font-size:19px;line-height:1.1;}
+  .brand .sub{color:var(--muted);font-size:12px;margin-top:2px;letter-spacing:.02em;}
+  .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  .btn{border:1px solid var(--line-strong);background:var(--surface);color:var(--ink-2);
+    padding:7px 12px;border-radius:8px;display:inline-flex;align-items:center;gap:6px;transition:.15s;}
+  .btn:hover{border-color:var(--accent);color:var(--accent-ink);}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;}
+  .btn.primary:hover{background:var(--accent-ink);color:#fff;}
+  .btn svg{width:15px;height:15px;}
+  .save-pill{font-size:11.5px;color:var(--muted);display:inline-flex;align-items:center;gap:6px;
+    padding:5px 10px;border-radius:20px;background:var(--surface-3);border:1px solid var(--line);}
+  .save-pill .dot{width:7px;height:7px;border-radius:50%;background:var(--u-good-ink);}
+
+  /* ---------- KPI strip ---------- */
+  .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px;}
+  .kpi{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;box-shadow:var(--shadow);}
+  .kpi .label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;}
+  .kpi .val{font-size:24px;font-weight:680;letter-spacing:-.02em;margin-top:4px;}
+  .kpi .val small{font-size:13px;color:var(--muted);font-weight:500;letter-spacing:0;}
+  .kpi .meta{font-size:11.5px;color:var(--muted);margin-top:3px;}
+  /* utilization tone on KPI values (text colour only — no fill) */
+  .kpi .val.uv-over{color:var(--u-over-ink);}
+  .kpi .val.uv-full{color:var(--u-full-ink);}
+  .kpi .val.uv-good{color:var(--u-good-ink);}
+  .kpi .val.uv-greenx{color:var(--u-greenx-ink);}
+  .kpi .val.uv-none{color:var(--muted);}
+  @media(max-width:900px){.kpis{grid-template-columns:repeat(2,1fr)}}
+
+  /* ---------- Tabs + filters ---------- */
+  .barrow{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;margin-bottom:14px;}
+  .tabs{display:inline-flex;background:var(--surface-3);border:1px solid var(--line);border-radius:10px;padding:3px;gap:2px;}
+  .tab{border:none;background:transparent;color:var(--ink-2);padding:7px 13px;border-radius:7px;font-weight:550;white-space:nowrap;}
+  .tab[aria-selected="true"]{background:var(--surface);color:var(--accent-ink);box-shadow:var(--shadow);}
+  .filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  select,input[type=text],input[type=number]{font-family:inherit;font-size:13px;color:var(--ink);
+    background:var(--surface);border:1px solid var(--line-strong);border-radius:7px;padding:6px 9px;}
+  select:focus,input:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent);}
+  .search{min-width:180px;}
+
+  /* ---------- Panels ---------- */
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;}
+  .panel + .panel{margin-top:14px;}
+  .panel-hd{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--surface-2);}
+  .panel-hd h2{font-size:14px;}
+  .panel-hd .hint{font-size:12px;color:var(--muted);font-weight:400;}
+
+  /* ---------- Allocation accordion ---------- */
+  .scroll{overflow:auto;max-height:calc(100vh - 290px);min-height:280px;overscroll-behavior:contain;}
+  .p-row{border-bottom:1px solid var(--line);}
+  .p-head{display:grid;grid-template-columns:var(--namecol,300px) 1fr;align-items:stretch;cursor:pointer;}
+  :root{--namecol:300px;}
+  .p-ident{display:flex;align-items:center;gap:10px;padding:10px 14px;min-width:0;position:sticky;left:0;background:var(--surface);z-index:2;border-right:1px solid var(--line);}
+  .p-ident:hover{background:var(--surface-2);}
+  .chev{width:14px;height:14px;color:var(--faint);transition:transform .18s;flex:0 0 auto;}
+  .p-row.open .chev{transform:rotate(90deg);}
+  .p-name{font-weight:600;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .p-role{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .p-meta{min-width:0;}
+  .badge{font-size:10px;font-weight:650;text-transform:uppercase;letter-spacing:.04em;padding:2px 6px;border-radius:5px;flex:0 0 auto;}
+  .badge.emp{background:var(--accent-wash);color:var(--accent-ink);}
+  .badge.contractor{background:var(--surface-3);color:var(--ink-2);border:1px solid var(--line-strong);}
+  .badge.tbh{background:var(--tbh-wash);color:var(--tbh);}
+  .badge.prj{background:var(--accent-wash);color:var(--accent-ink);}
+  .badge.crm{background:var(--tbh-wash);color:var(--tbh);}
+  .avatar{width:28px;height:28px;border-radius:50%;flex:0 0 auto;display:grid;place-items:center;font-size:11px;font-weight:650;color:#fff;}
+
+  .mgrid{display:grid;grid-template-columns:repeat(12,minmax(46px,1fr)) 62px;}
+  .mgrid.head .mcell{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;font-weight:600;background:var(--surface-2);position:sticky;top:0;}
+  .mcell{padding:7px 4px;text-align:center;border-left:1px solid var(--line);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;}
+  .mcell .h{font-weight:640;font-size:12.5px;}
+  .mcell .u{font-size:9.5px;opacity:.8;}
+  .mcell.tot{background:var(--surface-2);font-weight:680;}
+  .u-none{background:var(--u-none);color:var(--u-none-ink);}
+  .u-under{background:var(--u-under);color:var(--u-under-ink);}
+  .u-good{background:var(--u-good);color:var(--u-good-ink);}
+  .u-full{background:var(--u-full);color:var(--u-full-ink);}
+  .u-over{background:var(--u-over);color:var(--u-over-ink);}
+  .u-orange{background:var(--u-orange);color:var(--u-orange-ink);}
+  .u-greenx{background:var(--u-greenx);color:var(--u-greenx-ink);}
+
+  .p-body{display:none;background:var(--surface-2);border-top:1px solid var(--line);}
+  .p-row.open .p-body{display:block;}
+  .cap-row{display:flex;align-items:center;gap:8px;padding:8px 14px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--line);flex-wrap:wrap;}
+  .cap-row input{width:64px;padding:4px 7px;text-align:right;}
+  .a-line{display:grid;grid-template-columns:var(--namecol,300px) 1fr;border-bottom:1px solid var(--line);}
+  .a-proj{display:flex;align-items:center;gap:8px;padding:6px 14px 6px 30px;min-width:0;position:sticky;left:0;background:var(--surface-2);z-index:1;border-right:1px solid var(--line);}
+  .a-proj .pn{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .a-proj .cl{font-size:10.5px;color:var(--muted);}
+  .a-inputs{display:grid;grid-template-columns:repeat(12,minmax(46px,1fr)) 62px;}
+  .a-inputs input{width:100%;height:100%;border:none;border-left:1px solid var(--line);background:transparent;
+    text-align:center;font-size:12.5px;color:var(--ink);font-variant-numeric:tabular-nums;padding:6px 2px;-moz-appearance:textfield;}
+  .a-inputs input::-webkit-outer-spin-button,.a-inputs input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
+  .a-inputs input:focus{background:var(--accent-wash);outline:none;}
+  .a-inputs input:hover{background:var(--surface-3);}
+  .a-inputs input.past{background:var(--surface-3);color:var(--muted);cursor:not-allowed;font-style:italic;}
+  .a-inputs input.past:hover{background:var(--surface-3);}
+  .mgrid.head .mcell.actual{color:var(--accent-ink);}
+  .mgrid.head .mcell .actflag{font-size:7.5px;letter-spacing:.02em;opacity:.75;font-weight:600;text-transform:uppercase;line-height:1;}
+  table.pivot thead th.actual{color:var(--accent-ink);}
+  .a-inputs .rowtot{border-left:1px solid var(--line);background:var(--surface-3);display:flex;align-items:center;justify-content:center;font-weight:640;font-size:12px;}
+  .rm{margin-left:auto;border:none;background:transparent;color:var(--faint);padding:2px 4px;border-radius:5px;font-size:14px;line-height:1;}
+  .rm:hover{color:var(--u-over-ink);background:var(--u-over);}
+  .addproj{padding:8px 14px 10px 30px;}
+  .addproj select{max-width:340px;}
+  .empty-body{padding:10px 30px;color:var(--muted);font-size:12px;}
+
+  /* ---------- Pivot tables ---------- */
+  table.pivot{border-collapse:collapse;width:100%;font-size:12.5px;}
+  table.pivot th,table.pivot td{border-bottom:1px solid var(--line);padding:8px 8px;text-align:right;white-space:nowrap;}
+  table.pivot thead th{position:sticky;top:0;background:var(--surface-2);z-index:3;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:600;}
+  table.pivot th.lbl,table.pivot td.lbl{text-align:left;position:sticky;left:0;background:var(--surface);z-index:2;border-right:1px solid var(--line);min-width:210px;}
+  table.pivot thead th.lbl{z-index:4;background:var(--surface-2);}
+  table.pivot tbody tr:hover td{background:var(--surface-2);}
+  table.pivot tbody tr:hover td.lbl{background:var(--surface-2);}
+  table.pivot td.mcelln{font-variant-numeric:tabular-nums;font-weight:560;line-height:1.2;}
+  table.pivot td.mcelln .h{display:block;font-weight:640;}
+  table.pivot td.mcelln .pct{display:block;font-size:9.5px;font-weight:500;opacity:.72;letter-spacing:.01em;white-space:nowrap;}
+  /* month-over-month change in utilization (percentage points) */
+  table.pivot td.mcelln .dlt{font-style:normal;font-size:8.5px;font-weight:700;margin-left:2px;opacity:.85;}
+  .kpi .val .kdlt{font-size:11.5px;font-weight:650;margin-left:7px;letter-spacing:0;vertical-align:middle;}
+  .kdlt.up{color:var(--u-good-ink);}
+  .kdlt.down{color:var(--u-over-ink);}
+  table.pivot tr.grp td{background:var(--surface-3);font-weight:680;color:var(--ink);text-transform:uppercase;font-size:10.5px;letter-spacing:.05em;}
+  table.pivot tr.grp td.lbl{background:var(--surface-3);}
+  table.pivot tfoot td{background:var(--surface-2);font-weight:620;}
+  table.pivot tfoot td.lbl{background:var(--surface-2);}
+  table.pivot tfoot tr:first-child td{border-top:2px solid var(--line-strong);}
+  table.pivot tfoot tr.grand td{font-weight:700;border-top:1px solid var(--line-strong);background:var(--surface-3);}
+  table.pivot tfoot tr.grand td.lbl{background:var(--surface-3);}
+  .col-tot{border-left:1px solid var(--line-strong)!important;font-weight:680;}
+  .pill{display:inline-block;padding:1px 6px;border-radius:5px;font-size:11px;font-weight:640;font-variant-numeric:tabular-nums;}
+  .subrow td.lbl{padding-left:30px;font-weight:400;color:var(--ink-2);}
+  /* By Role drill-down: role → practice → person */
+  table.pivot tr[data-role] td.lbl,table.pivot tr[data-rp] td.lbl,table.pivot tr[data-cust] td.lbl{cursor:pointer;user-select:none;}
+  table.pivot tr[data-role] td.lbl:hover,table.pivot tr[data-rp] td.lbl:hover,table.pivot tr[data-cust] td.lbl:hover{color:var(--accent-ink);}
+  table.pivot tr.lvl2 td{background:var(--surface-2);}
+  table.pivot tr.lvl2 td.lbl{background:var(--surface-2);}
+  table.pivot tr.lvl3 td{background:var(--surface-3);}
+  table.pivot tr.lvl3 td.lbl{background:var(--surface-3);font-weight:400;color:var(--ink-2);}
+  table.pivot td.lbl.lvl2i{padding-left:24px;}
+  table.pivot td.lbl.lvl3i{padding-left:52px;}
+  .tw{display:inline-flex;width:14px;}
+  .twchev{width:11px;height:11px;color:var(--faint);transition:transform .16s;}
+  tr.open > td.lbl .twchev{transform:rotate(90deg);color:var(--accent);}
+  .gaptag{font-size:11px;font-weight:650;padding:1px 6px;border-radius:5px;}
+  .gap-pos{background:var(--u-over);color:var(--u-over-ink);}
+  .gap-ok{background:var(--u-good);color:var(--u-good-ink);}
+
+  /* ---------- Hiring ---------- */
+  .hire-wrap{padding:16px;display:grid;gap:16px;}
+  .hire-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  @media(max-width:900px){.hire-grid{grid-template-columns:1fr}}
+  .card{border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;}
+  .card h3{font-size:13px;padding:11px 14px;background:var(--surface-2);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;}
+  .card .bd{padding:12px 14px;display:grid;gap:10px;}
+  .tbh-item{display:flex;align-items:center;gap:10px;padding:9px 11px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2);}
+  .tbh-item .info{min-width:0;flex:1;}
+  .tbh-item .info .r{font-weight:600;font-size:13px;}
+  .tbh-item .info .d{font-size:11.5px;color:var(--muted);}
+  .field{display:flex;flex-direction:column;gap:4px;}
+  .field label{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600;}
+  .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .sugg{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px dashed var(--line-strong);border-radius:9px;}
+  .sugg .txt{flex:1;font-size:12.5px;}
+  .sugg .txt b{color:var(--ink);}
+  .muted{color:var(--muted);}
+  .foot{margin-top:22px;color:var(--muted);font-size:11.5px;text-align:center;line-height:1.6;}
+  .legend{display:flex;gap:12px;flex-wrap:wrap;align-items:center;font-size:11px;color:var(--muted);padding:10px 16px;border-top:1px solid var(--line);background:var(--surface-2);}
+  .legend .sw{display:inline-flex;align-items:center;gap:5px;}
+  .legend .box{width:12px;height:12px;border-radius:3px;}
+  .hidden{display:none!important;}
+  /* who's signed in */
+  .whoami{font-size:11.5px;color:var(--muted);}
+  .whoami a{color:var(--muted);text-decoration:underline;}
+  .whoami a:hover{color:var(--accent-ink);}
+  /* viewer mode: read-only for anyone not in EDITOR_UPNS. The server enforces this
+     regardless — hiding the controls just avoids offering actions that would 403. */
+  body.viewer #btnBulk,
+  body.viewer #btnImportXlsx,
+  body.viewer .rm,
+  body.viewer .addproj,
+  body.viewer #bannerImport,
+  body.viewer .card:has(#tbhAdd){display:none!important;}
+  body.viewer .a-inputs input,
+  body.viewer .cap-row input{pointer-events:none;background:var(--surface-3);color:var(--muted);}
+  /* export menu + toast + arm */
+  .menu-wrap{position:relative;}
+  .menu{position:absolute;right:0;top:calc(100% + 6px);background:var(--surface);border:1px solid var(--line-strong);
+    border-radius:9px;box-shadow:var(--shadow);padding:5px;min-width:250px;z-index:50;display:none;}
+  .menu.open{display:block;}
+  .menu button{display:block;width:100%;text-align:left;border:none;background:transparent;color:var(--ink);
+    padding:8px 10px;border-radius:6px;font-size:12.5px;}
+  .menu button:hover{background:var(--surface-3);color:var(--accent-ink);}
+  .menu button small{display:block;color:var(--muted);font-size:11px;margin-top:1px;}
+  .btn.armed{background:var(--u-over);border-color:var(--u-over-ink);color:var(--u-over-ink);}
+  #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);opacity:0;
+    background:var(--ink);color:var(--surface);padding:10px 16px;border-radius:9px;font-size:13px;font-weight:550;
+    box-shadow:var(--shadow);z-index:200;transition:.22s;pointer-events:none;max-width:80vw;}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+  /* import banner */
+  .banner{display:flex;align-items:center;gap:12px;background:var(--accent-wash);border:1px solid var(--accent);
+    color:var(--accent-ink);border-radius:var(--radius);padding:11px 15px;margin-bottom:16px;font-size:13px;}
+  .banner svg{width:18px;height:18px;flex:0 0 auto;}
+  .banner b{font-weight:650;}
+  .banner .sp{flex:1;}
+  .banner button{border:1px solid var(--accent);background:var(--accent);color:#fff;padding:6px 12px;border-radius:7px;font-weight:600;}
+  .banner .x{background:transparent;border:none;color:var(--accent-ink);font-size:18px;padding:0 4px;}
+  /* modal */
+  .backdrop{position:fixed;inset:0;background:rgba(10,16,24,.55);z-index:100;display:flex;align-items:flex-start;justify-content:center;padding:32px 16px;overflow:auto;}
+  .modal{background:var(--surface);border:1px solid var(--line-strong);border-radius:14px;box-shadow:var(--shadow);
+    width:min(760px,100%);max-height:calc(100vh - 64px);display:flex;flex-direction:column;overflow:hidden;}
+  .modal-hd{padding:16px 20px;border-bottom:1px solid var(--line);}
+  .modal-hd h2{font-size:16px;}
+  .modal-hd p{margin:4px 0 0;color:var(--muted);font-size:12.5px;}
+  .modal-bd{padding:16px 20px;overflow-y:auto;display:grid;gap:16px;}
+  .modal-ft{padding:14px 20px;border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:10px;background:var(--surface-2);}
+  .sumrow{display:flex;gap:10px;flex-wrap:wrap;}
+  .stat{flex:1;min-width:120px;background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:10px 12px;}
+  .stat .n{font-size:20px;font-weight:680;}
+  .stat .l{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600;}
+  .maptbl{width:100%;border-collapse:collapse;font-size:12.5px;}
+  .maptbl th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:600;padding:5px 8px;border-bottom:1px solid var(--line);}
+  .maptbl td{padding:5px 8px;border-bottom:1px solid var(--line);vertical-align:middle;}
+  .maptbl td.src{font-weight:560;}
+  .maptbl select{width:100%;max-width:280px;}
+  .maptbl .hrs{color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap;}
+  .mapsec h3{font-size:12.5px;margin-bottom:6px;display:flex;align-items:center;gap:8px;}
+  .mapsec .cnt{font-size:11px;color:var(--muted);font-weight:400;}
+  .pill.warn{background:var(--u-full);color:var(--u-full-ink);}
+  .pill.ok2{background:var(--u-good);color:var(--u-good-ink);}
+  .scrollbox{max-height:230px;overflow:auto;border:1px solid var(--line);border-radius:8px;}
+  ::-webkit-scrollbar{height:11px;width:11px;}
+  ::-webkit-scrollbar-thumb{background:var(--line-strong);border-radius:6px;border:3px solid var(--surface);}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <div class="glyph" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="5" width="3" height="13"/></svg>
+      </div>
+      <div>
+        <div class="title">Resource Planner</div>
+        <div class="sub">TQStarling · capacity &amp; allocation · calendar year 2026</div>
+      </div>
+    </div>
+    <div class="toolbar">
+      <span class="save-pill"><span class="dot"></span><span id="saveState">Loading…</span></span>
+      <span class="whoami" id="whoami"></span>
+      <button class="btn primary" id="btnImportXlsx"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h10l6 6v10a0 0 0 0 1 0 0H4a0 0 0 0 1 0 0V4Z"/><path d="M14 4v6h6"/><path d="M8 15h8M8 18h5"/></svg>Import forecast</button>
+      <button class="btn" id="btnTheme" title="Toggle theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>Theme</button>
+      <div class="menu-wrap">
+        <button class="btn" id="btnExport"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21V9m0 0 4 4m-4-4-4 4M4 7V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2"/></svg>Export</button>
+        <div class="menu" id="exportMenu">
+          <button data-exp="detail">Allocation detail (CSV)<small>person × project × month — opens in Excel</small></button>
+          <button data-exp="emp">By employee × month (CSV)<small>current view, matches the pivot</small></button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div id="bannerRoot"></div>
+  <div class="kpis" id="kpis"></div>
+
+  <div class="barrow">
+    <div class="tabs" id="tabs" role="tablist">
+      <button class="tab" role="tab" data-view="allocate" aria-selected="true">Allocate · Person</button>
+      <button class="tab" role="tab" data-view="byProj" aria-selected="false">Allocate · Project</button>
+      <button class="tab" role="tab" data-view="byEmp" aria-selected="false">By Employee × Month</button>
+      <button class="tab" role="tab" data-view="byRole" aria-selected="false">By Role × Month</button>
+      <button class="tab" role="tab" data-view="byCust" aria-selected="false">By Customer × Month</button>
+      <button class="tab" role="tab" data-view="hiring" aria-selected="false">Hiring / TBH</button>
+    </div>
+    <div class="filters" id="filters">
+      <input type="text" class="search" id="fSearch" placeholder="Search name / role…" aria-label="Search">
+      <select id="fDept" aria-label="Department"></select>
+      <select id="fType" aria-label="Type">
+        <option value="all">All people</option>
+        <option value="employee">Employees</option>
+        <option value="contractor">Contractors</option>
+        <option value="tbh">To be hired</option>
+      </select>
+    </div>
+  </div>
+
+  <div id="viewRoot"></div>
+
+  <div class="foot" id="foot"></div>
+</div>
+
+<input type="file" id="xlsxInput" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" class="hidden">
+<div id="toast" role="status" aria-live="polite"></div>
+<div id="modalRoot"></div>
+
+<script>
+/* ============================ SEED DATA (live Odoo snapshot 2026-07-13) ============================ */
+const DATA_DATE = "2026-07-16";   // refreshed from Odoo
+const YEAR = 2026;              // calendar-year axis, aligned to the CY26 forecast workbook
+const CURRENT_KEY = "2026-07";  // current month (for KPI "this month")
+
+
+
+
+/* Reference data comes from the API (Postgres, synced read-only from Odoo).
+   These start empty and are filled by bootstrap() before the first render. */
+let PEOPLE = [], PROJECTS = [], CRM_PROJECTS = [], ALL_PROJECTS = [];
+let ACTUALS = new Map();          // "empId|projId|YYYY-MM" -> hours (closed months, read-only)
+let SYNC = [];                    // ref_* freshness, shown in the footer
+function rebuildProjects(){ ALL_PROJECTS = PROJECTS.concat(CRM_PROJECTS); }
+function projRank(p){ return p.src==="CRM" ? 1 : 0; }                       // PRJ first, CRM second
+function projLabel(p){ return (p.src==="CRM" ? "CRM - " : "PRJ - ") + p.name; }
+function sortedProjects(){ return ALL_PROJECTS.slice().sort((a,b)=>projRank(a)-projRank(b)||a.name.localeCompare(b.name)); }
+function sortProjIds(ids){ return ids.slice().sort((a,b)=>{ const x=projById(a), y=projById(b);
+  if(!x||!y) return 0; return projRank(x)-projRank(y)||x.name.localeCompare(y.name); }); }
+
+
+const DEPTS = ["AI","Business Advisory","Delivery","Contractor"];
+const DEFAULT_CAP = 160;
+
+
+
+/* ============================ MONTHS ============================ */
+const MONTHS = (() => {
+  const NAMES=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const out=[];
+  for(let m=0;m<12;m++){
+    out.push({key:YEAR+"-"+String(m+1).padStart(2,"0"), label:NAMES[m]+" '"+String(YEAR).slice(2), name:NAMES[m], year:YEAR, mi:m});
+  }
+  return out;
+})();
+const MKEYS = MONTHS.map(m=>m.key);
+const CURRENT_MI = Math.max(0, MONTHS.findIndex(m=>m.key===CURRENT_KEY)); // 6 = Jul; months before this are "past" (actuals)
+const isPastMi = mi => mi < CURRENT_MI;
+
+/* ============================ STATE ============================ */
+/* The plan lives in Postgres. This is a local mirror kept in step with the server:
+   every edit is PUT immediately and carries the version it was read at, so a stale
+   write is rejected rather than silently overwriting a colleague. */
+const MATCH_V=2;   // bump when the auto-matcher changes — invalidates remembered mappings
+let ME = { upn:"", name:"", canEdit:false };
+let state = { alloc:{}, capacity:{}, tbh:[], theme:null, importMap:{people:{},projects:{},v:MATCH_V}, lastImport:null };
+let VER = {};                      // "resourceKey|targetKey|YYYY-MM" -> version last seen from the server
+const canEdit = () => !!ME.canEdit;
+
+/* ---- id <-> API key mapping -------------------------------------------------
+   The UI keys people/projects by their Odoo id (or a tbh-/crm- prefixed string);
+   the API keys them 'emp:110' | 'tbh:x' and 'prj:119' | 'crm:222'. */
+const resKey = (pid) => String(pid).startsWith("tbh") ? `tbh:${String(pid).replace(/^tbh-?/,"")}` : `emp:${pid}`;
+const tgtKey = (jid) => String(jid).startsWith("crm-") ? `crm:${String(jid).slice(4)}` : `prj:${jid}`;
+const fromResKey = (k) => k.startsWith("tbh:") ? "tbh-"+k.slice(4) : k.slice(4);
+const fromTgtKey = (k) => k.startsWith("crm:") ? "crm-"+k.slice(4) : k.slice(4);
+const verKey = (pid,jid,mk) => `${resKey(pid)}|${tgtKey(jid)}|${mk}`;
+
+let toastTimer=null;
+function toast(msg){ const t=document.getElementById("toast"); if(!t) return; t.textContent=msg; t.classList.add("show");
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove("show"),3200); }
+function status(msg){ const el=document.getElementById("saveState"); if(el) el.textContent=msg; }
+
+/* ---- API ------------------------------------------------------------------- */
+async function api(method, path, body){
+  const res = await fetch(path, {
+    method,
+    headers: body ? {"content-type":"application/json"} : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+    credentials: "same-origin",
+  });
+  if (res.status === 401){ location.href = "/auth/login?returnTo=" + encodeURIComponent(location.pathname); throw new Error("signed out"); }
+  const data = await res.json().catch(()=>({}));
+  if (!res.ok){ const e = new Error(data.error || `${method} ${path} failed (${res.status})`); e.status=res.status; e.data=data; throw e; }
+  return data;
+}
+
+let capVer = {};                   // resource id -> capacity-override version
+
+/* Write many cells at once (bulk allocate, forecast import). The server applies
+   the batch atomically, so a conflict mid-way leaves nothing half-applied. */
+async function pushBatch(items, okMsg){
+  if(!items.length) return true;
+  try{
+    status("Saving…");
+    const r = await api("POST","/api/allocations",{ items });
+    (r.results||[]).forEach((res,i)=>{
+      const it=items[i]; const k=`${it.resourceKey}|${it.targetKey}|${it.month}`;
+      if(res && res.deleted) delete VER[k]; else if(res && res.version) VER[k]=res.version;
+    });
+    status("Saved"); if(okMsg) toast(okMsg);
+    return true;
+  }catch(e){
+    status("Save failed");
+    toast(e.status===409
+      ? "Someone else changed part of this while you were working — nothing was saved. Reloading."
+      : "Not saved: "+e.message);
+    if(e.status===409) setTimeout(()=>bootstrap(),1200);   // resync to the server's truth
+    return false;
+  }
+}
+
+/* Persist one cell. Returns true if the server accepted it. On a 409 the server
+   tells us the winning value, so we show what we lost to instead of clobbering. */
+async function pushAllocation(pid, jid, mk, hours){
+  const k = verKey(pid,jid,mk);
+  try{
+    status("Saving…");
+    const r = await api("PUT","/api/allocation",{
+      resourceKey:resKey(pid), targetKey:tgtKey(jid), month:mk, hours, version:VER[k]||0 });
+    if (r.deleted) delete VER[k]; else VER[k]=r.version;
+    status("Saved");
+    return true;
+  }catch(e){
+    if (e.status === 409){
+      const cur = e.data && e.data.current;
+      if (cur){ setAlloc(pid,jid,mk,cur.hours); VER[k]=cur.version; }
+      else { delete VER[k]; }
+      status("Conflict");
+      toast(`Someone else changed that cell — it is now ${cur?cur.hours:0}h. Your value was not saved.`);
+      render();
+    } else {
+      status("Save failed");
+      toast(e.message);
+    }
+    return false;
+  }
+}
+
+/* ============================ HELPERS ============================ */
+function allPeople(){ return PEOPLE.concat(state.tbh); }
+function personById(id){ return allPeople().find(p=>String(p.id)===String(id)); }
+function projById(id){ return ALL_PROJECTS.find(p=>String(p.id)===String(id)); }
+function capOf(p,mkey){
+  if(p.type==="tbh" && p.start && mkey < p.start) return 0;
+  const ov=state.capacity[p.id];
+  return (ov===undefined||ov===null||ov==="")? (p.cap||DEFAULT_CAP) : Number(ov);
+}
+/* Closed months read from the Odoo actuals overlay, never from the plan: past
+   hours are a fact, not a forecast, so they are never stored as allocations. */
+function alloc(pid,projid,mkey){
+  const mi = MONTHS.findIndex(m=>m.key===mkey);
+  if(mi>=0 && isPastMi(mi)) return ACTUALS.get(`${pid}|${projid}|${mkey}`) || 0;
+  return (state.alloc[pid] && state.alloc[pid][projid] && state.alloc[pid][projid][mkey]) || 0;
+}
+function setAlloc(pid,projid,mkey,val){
+  if(!state.alloc[pid]) state.alloc[pid]={};
+  if(!state.alloc[pid][projid]) state.alloc[pid][projid]={};
+  if(val>0) state.alloc[pid][projid][mkey]=val; else delete state.alloc[pid][projid][mkey];
+}
+function personProjects(pid){ return state.alloc[pid]? Object.keys(state.alloc[pid]).filter(k=>Object.keys(state.alloc[pid][k]||{}).length||true) : []; }
+function personMonthTotal(pid,mkey){
+  let t=0; const a=state.alloc[pid]; if(!a) return 0;
+  for(const proj in a) t+=a[proj][mkey]||0; return t;
+}
+function utilClass(hours,cap){
+  if(!cap) return hours>0? "u-greenx":"u-none";
+  if(hours===0) return "u-none";
+  const r=hours/cap;
+  if(r<0.60) return "u-over";      // <60%  → red (under-utilized)
+  if(r<0.75) return "u-full";      // 60–75% → yellow
+  if(r<=1.00) return "u-good";     // 75–100% → green (ideal)
+  return "u-greenx";               // >100% → darker green (fully/over-loaded)
+}
+function initials(n){ return n.split(/\s+/).map(w=>w[0]).slice(0,2).join("").toUpperCase(); }
+function deptColor(d){ const map={"Operations":"#0f7f8c","AI":"#8a5cf6","Business Advisory":"#c2683a","Delivery":"#2f6fb0","Sales & Marketing":"#1f9d6b","Contractor":"#8794a3"}; return map[d]||"#8794a3"; }
+function deptLabel(d){ return d || "Unassigned"; }                 // blank/unknown dept → "Unassigned"
+function deptRank(d){ const i=DEPTS.indexOf(d); return i<0 ? DEPTS.length + (d?0:1) : i; } // listed depts first, unlisted next, blank last
+function deptsInOrder(people){                                     // every dept actually present, ordered; includes "" (Unassigned)
+  const present=[...new Set(people.map(p=>p.dept||""))];
+  return present.sort((a,b)=>deptRank(a)-deptRank(b)||a.localeCompare(b));
+}
+function fmt(n){ return n? (Math.round(n*10)/10).toLocaleString():""; }
+function fmt0(n){ return n? Math.round(n).toLocaleString():"0"; }
+
+/* ============================ FILTERS ============================ */
+const F={search:"",dept:"all",type:"all"};
+function passFilter(p){
+  if(F.type!=="all" && p.type!==F.type) return false;
+  if(F.dept!=="all"){
+    if(F.dept==="__none__"){ if(p.dept && DEPTS.includes(p.dept)) return false; }  // Unassigned = blank or unlisted dept
+    else if(p.dept!==F.dept) return false;
+  }
+  if(F.search){ const s=F.search.toLowerCase(); if(!(p.name.toLowerCase().includes(s)||(p.role||"").toLowerCase().includes(s)||(p.dept||"").toLowerCase().includes(s))) return false; }
+  return true;
+}
+function filteredPeople(){
+  return allPeople().filter(passFilter).sort((a,b)=>{
+    const d=deptRank(a.dept||"")-deptRank(b.dept||""); if(d) return d;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+/* ============================ KPIs ============================ */
+function renderKpis(){
+  const ppl=allPeople();
+  const emp=PEOPLE.filter(p=>p.type==="employee").length;
+  const con=PEOPLE.filter(p=>p.type==="contractor").length;
+  const tbh=state.tbh.length;
+  const cur=CURRENT_KEY; const curM=MONTHS.find(m=>m.key===cur)||MONTHS[0];
+  // allocated vs capacity, kept separate for employees and contractors (blending them distorts both)
+  const sumFor=(type,mk)=>{ let a=0,c=0;
+    ppl.filter(p=>p.type===type).forEach(p=>{ a+=personMonthTotal(p.id,mk); c+=capOf(p,mk); });
+    return {a,c,u:c?Math.round(a/c*100):0,cls:utilClass(a,c).replace("u-","uv-")}; };
+  const prevM = CURRENT_MI>0 ? MONTHS[CURRENT_MI-1] : null;
+  const E=sumFor("employee",cur), C=sumFor("contractor",cur);
+  const Ep=prevM? sumFor("employee",prevM.key):null, Cp=prevM? sumFor("contractor",prevM.key):null;
+  // month-over-month change in utilization, in percentage points
+  const mom=(now,prev)=>{ if(!prev||!prev.c) return ""; const d=now.u-prev.u; if(!d) return "";
+    return `<span class="kdlt ${d>0?"up":"down"}">${d>0?"▲":"▼"}${Math.abs(d)} pts</span>`; };
+  const vsPrev = prevM? ` · vs ${prevM.label}` : "";
+  // count over-allocated people this month
+  let over=0; ppl.forEach(p=>{ const c=capOf(p,cur); if(c && personMonthTotal(p.id,cur)>c*1.10) over++; });
+  const kpi=[
+    {label:"People",val:emp+con+tbh,meta:emp+" emp · "+con+" contractor"+(tbh?" · "+tbh+" TBH":"")},
+    {label:"Projects",val:ALL_PROJECTS.length,meta:PROJECTS.length+" PRJ · "+CRM_PROJECTS.length+" CRM pipeline"},
+    {label:curM.label+" · employees",val:E.u+"%"+mom(E,Ep),cls:E.cls,meta:fmt0(E.a)+"h of "+fmt0(E.c)+"h capacity"+vsPrev},
+    {label:curM.label+" · contractors",val:C.u+"%"+mom(C,Cp),cls:C.cls,meta:fmt0(C.a)+"h of "+fmt0(C.c)+"h capacity"+vsPrev},
+    {label:"Attention",val:over,meta:over===1?"person over-allocated":"people over-allocated"},
+  ];
+  document.getElementById("kpis").innerHTML=kpi.map(k=>
+    `<div class="kpi"><div class="label">${k.label}</div><div class="val tnum ${k.cls||""}">${k.val}${k.unit?` <small>${k.unit}</small>`:""}</div><div class="meta">${k.meta}</div></div>`).join("");
+}
+
+/* ============================ VIEW: ALLOCATE ============================ */
+let VIEW="allocate";
+const openSet=new Set();
+const roleOpen=new Set();   // By Role: expanded roles
+const rpOpen=new Set();     // By Role: expanded "role||practice"
+const projOpen=new Set();   // By Project: expanded projects
+const custOpen=new Set();   // By Customer: expanded customers
+function chev(){ return `<svg class="twchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>`; }
+
+function monthHeadRow(extraClass){
+  return `<div class="mgrid head ${extraClass||""}">`+
+    MONTHS.map(m=>`<div class="mcell${isPastMi(m.mi)?" actual":""}">${m.label}${isPastMi(m.mi)?'<span class="actflag">actual</span>':''}</div>`).join("")+
+    `<div class="mcell tot">Total</div></div>`;
+}
+
+function renderAllocate(){
+  const ppl=filteredPeople();
+  let html=`<div class="panel"><div class="panel-hd">`+
+    `<div style="display:flex;align-items:center;gap:12px"><h2>Allocate hours</h2>`+
+    `<button class="btn" id="btnBulk" style="padding:5px 11px"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> Bulk allocate</button></div>`+
+    `<span class="hint">Click a person to expand · Jan–Jun are actual hours (locked) · Jul–Dec are editable forecast · saved automatically</span></div>`+
+    `<div class="scroll"><div style="min-width:900px">`;
+  // sticky month header aligned to grid (offset by name column)
+  html+=`<div style="display:grid;grid-template-columns:var(--namecol) 1fr;position:sticky;top:0;z-index:5">`+
+    `<div class="p-ident" style="background:var(--surface-2);font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600;align-items:center">Name · role</div>`+
+    monthHeadRow()+`</div>`;
+  if(!ppl.length) html+=`<div class="empty-body" style="padding:24px">No people match the current filters.</div>`;
+  ppl.forEach(p=>{ html+=personRow(p); });
+  html+=`</div></div>`;
+  html+=legend();
+  html+=`</div>`;
+  document.getElementById("viewRoot").innerHTML=html;
+}
+function personRow(p){
+  const isOpen=openSet.has(String(p.id));
+  const cells=MONTHS.map(m=>{
+    const h=personMonthTotal(p.id,m.key), c=capOf(p,m.key);
+    return `<div class="mcell ${utilClass(h,c)}" data-sum="${p.id}:${m.key}"><span class="h">${h?fmt(h):"·"}</span><span class="u">${c?Math.round(h/c*100)+"%":""}</span></div>`;
+  }).join("");
+  const yr=MKEYS.reduce((s,k)=>s+personMonthTotal(p.id,k),0);
+  const badge=p.type==="tbh"?`<span class="badge tbh">TBH</span>`:p.type==="contractor"?`<span class="badge contractor">Contractor</span>`:`<span class="badge emp">Employee</span>`;
+  let body="";
+  if(isOpen) body=personBody(p);
+  return `<div class="p-row ${isOpen?"open":""}" data-person="${p.id}">`+
+    `<div class="p-head">`+
+      `<div class="p-ident" data-toggle="${p.id}">`+
+        `<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>`+
+        `<div class="avatar" style="background:${deptColor(p.dept)}">${initials(p.name)}</div>`+
+        `<div style="min-width:0"><div class="p-name">${p.name} ${badge}</div><div class="p-role">${p.role||"—"} · ${p.dept}</div></div>`+
+      `</div>`+
+      `<div class="mgrid p-meta">${cells}<div class="mcell tot" data-yr="${p.id}">${yr?fmt0(yr):"·"}</div></div>`+
+    `</div>`+
+    `<div class="p-body">${body}</div>`+
+  `</div>`;
+}
+function personBody(p){
+  const projs= state.alloc[p.id]? sortProjIds(Object.keys(state.alloc[p.id])) : [];   // PRJ first, then CRM
+  const capVal = state.capacity[p.id]!==undefined? state.capacity[p.id] : "";
+  let rows= projs.length? projs.map(pid=>allocLine(p,pid)).join("")
+    : `<div class="empty-body">No projects yet — add one below.</div>`;
+  const avail=sortedProjects().filter(pr=>!projs.includes(String(pr.id)));
+  const opts=avail.map(pr=>`<option value="${pr.id}">${esc(projLabel(pr))}${pr.client&&pr.client!=="Internal"?" · "+esc(pr.client):""}</option>`).join("");
+  return `<div class="cap-row"><span>Monthly capacity</span>`+
+      `<input type="number" min="0" step="1" placeholder="${DEFAULT_CAP}" value="${capVal}" data-cap="${p.id}"> h`+
+      `<span class="muted">· default ${DEFAULT_CAP}h${p.type==="tbh"&&p.start?` · starts ${MONTHS.find(m=>m.key===p.start)?.label||p.start}`:""}</span>`+
+      (p.type==="tbh"?`<button class="btn" data-deltbh="${p.id}" style="margin-left:auto;padding:4px 9px">Remove TBH</button>`:"")+
+    `</div>`+
+    rows+
+    `<div class="addproj"><select data-addproj="${p.id}"><option value="">+ Add project…</option>${opts}</select></div>`;
+}
+function allocLine(p,projid){
+  const pr=projById(projid); if(!pr) return "";
+  const inputs=MONTHS.map(m=>{ const v=alloc(p.id,projid,m.key); const past=isPastMi(m.mi);
+    return `<input type="number" inputmode="numeric" min="0" step="1" value="${v||""}"${past?' readonly class="past" title="Actual timesheet hours"':''} data-a="${p.id}|${projid}|${m.key}" aria-label="${pr.name} ${m.label}${past?" (actual)":""}">`;
+  }).join("");
+  const rt=MKEYS.reduce((s,k)=>s+alloc(p.id,projid,k),0);
+  return `<div class="a-line" data-line="${p.id}:${projid}">`+
+    `<div class="a-proj"><div style="min-width:0"><div class="pn">${esc(projLabel(pr))}</div>`+
+      `<div class="cl">${esc(pr.client||"")}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""}</div></div>`+
+      `<button class="rm" data-rmproj="${p.id}|${projid}" title="Remove project" aria-label="Remove">×</button></div>`+
+    `<div class="a-inputs">${inputs}<div class="rowtot" data-rt="${p.id}:${projid}">${rt?fmt0(rt):""}</div></div>`+
+  `</div>`;
+}
+function legend(){
+  return `<div class="legend"><span>Utilization</span>`+
+    `<span class="sw"><span class="box u-over"></span>&lt;60% low</span>`+
+    `<span class="sw"><span class="box u-full"></span>60–75%</span>`+
+    `<span class="sw"><span class="box u-good"></span>75–100%</span>`+
+    `<span class="sw"><span class="box u-greenx"></span>&gt;100%</span>`+
+    `<span class="sw"><span class="box u-none"></span>unallocated</span></div>`;
+}
+
+/* live update after typing (no re-render, keeps focus) */
+function refreshPersonSummary(pid){
+  const p=personById(pid); if(!p) return;
+  MONTHS.forEach(m=>{
+    const h=personMonthTotal(pid,m.key), c=capOf(p,m.key);
+    const cell=document.querySelector(`[data-sum="${pid}:${m.key}"]`);
+    if(cell){ cell.className="mcell "+utilClass(h,c);
+      cell.querySelector(".h").textContent=h?fmt(h):"·";
+      cell.querySelector(".u").textContent=c?Math.round(h/c*100)+"%":""; }
+  });
+  const yr=MKEYS.reduce((s,k)=>s+personMonthTotal(pid,k),0);
+  const yc=document.querySelector(`[data-yr="${pid}"]`); if(yc) yc.textContent=yr?fmt0(yr):"·";
+}
+function refreshRowTotal(pid,projid){
+  const rt=MKEYS.reduce((s,k)=>s+alloc(pid,projid,k),0);
+  const el=document.querySelector(`[data-rt="${pid}:${projid}"]`); if(el) el.textContent=rt?fmt0(rt):"";
+}
+
+/* ============================ PIVOT: BY EMPLOYEE ============================ */
+/* pivot cell: hours on top, utilization % beneath, with the month-over-month change in
+   percentage points embedded next to it (pu = previous month's utilization %, or null). */
+function hpCell(h,c,cls,extra,pu){
+  const u = c ? Math.round(h/c*100) : null;
+  const d = (h && u!==null && pu!==null && pu!==undefined) ? u-Math.round(pu) : 0;
+  const dlt = d ? `<em class="dlt">${d>0?"▲":"▼"}${Math.abs(d)}</em>` : "";
+  const inner = h ? `<span class="h">${fmt(h)}</span><span class="pct">${u!==null?u+"%":""}${dlt}</span>` : "";
+  const tip = `${fmt0(h)}h of ${fmt0(c)}h capacity` + (d? ` · ${d>0?"+":""}${d} pts vs previous month` : "");
+  return `<td class="mcelln ${cls||""}${extra?" "+extra:""}" title="${tip}">${inner}</td>`;
+}
+const utilPct=(h,c)=> c ? Math.round(h/c*100) : null;
+function pivotHead(firstLabel){
+  return `<thead><tr><th class="lbl">${firstLabel}</th>`+
+    MONTHS.map(m=>`<th class="${isPastMi(m.mi)?"actual":""}">${m.label}</th>`).join("")+`<th class="col-tot">Total</th></tr></thead>`;
+}
+function renderByEmp(){
+  const ppl=filteredPeople();
+  const colTot=MKEYS.map(()=>0), colCap=MKEYS.map(()=>0); let grand=0, grandCap=0;
+  // allocated-vs-capacity kept separate per person type
+  const mkAcc=()=>({t:MKEYS.map(()=>0), c:MKEYS.map(()=>0), g:0, gc:0, n:0});
+  const acc={employee:mkAcc(), contractor:mkAcc(), tbh:mkAcc()};
+  const byDept={};
+  ppl.forEach(p=>{ const d=p.dept||""; (byDept[d]=byDept[d]||[]).push(p); });
+  let body="";
+  deptsInOrder(ppl).forEach(d=>{ if(!byDept[d]) return;
+    body+=`<tr class="grp"><td class="lbl">${deptLabel(d)}</td>`+MONTHS.map(()=>`<td></td>`).join("")+`<td class="col-tot"></td></tr>`;
+    byDept[d].forEach(p=>{
+      let rt=0, rcap=0, pu=null;
+      const a=acc[p.type]||acc.employee; a.n++;
+      const tds=MONTHS.map((m,i)=>{ const h=personMonthTotal(p.id,m.key), c=capOf(p,m.key);
+        rt+=h; rcap+=c; colTot[i]+=h; colCap[i]+=c; a.t[i]+=h; a.c[i]+=c;
+        const cell=hpCell(h,c,utilClass(h,c),"",pu); pu=utilPct(h,c);   // carry this month's % into the next
+        return cell;
+      }).join("");
+      grand+=rt; grandCap+=rcap; a.g+=rt; a.gc+=rcap;
+      const badge=p.type==="tbh"?" <span class='badge tbh'>TBH</span>":p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
+      body+=`<tr><td class="lbl">${p.name}${badge}<div class="muted" style="font-size:11px">${p.role||"—"}</div></td>${tds}${hpCell(rt,rcap,"","col-tot")}</tr>`;
+    });
+  });
+  const footRow=(label,a,cls)=>{ let pu=null;
+    const tds=a.t.map((t,i)=>{ const cell=hpCell(t,a.c[i],"","",pu); pu=utilPct(t,a.c[i]); return cell; }).join("");
+    return `<tr class="${cls||""}"><td class="lbl">${label}</td>${tds}${hpCell(a.g,a.gc,"","col-tot")}</tr>`; };
+  const foot=`<tfoot>`+
+    (acc.employee.n? footRow(`Employees <span class="muted">· ${acc.employee.n}</span>`,acc.employee):"")+
+    (acc.contractor.n? footRow(`Contractors <span class="muted">· ${acc.contractor.n}</span>`,acc.contractor):"")+
+    (acc.tbh.n? footRow(`To be hired <span class="muted">· ${acc.tbh.n}</span>`,acc.tbh):"")+
+    footRow("All shown",{t:colTot,c:colCap,g:grand,gc:grandCap},"grand")+
+    `</tfoot>`;
+  document.getElementById("viewRoot").innerHTML=
+    `<div class="panel"><div class="panel-hd"><h2>Allocated hours by employee × month</h2><span class="hint">hours + utilization % · shaded vs. capacity · ${ppl.length} people</span></div>`+
+    `<div class="scroll"><table class="pivot">${pivotHead("Employee")}<tbody>${body}</tbody>${foot}</table></div>${legend()}</div>`;
+}
+
+/* ============================ PIVOT: BY ROLE ============================ */
+function renderByRole(){
+  // group by role, nested under department; demand vs capacity → hiring gap
+  const ppl=allPeople().filter(passFilter);
+  // role (across ALL practices) -> practice -> people
+  const roles={};
+  ppl.forEach(p=>{ const r=p.role||"(no title)", d=p.dept||"";
+    roles[r]=roles[r]||{}; (roles[r][d]=roles[r][d]||[]).push(p); });
+  const colTot=MKEYS.map(()=>0), colCap=MKEYS.map(()=>0); let grand=0, grandCap=0;
+
+  // sum demand+capacity for a set of people in a month
+  const sumM=(group,mk)=>{ let dem=0,cap=0; group.forEach(p=>{ dem+=personMonthTotal(p.id,mk); cap+=capOf(p,mk); }); return [dem,cap]; };
+  // build a row's month cells + row totals for a group of people
+  const rowFor=(group,tally)=>{ let rt=0,rcap=0,pu=null;
+    const tds=MONTHS.map((m,i)=>{ const [dem,cap]=sumM(group,m.key); rt+=dem; rcap+=cap;
+      if(tally){ colTot[i]+=dem; colCap[i]+=cap; }
+      const cell=hpCell(dem,cap,utilClass(dem,cap),"",pu); pu=utilPct(dem,cap);
+      return cell; }).join("");
+    return {tds,rt,rcap};
+  };
+
+  let body="";
+  Object.keys(roles).sort().forEach(r=>{
+    const practices=roles[r];
+    const rolePeople=Object.values(practices).flat();
+    const {tds,rt,rcap}=rowFor(rolePeople,true);   // only level 1 tallies into the footer
+    grand+=rt; grandCap+=rcap;
+    const rOpen=roleOpen.has(r);
+    const pracNames=Object.keys(practices).sort((a,b)=>deptRank(a)-deptRank(b)||a.localeCompare(b));
+    body+=`<tr class="lvl1${rOpen?" open":""}" data-role="${esc(r)}"><td class="lbl">`+
+      `<span class="tw">${chev()}</span><b>${esc(r)}</b>`+
+      `<div class="muted" style="font-size:11px;padding-left:18px">${rolePeople.length} ${rolePeople.length===1?"person":"people"} · ${pracNames.length} practice${pracNames.length===1?"":"s"}</div></td>`+
+      `${tds}${hpCell(rt,rcap,"","col-tot")}</tr>`;
+    if(!rOpen) return;
+
+    pracNames.forEach(d=>{
+      const grp=practices[d];
+      const {tds:dtds,rt:dt,rcap:dcap}=rowFor(grp,false);
+      const key=r+"||"+d, dOpen=rpOpen.has(key);
+      body+=`<tr class="lvl2${dOpen?" open":""}" data-rp="${esc(key)}"><td class="lbl lvl2i">`+
+        `<span class="tw">${chev()}</span>${esc(deptLabel(d))} <span class="muted">· ${grp.length}</span></td>`+
+        `${dtds}${hpCell(dt,dcap,"","col-tot")}</tr>`;
+      if(!dOpen) return;
+
+      grp.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(p=>{
+        const {tds:ptds,rt:pt,rcap:pcap}=rowFor([p],false);
+        const badge=p.type==="tbh"?" <span class='badge tbh'>TBH</span>":p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
+        body+=`<tr class="lvl3"><td class="lbl lvl3i">${esc(p.name)}${badge}</td>${ptds}${hpCell(pt,pcap,"","col-tot")}</tr>`;
+      });
+    });
+  });
+  let fpu=null;
+  const foot=`<tfoot><tr class="grand"><td class="lbl">All roles</td>`+
+    colTot.map((t,i)=>{ const cell=hpCell(t,colCap[i],"","",fpu); fpu=utilPct(t,colCap[i]); return cell; }).join("")+
+    hpCell(grand,grandCap,"","col-tot")+`</tr></tfoot>`;
+  document.getElementById("viewRoot").innerHTML=
+    `<div class="panel"><div class="panel-hd"><h2>Allocated hours by role × month</h2>`+
+    `<span class="hint">roles rolled up across all practices · click a role to drill into practices, then into people</span></div>`+
+    `<div class="scroll"><table class="pivot">${pivotHead("Role")}<tbody>${body}</tbody>${foot}</table></div>${legend()}</div>`;
+}
+
+/* ============================ PIVOT: BY PROJECT ============================ */
+/* ---- Allocate by project: project → resources → monthly hours (PRJ first, then CRM) ---- */
+function projMonthTotal(projid,mkey){ let t=0; allPeople().forEach(p=>{ t+=alloc(p.id,projid,mkey); }); return t; }
+function projPeople(projid){ return allPeople().filter(p=> state.alloc[p.id] && state.alloc[p.id][projid]!==undefined ); }
+function byPersonOrder(a,b){ return deptRank(a.dept||"")-deptRank(b.dept||"")||a.name.localeCompare(b.name); }
+
+function renderByProj(){
+  const q=(F.search||"").toLowerCase();
+  const projs=sortedProjects().filter(pr=> !q || projLabel(pr).toLowerCase().includes(q) || (pr.client||"").toLowerCase().includes(q));
+  const nPrj=projs.filter(p=>p.src==="PRJ").length, nCrm=projs.length-nPrj;
+  let html=`<div class="panel"><div class="panel-hd">`+
+    `<div style="display:flex;align-items:center;gap:12px"><h2>Allocate by project</h2>`+
+    `<button class="btn" id="btnBulk" style="padding:5px 11px"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> Bulk allocate</button></div>`+
+    `<span class="hint">${nPrj} PRJ (Odoo) · ${nCrm} CRM (pipeline) · click a project to add resources and allocate hours</span></div>`+
+    `<div class="scroll"><div style="min-width:900px">`;
+  html+=`<div style="display:grid;grid-template-columns:var(--namecol) 1fr;position:sticky;top:0;z-index:5">`+
+    `<div class="p-ident" style="background:var(--surface-2);font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600;align-items:center">Project · client</div>`+
+    monthHeadRow()+`</div>`;
+  if(!projs.length) html+=`<div class="empty-body" style="padding:24px">No projects match the search.</div>`;
+  projs.forEach(pr=>{ html+=projectRow(pr); });
+  html+=`</div></div></div>`;
+  document.getElementById("viewRoot").innerHTML=html;
+}
+function projectRow(pr){
+  const id=String(pr.id), isOpen=projOpen.has(id), people=projPeople(pr.id);
+  const cells=MONTHS.map(m=>{ const h=projMonthTotal(pr.id,m.key);
+    return `<div class="mcell" data-psum="${id}:${m.key}"><span class="h">${h?fmt(h):"·"}</span></div>`;
+  }).join("");
+  const yr=MKEYS.reduce((s,k)=>s+projMonthTotal(pr.id,k),0);
+  const badge=pr.src==="CRM"?`<span class="badge crm">CRM</span>`:`<span class="badge prj">PRJ</span>`;
+  return `<div class="p-row ${isOpen?"open":""}">`+
+    `<div class="p-head">`+
+      `<div class="p-ident" data-ptoggle="${id}">`+
+        `<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>`+
+        `<div style="min-width:0"><div class="p-name">${badge} ${esc(pr.name)}</div>`+
+        `<div class="p-role">${esc(pr.client||"—")}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""} · ${people.length} resource${people.length===1?"":"s"}</div></div>`+
+      `</div>`+
+      `<div class="mgrid p-meta">${cells}<div class="mcell tot" data-pyr="${id}">${yr?fmt0(yr):"·"}</div></div>`+
+    `</div>`+
+    `<div class="p-body">${isOpen?projectBody(pr):""}</div>`+
+  `</div>`;
+}
+function projectBody(pr){
+  const people=projPeople(pr.id).sort(byPersonOrder);
+  const rows= people.length? people.map(p=>resLine(p,pr)).join("")
+    : `<div class="empty-body">No resources yet — add one below.</div>`;
+  const have=people.map(p=>String(p.id));
+  const avail=allPeople().filter(p=>!have.includes(String(p.id))).sort(byPersonOrder);
+  const opts=avail.map(p=>`<option value="${p.id}">${esc(p.name)}${p.type==="tbh"?" (TBH)":""} · ${esc(p.role||deptLabel(p.dept))}</option>`).join("");
+  return rows+`<div class="addproj"><select data-addres="${String(pr.id)}"><option value="">+ Add resource…</option>${opts}</select></div>`;
+}
+function resLine(p,pr){
+  const inputs=MONTHS.map(m=>{ const v=alloc(p.id,pr.id,m.key), past=isPastMi(m.mi);
+    return `<input type="number" inputmode="numeric" min="0" step="1" value="${v||""}"${past?' readonly class="past" title="Actual timesheet hours"':''} data-a="${p.id}|${pr.id}|${m.key}" aria-label="${esc(p.name)} ${m.label}">`;
+  }).join("");
+  const rt=MKEYS.reduce((s,k)=>s+alloc(p.id,pr.id,k),0);
+  const badge=p.type==="tbh"?" <span class='badge tbh'>TBH</span>":p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
+  return `<div class="a-line">`+
+    `<div class="a-proj"><div style="min-width:0"><div class="pn">${esc(p.name)}${badge}</div>`+
+      `<div class="cl">${esc(p.role||deptLabel(p.dept))}</div></div>`+
+      `<button class="rm" data-rmres="${p.id}|${pr.id}" title="Remove resource" aria-label="Remove">×</button></div>`+
+    `<div class="a-inputs">${inputs}<div class="rowtot" data-rt="${p.id}:${pr.id}">${rt?fmt0(rt):""}</div></div>`+
+  `</div>`;
+}
+function refreshProjSummary(projid){
+  MONTHS.forEach(m=>{ const cell=document.querySelector(`[data-psum="${projid}:${m.key}"]`);
+    if(cell){ const h=projMonthTotal(projid,m.key); const s=cell.querySelector(".h"); if(s) s.textContent=h?fmt(h):"·"; } });
+  const yr=MKEYS.reduce((s,k)=>s+projMonthTotal(projid,k),0);
+  const y=document.querySelector(`[data-pyr="${projid}"]`); if(y) y.textContent=yr?fmt0(yr):"·";
+}
+
+/* ============================ PIVOT: BY CUSTOMER ============================ */
+function customerOf(pr){ return (pr.client||"").trim() || "Unassigned"; }
+function renderByCust(){
+  const q=(F.search||"").toLowerCase();
+  const custs={};
+  ALL_PROJECTS.forEach(pr=>{ const c=customerOf(pr); (custs[c]=custs[c]||[]).push(pr); });
+  let rows=Object.keys(custs).map(c=>{
+    const projs=custs[c];
+    const per=MKEYS.map(k=> projs.reduce((s,pr)=>s+projMonthTotal(pr.id,k),0));
+    return {c, projs, per, tot:per.reduce((a,b)=>a+b,0)};
+  });
+  if(q) rows=rows.filter(r=> r.c.toLowerCase().includes(q) || r.projs.some(pr=>projLabel(pr).toLowerCase().includes(q)));
+  rows.sort((a,b)=> b.tot-a.tot || a.c.localeCompare(b.c));   // busiest customers first
+
+  const colTot=MKEYS.map(()=>0); let grand=0; let body="";
+  rows.forEach(r=>{
+    r.per.forEach((h,i)=>colTot[i]+=h); grand+=r.tot;
+    const isOpen=custOpen.has(r.c);
+    const nPrj=r.projs.filter(p=>p.src==="PRJ").length, nCrm=r.projs.length-nPrj;
+    const tds=r.per.map(h=>`<td class="mcelln">${h?fmt(h):""}</td>`).join("");
+    body+=`<tr class="lvl1${isOpen?" open":""}" data-cust="${esc(r.c)}"><td class="lbl">`+
+      `<span class="tw">${chev()}</span><b>${esc(r.c)}</b>`+
+      `<div class="muted" style="font-size:11px;padding-left:18px">${nPrj} PRJ · ${nCrm} CRM</div></td>`+
+      `${tds}<td class="mcelln col-tot">${r.tot?fmt0(r.tot):""}</td></tr>`;
+    if(!isOpen) return;
+    r.projs.slice().sort((a,b)=>projRank(a)-projRank(b)||a.name.localeCompare(b.name)).forEach(pr=>{
+      const per=MKEYS.map(k=>projMonthTotal(pr.id,k)), t=per.reduce((a,b)=>a+b,0);
+      const badge=pr.src==="CRM"?`<span class="badge crm">CRM</span>`:`<span class="badge prj">PRJ</span>`;
+      const ptds=per.map(h=>`<td class="mcelln">${h?fmt(h):""}</td>`).join("");
+      body+=`<tr class="lvl2"><td class="lbl lvl2i">${badge} ${esc(pr.name)}`+
+        `${pr.src==="CRM"&&pr.stage?` <span class="muted">· ${esc(pr.stage)}</span>`:""}</td>`+
+        `${ptds}<td class="mcelln col-tot">${t?fmt0(t):""}</td></tr>`;
+    });
+  });
+  const foot=`<tfoot><tr><td class="lbl">All customers</td>`+
+    colTot.map(t=>`<td class="mcelln">${t?fmt0(t):""}</td>`).join("")+
+    `<td class="mcelln col-tot">${fmt0(grand)}</td></tr></tfoot>`;
+  document.getElementById("viewRoot").innerHTML=
+    `<div class="panel"><div class="panel-hd"><h2>Allocated hours by customer × month</h2>`+
+    `<span class="hint">${rows.length} customers · click one to drill into its PRJ projects and CRM opportunities</span></div>`+
+    `<div class="scroll"><table class="pivot">${pivotHead("Customer")}<tbody>${body}</tbody>${foot}</table></div></div>`;
+}
+
+/* ============================ HIRING / TBH ============================ */
+function detectGaps(){
+  // for each role, find months where demand>capacity for >=1 month; report peak shortfall
+  const gaps=[];
+  const roleMap={};
+  allPeople().forEach(p=>{ const key=deptLabel(p.dept)+" · "+(p.role||"(no title)"); (roleMap[key]=roleMap[key]||[]).push(p); });
+  Object.keys(roleMap).forEach(key=>{
+    const grp=roleMap[key]; let peak=0, peakMonth=null, monthsOver=0;
+    MKEYS.forEach((k,i)=>{ let dem=0,cap=0; grp.forEach(p=>{dem+=personMonthTotal(p.id,k);cap+=capOf(p,k);});
+      const sh=dem-cap; if(sh>0){ monthsOver++; if(sh>peak){peak=sh;peakMonth=MONTHS[i].label;} } });
+    if(peak>0) gaps.push({role:key,peak,peakMonth,monthsOver});
+  });
+  return gaps.sort((a,b)=>b.peak-a.peak);
+}
+function renderHiring(){
+  const tbhList=state.tbh;
+  const roleOpts=[...new Set(PEOPLE.map(p=>p.role).filter(Boolean))].sort();
+  const gaps=detectGaps();
+  let tbhHtml = tbhList.length? tbhList.map(t=>{
+    const yr=MKEYS.reduce((s,k)=>s+personMonthTotal(t.id,k),0);
+    return `<div class="tbh-item"><div class="avatar" style="background:${deptColor(t.dept)}">${initials(t.role||"TB")}</div>`+
+      `<div class="info"><div class="r">${t.name}</div><div class="d">${t.role} · ${deptLabel(t.dept)} · starts ${MONTHS.find(m=>m.key===t.start)?.label||t.start} · ${fmt0(capOf(t,t.start))}h/mo · ${fmt0(yr)}h planned</div></div>`+
+      `<button class="btn" data-deltbh="${t.id}" style="padding:5px 9px">Remove</button></div>`;
+  }).join("") : `<div class="muted" style="font-size:12.5px">No to-be-hired roles yet. Add one to model a future hire and allocate them to projects like any employee.</div>`;
+
+  let gapHtml = gaps.length? gaps.slice(0,8).map(g=>
+    `<div class="sugg"><span class="gaptag gap-pos">+${fmt0(g.peak)}h</span>`+
+    `<div class="txt"><b>${g.role}</b> is over capacity — peak shortfall ${fmt0(g.peak)}h in ${g.peakMonth}, ${g.monthsOver} month${g.monthsOver>1?"s":""} over.</div>`+
+    `<button class="btn" data-prefill="${encodeURIComponent(g.role)}" style="padding:5px 9px">Add TBH</button></div>`
+  ).join("") : `<div class="muted" style="font-size:12.5px">No roles are over capacity in the current plan. Gaps appear here as you allocate demand beyond a role's combined capacity.</div>`;
+
+  const monthOpts=MONTHS.map(m=>`<option value="${m.key}">${m.label}</option>`).join("");
+  const deptOpts=`<option value="">— No department —</option>`+DEPTS.map(d=>`<option value="${d}">${d}</option>`).join("");
+  document.getElementById("viewRoot").innerHTML=
+    `<div class="panel"><div class="panel-hd"><h2>Hiring plan — to-be-hired resources</h2><span class="hint">model open roles, then staff them on projects to see the impact</span></div>`+
+    `<div class="hire-wrap"><div class="hire-grid">`+
+      `<div class="card"><h3>Add a to-be-hired role</h3><div class="bd">`+
+        `<div class="form-grid">`+
+          `<div class="field"><label>Role / title</label><input type="text" id="tbhRole" list="roleList" placeholder="e.g. Senior Solution Consultant"><datalist id="roleList">${roleOpts.map(r=>`<option value="${r}">`).join("")}</datalist></div>`+
+          `<div class="field"><label>Department</label><select id="tbhDept">${deptOpts}</select></div>`+
+          `<div class="field"><label>Start month</label><select id="tbhStart">${monthOpts}</select></div>`+
+          `<div class="field"><label>Capacity (h/mo)</label><input type="number" id="tbhCap" value="160" min="0" step="1"></div>`+
+        `</div>`+
+        `<button class="btn primary" id="tbhAdd">Add open role</button>`+
+      `</div></div>`+
+      `<div class="card"><h3>Suggested hires — role gaps</h3><div class="bd">${gapHtml}</div></div>`+
+    `</div>`+
+    `<div class="card"><h3>Open roles (${tbhList.length})</h3><div class="bd">${tbhHtml}</div></div>`+
+    `</div></div>`;
+}
+
+/* ============================ ROUTER ============================ */
+function render(){
+  renderBanner();
+  renderKpis();
+  const showFilters = VIEW!=="hiring";
+  document.getElementById("filters").style.visibility = showFilters? "visible":"hidden";
+  const personFilters = VIEW!=="byProj" && VIEW!=="byCust";   // these views search projects/customers, not people
+  document.getElementById("fDept").style.display = personFilters? "":"none";
+  document.getElementById("fType").style.display = personFilters? "":"none";
+  document.getElementById("fSearch").placeholder = personFilters ? "Search name / role…"
+    : (VIEW==="byCust" ? "Search customer / project…" : "Search project / client…");
+  if(VIEW==="allocate") renderAllocate();
+  else if(VIEW==="byEmp") renderByEmp();
+  else if(VIEW==="byRole") renderByRole();
+  else if(VIEW==="byProj") renderByProj();
+  else if(VIEW==="byCust") renderByCust();
+  else if(VIEW==="hiring") renderHiring();
+}
+function setView(v){ VIEW=v;
+  document.querySelectorAll(".tab").forEach(t=>t.setAttribute("aria-selected", t.dataset.view===v));
+  render();
+}
+
+/* ============================ EVENTS ============================ */
+document.getElementById("tabs").addEventListener("click",e=>{ const t=e.target.closest(".tab"); if(t) setView(t.dataset.view); });
+document.getElementById("fSearch").addEventListener("input",e=>{ F.search=e.target.value; render(); });
+document.getElementById("fType").addEventListener("change",e=>{ F.type=e.target.value; render(); });
+document.getElementById("fDept").addEventListener("change",e=>{ F.dept=e.target.value; render(); });
+
+document.getElementById("viewRoot").addEventListener("input",e=>{
+  const el=e.target;
+  if(el.dataset.a){ const [pid,projid,mkey]=el.dataset.a.split("|");
+    if(!canEdit()){ el.value = alloc(pid,projid,mkey) || ""; return; }   // viewers cannot change anything
+    let v=parseFloat(el.value); if(isNaN(v)||v<0) v=0;
+    setAlloc(pid,projid,mkey,v); refreshRowTotal(pid,projid); refreshPersonSummary(pid); refreshProjSummary(projid); renderKpis();
+    queuePush(pid,projid,mkey,v);   // debounced: typing "120" is one write, not three
+  }
+});
+/* Per-cell debounce so each keystroke doesn't become a round-trip. */
+const pushTimers={};
+function queuePush(pid,projid,mkey,v){
+  const k=verKey(pid,projid,mkey);
+  clearTimeout(pushTimers[k]);
+  status("Saving…");
+  pushTimers[k]=setTimeout(()=>{ delete pushTimers[k]; pushAllocation(pid,projid,mkey,v); }, 500);
+}
+document.getElementById("viewRoot").addEventListener("change",e=>{
+  const el=e.target;
+  if(el.dataset.cap!==undefined){ const pid=el.dataset.cap;
+    if(!canEdit()) return;
+    const val = (el.value===""||el.value===null) ? null : Number(el.value);
+    if(val==null) delete state.capacity[pid]; else state.capacity[pid]=val;
+    refreshPersonSummary(pid); renderKpis();
+    api("PUT","/api/capacity",{resourceKey:resKey(pid),hoursPerMonth:val,version:capVer[pid]||0})
+      .then(r=>{ if(r.deleted) delete capVer[pid]; else capVer[pid]=r.version; status("Saved"); })
+      .catch(e=>{ toast("Capacity not saved: "+e.message); });
+  }
+  if(el.dataset.addproj!==undefined && el.value){ const pid=el.dataset.addproj, projid=el.value;
+    if(!state.alloc[pid]) state.alloc[pid]={}; if(!state.alloc[pid][projid]) state.alloc[pid][projid]={};
+    /*saved via API*/ renderAllocate(); // keep this person open
+  }
+  if(el.dataset.addres!==undefined && el.value){ const projid=el.dataset.addres, pid=el.value;
+    if(!state.alloc[pid]) state.alloc[pid]={}; if(!state.alloc[pid][projid]) state.alloc[pid][projid]={};
+    /*saved via API*/ renderByProj(); // keep this project open
+  }
+});
+document.getElementById("viewRoot").addEventListener("click",e=>{
+  if(e.target.closest("#btnBulk")){ openBulkModal(); return; }
+  const rp=e.target.closest("[data-rp]");            // By Role: practice → people
+  if(rp){ const k=rp.getAttribute("data-rp"); if(rpOpen.has(k)) rpOpen.delete(k); else rpOpen.add(k); renderByRole(); return; }
+  const rr=e.target.closest("[data-role]");          // By Role: role → practices
+  if(rr){ const k=rr.getAttribute("data-role"); if(roleOpen.has(k)) roleOpen.delete(k); else roleOpen.add(k); renderByRole(); return; }
+  const cu=e.target.closest("[data-cust]");          // By Customer: customer → projects/CRM
+  if(cu){ const k=cu.getAttribute("data-cust"); if(custOpen.has(k)) custOpen.delete(k); else custOpen.add(k); renderByCust(); return; }
+  const ptog=e.target.closest("[data-ptoggle]");   // By Project: expand a project
+  if(ptog){ const id=ptog.dataset.ptoggle; if(projOpen.has(id)) projOpen.delete(id); else projOpen.add(id); renderByProj(); return; }
+  const rmr=e.target.closest("[data-rmres]");      // By Project: remove a resource from a project
+  if(rmr){ const [pid,projid]=rmr.dataset.rmres.split("|"); if(state.alloc[pid]) delete state.alloc[pid][projid]; /*saved via API*/ renderByProj(); renderKpis(); return; }
+  const tog=e.target.closest("[data-toggle]");
+  if(tog){ const id=tog.dataset.toggle; if(openSet.has(id)) openSet.delete(id); else openSet.add(id); renderAllocate(); return; }
+  const rm=e.target.closest("[data-rmproj]");
+  if(rm){ const [pid,projid]=rm.dataset.rmproj.split("|"); if(state.alloc[pid]) delete state.alloc[pid][projid]; /*saved via API*/ renderAllocate(); renderKpis(); return; }
+  const del=e.target.closest("[data-deltbh]");
+  if(del){ const id=del.dataset.deltbh;
+    state.tbh=state.tbh.filter(t=>String(t.id)!==String(id)); delete state.alloc[id]; delete state.capacity[id]; openSet.delete(String(id)); render();
+    api("DELETE","/api/tbh/"+encodeURIComponent(String(id).replace(/^tbh-?/,"")))
+      .then(()=>status("Saved")).catch(e=>toast("Open role not removed: "+e.message));
+    return; }
+  const pf=e.target.closest("[data-prefill]");
+  if(pf){ const parts=decodeURIComponent(pf.dataset.prefill).split(" · "); openTbhForm(parts[1]||"",parts[0]||""); return; }
+  if(e.target.id==="tbhAdd"){ addTbh(); return; }
+});
+function openTbhForm(role,dept){
+  const r=document.getElementById("tbhRole"), d=document.getElementById("tbhDept");
+  if(r) r.value=role; if(d&&dept&&DEPTS.includes(dept)) d.value=dept;
+  if(r) r.focus();
+}
+function addTbh(){
+  const role=(document.getElementById("tbhRole").value||"").trim();
+  const dept=document.getElementById("tbhDept").value;
+  const start=document.getElementById("tbhStart").value;
+  const cap=Number(document.getElementById("tbhCap").value)||DEFAULT_CAP;
+  if(!role){ document.getElementById("tbhRole").focus(); return; }
+  const nextNum=state.tbh.filter(t=>t.role===role).length+1;
+  const id="tbh-"+Date.now();
+  const t={id,name:"TBH · "+role+(nextNum>1?" #"+nextNum:""),role,dept,type:"tbh",start,cap};
+  state.tbh.push(t); renderHiring(); renderKpis();
+  api("PUT","/api/tbh",{tbhKey:String(id).replace(/^tbh-?/,""),name:t.name,role,dept,start,cap})
+    .then(()=>status("Saved")).catch(e=>toast("Open role not saved: "+e.message));
+}
+
+/* ============================ THEME ============================ */
+function applyTheme(t){ if(t) document.documentElement.setAttribute("data-theme",t); else document.documentElement.removeAttribute("data-theme"); }
+applyTheme(state.theme);
+document.getElementById("btnTheme").addEventListener("click",()=>{
+  const cur=document.documentElement.getAttribute("data-theme");
+  const isDark = cur? cur==="dark" : matchMedia("(prefers-color-scheme:dark)").matches;
+  state.theme= isDark? "light":"dark"; applyTheme(state.theme); /*saved via API*/
+});
+
+/* ============================ IMPORT / EXPORT ============================ */
+const exportMenu=document.getElementById("exportMenu");
+document.getElementById("btnExport").addEventListener("click",e=>{ e.stopPropagation(); exportMenu.classList.toggle("open"); });
+document.addEventListener("click",e=>{ if(!e.target.closest(".menu-wrap")) exportMenu.classList.remove("open"); });
+exportMenu.addEventListener("click",e=>{ const b=e.target.closest("[data-exp]"); if(!b) return;
+  const k=b.dataset.exp; exportMenu.classList.remove("open");
+  if(k==="detail"){ exportDetailCSV(); toast("Allocation detail exported"); }
+  else if(k==="emp"){ exportEmpCSV(); toast("By-employee export ready"); }
+});
+function download(name,text,mime){ const b=new Blob([text],{type:mime||"text/plain"}); const u=URL.createObjectURL(b);
+  const a=document.createElement("a"); a.href=u; a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(u),1000); }
+function csvEsc(v){ v=String(v==null?"":v); return /[",\n]/.test(v)? '"'+v.replace(/"/g,'""')+'"':v; }
+function exportEmpCSV(){
+  const head=["Department","Employee","Type","Role",...MONTHS.map(m=>m.label),"Total"];
+  const lines=[head.map(csvEsc).join(",")];
+  filteredPeople().forEach(p=>{ const cells=MKEYS.map(k=>personMonthTotal(p.id,k)); const tot=cells.reduce((s,x)=>s+x,0);
+    lines.push([p.dept,p.name,p.type,p.role||"",...cells,tot].map(csvEsc).join(",")); });
+  download("tqs-by-employee-month.csv",lines.join("\n"),"text/csv");
+}
+
+/* ============================ IMPORT FORECAST (.xlsx, parsed in-browser) ============================ */
+const MONTH_NAMES=["january","february","march","april","may","june","july","august","september","october","november","december"];
+let bannerDismissed=false;
+function esc(s){ return (s==null?"":String(s)).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+function today(){ try{ return new Date().toISOString().slice(0,10); }catch(e){ return DATA_DATE; } }
+
+async function inflateRaw(bytes){
+  const ds=new DecompressionStream("deflate-raw");
+  const ab=await new Response(new Blob([bytes]).stream().pipeThrough(ds)).arrayBuffer();
+  return new Uint8Array(ab);
+}
+async function unzip(ab){
+  const dv=new DataView(ab), u8=new Uint8Array(ab), dec=new TextDecoder();
+  let eocd=-1; for(let i=u8.length-22;i>=0;i--){ if(dv.getUint32(i,true)===0x06054b50){eocd=i;break;} }
+  if(eocd<0) throw new Error("not a valid .xlsx");
+  const count=dv.getUint16(eocd+10,true); let off=dv.getUint32(eocd+16,true); const files={};
+  for(let n=0;n<count;n++){
+    if(dv.getUint32(off,true)!==0x02014b50) break;
+    const method=dv.getUint16(off+10,true), compSize=dv.getUint32(off+20,true);
+    const nameLen=dv.getUint16(off+28,true), extraLen=dv.getUint16(off+30,true), commentLen=dv.getUint16(off+32,true);
+    const localOff=dv.getUint32(off+42,true);
+    const name=dec.decode(u8.subarray(off+46,off+46+nameLen));
+    const lNameLen=dv.getUint16(localOff+26,true), lExtraLen=dv.getUint16(localOff+28,true);
+    const dataStart=localOff+30+lNameLen+lExtraLen;
+    const comp=u8.subarray(dataStart,dataStart+compSize);
+    files[name]= method===8 ? await inflateRaw(comp) : comp.slice();
+    off+=46+nameLen+extraLen+commentLen;
+  }
+  return files;
+}
+function textOf(bytes){ return bytes? new TextDecoder().decode(bytes) : ""; }
+function decodeXml(s){ return s.replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&#(\d+);/g,(m,d)=>String.fromCharCode(+d)).replace(/&amp;/g,"&"); }
+function parseStrings(xml){ const a=[]; xml.replace(/<si>([\s\S]*?)<\/si>/g,(m,inner)=>{ let t=""; inner.replace(/<t[^>]*>([\s\S]*?)<\/t>/g,(x,y)=>{t+=y;return x;}); a.push(decodeXml(t)); return m;}); return a; }
+function colToIdx(c){ let n=0; for(const ch of c) n=n*26+(ch.charCodeAt(0)-64); return n-1; }
+function parseGrid(xml,strings){
+  const rows=[];
+  xml.replace(/<row[^>]*r="(\d+)"[^>]*>([\s\S]*?)<\/row>/g,(m,rn,inner)=>{
+    const cells={};
+    inner.replace(/<c r="([A-Z]+)\d+"([^>]*?)>([\s\S]*?)<\/c>/g,(x,col,attr,body)=>{
+      const isS=/t="s"/.test(attr), isI=/t="(inlineStr|str)"/.test(attr);
+      let v=""; const vm=body.match(/<v>([\s\S]*?)<\/v>/); if(vm)v=vm[1];
+      if(isS)v=strings[parseInt(v)]||""; else if(isI){ const im=body.match(/<t[^>]*>([\s\S]*?)<\/t>/); v=im?decodeXml(im[1]):decodeXml(v); } else v=decodeXml(v);
+      cells[colToIdx(col)]=v; return x;
+    });
+    rows[parseInt(rn)-1]=cells; return m;
+  });
+  return rows;
+}
+function readWorkbook(files){
+  const strings=parseStrings(textOf(files["xl/sharedStrings.xml"]));
+  const wb=textOf(files["xl/workbook.xml"]), rels=textOf(files["xl/_rels/workbook.xml.rels"]);
+  const relMap={}; rels.replace(/<Relationship Id="([^"]+)"[^>]*Target="([^"]+)"/g,(m,id,t)=>{relMap[id]=t.replace(/^\//,"");return m;});
+  const sheets=[]; wb.replace(/<sheet [^>]*?name="([^"]+)"[^>]*?r:id="([^"]+)"[^>]*?\/>/g,(m,nm,rid)=>{ let tgt=relMap[rid]||""; if(tgt&&!tgt.startsWith("xl/"))tgt="xl/"+tgt; sheets.push({name:decodeXml(nm),file:tgt}); return m;});
+  return {strings,sheets};
+}
+function findForecastSheet(files,parsed){
+  const cands=[];
+  for(const sh of parsed.sheets){
+    const bytes=files[sh.file]; if(!bytes) continue;
+    const rows=parseGrid(textOf(bytes),parsed.strings);
+    let best=null;
+    for(let h=0;h<Math.min(8,rows.length);h++){
+      const r=rows[h]||{}; const monthCols={};
+      Object.keys(r).forEach(ci=>{ const mi=MONTH_NAMES.indexOf((r[ci]||"").toString().toLowerCase().trim()); if(mi>=0 && monthCols[ci]===undefined) monthCols[ci]=mi; });
+      const cnt=Object.keys(monthCols).length;
+      if(cnt>=6 && (!best || cnt>best.cnt)) best={headerRow:h,monthCols,cnt};
+    }
+    if(best){ // prefer a sheet named "…Forecast…", then the largest grid (the allocation matrix is biggest)
+      const score=(/forecast/i.test(sh.name)?1e6:0)+rows.length;
+      cands.push({sheet:sh,rows,headerRow:best.headerRow,monthCols:best.monthCols,score}); }
+  }
+  if(!cands.length) return null;
+  cands.sort((a,b)=>b.score-a.score);
+  return cands[0];
+}
+/* ---- Layout B: weekly "Backlog Forecast" grid (one row per person×project, weekly Hours/Dollars columns) ---- */
+function isSerial(v){ return /^\d+(\.\d+)?$/.test(v) && +v>45000 && +v<47000; }
+function monthOfSerial(v){ return new Date(Date.UTC(1899,11,30)+(+v)*86400000).getUTCMonth(); }
+function findBacklogSheet(files,parsed){
+  for(const sh of parsed.sheets){
+    const rows=parseGrid(textOf(files[sh.file]),parsed.strings);
+    for(let h=0;h<Math.min(6,rows.length);h++){
+      const vals=Object.values(rows[h]||{}).map(v=>(v||"").toString().toLowerCase());
+      if(vals.filter(v=>v==="hours").length>=3 && vals.filter(v=>v==="dollars").length>=3) return {sheet:sh,rows,hdRow:h};
+    }
+  }
+  return null;
+}
+function interpretBacklog(bk){
+  const {rows,hdRow}=bk; const hd=rows[hdRow]||{}, dateRow=rows[hdRow-1]||{};
+  let firstDollars=Infinity;
+  Object.keys(hd).forEach(ci=>{ if((hd[ci]||"").toString().toLowerCase()==="dollars") firstDollars=Math.min(firstDollars,+ci); });
+  const hourCols=[];
+  // year's first week is an unlabeled Hours column at (firstDollars-1); its date sits in the date row's col 0
+  if(firstDollars!==Infinity && isSerial(dateRow[0])) hourCols.push({c:firstDollars-1, mi:monthOfSerial(dateRow[0])});
+  Object.keys(hd).forEach(ci=>{ ci=+ci;
+    if((hd[ci]||"").toString().toLowerCase()==="hours"){
+      const d = isSerial(dateRow[ci-1])?dateRow[ci-1] : (isSerial(dateRow[ci])?dateRow[ci]:null);
+      if(d!==null) hourCols.push({c:ci, mi:monthOfSerial(d)});   // skips monthly-subtotal columns (no date label)
+    }
+  });
+  // project column = metadata column (before the weekly block) that most often looks like a client/project ("X - Y")
+  const metaEnd = firstDollars===Infinity? 8 : firstDollars-1;
+  let projCol=5, bestDash=-1;
+  for(let c=1;c<metaEnd;c++){ let dash=0; for(let r=hdRow+1;r<rows.length;r++){ if((rows[r]&&rows[r][c]||"").toString().includes(" - ")) dash++; } if(dash>bestDash){bestDash=dash;projCol=c;} }
+  const records=[]; let skipped=0;
+  for(let r=hdRow+1;r<rows.length;r++){ const row=rows[r]||{}; const person=(row[0]||"").toString().trim(); const project=(row[projCol]||"").toString().trim();
+    if(!person||!project) continue;
+    const months={}; let any=false;
+    hourCols.forEach(({c,mi})=>{ const v=parseFloat(row[c]); if(!isNaN(v)&&v!==0){ months[mi]=(months[mi]||0)+v; any=true; } });
+    if(!any) continue;
+    // A real project cell contains letters. A purely numeric value (e.g. a bill rate
+    // typed into the wrong column) is not a project — skip it rather than invent a
+    // phantom "150" project. Counted and surfaced in the preview, never silent.
+    if(!/[a-z]/i.test(project)){ skipped++; continue; }
+    records.push({person,project,months,
+      role:(row[projCol-1]||"").toString().trim(), dept:(row[projCol-2]||"").toString().trim()});
+  }
+  records.skipped=skipped;
+  return records;
+}
+function interpretForecast(fsheet){
+  const {rows,headerRow,monthCols}=fsheet;
+  const isMarker=s=>/^(total|weekly average|weekly avg|billable target|grand total|monthly total|available)/i.test((s||"").trim());
+  const isEnd=s=>/^(total|grand total|monthly total)/i.test((s||"").trim());
+  const records=[]; let cur=null;
+  for(let i=headerRow+1;i<rows.length;i++){
+    const row=rows[i]||{}; const a=(row[0]||"").toString().trim();
+    if(!a) continue;
+    if(isMarker(a)){ if(isEnd(a)) cur=null; continue; }
+    if(cur===null){ cur=a; continue; }
+    const months={}; let any=false;
+    Object.keys(monthCols).forEach(ci=>{ const val=parseFloat(row[ci]); if(!isNaN(val)&&val!==0){ const mi=monthCols[ci]; months[mi]=(months[mi]||0)+val; any=true; } });
+    if(any) records.push({person:cur,project:a,months});
+  }
+  return records;
+}
+/* fuzzy mapping guesses */
+function normName(s){ return (s||"").toString().toLowerCase().replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").trim(); }
+function guessPerson(name){
+  const nn=normName(name); if(!nn) return "";
+  let hit=PEOPLE.find(p=>normName(p.name)===nn); if(hit) return hit.id;            // exact full name
+  const f=nn.split(" ")[0];                                                        // unique first name
+  const fh=PEOPLE.filter(p=>normName(p.name).split(" ")[0]===f); if(fh.length===1) return fh[0].id;
+  const parts=nn.split(" "), last=parts[parts.length-1];                           // unique last name (catches typos)
+  const lh=PEOPLE.filter(p=>{const q=normName(p.name).split(" ");return q[q.length-1]===last;}); if(lh.length===1) return lh[0].id;
+  return "";
+}
+const STOPW=new Set("the and of for to a co inc llc company companies group sub".split(" "));
+function projTokens(s){
+  return normName(s)
+    .replace(/([a-z])(\d)/g,"$1 $2")                                   // "Phase1" → "phase 1" (leaves "2a"/"2b" intact)
+    .split(" ")
+    .filter(w=> w && !STOPW.has(w) && (w.length>=2 || /\d/.test(w)));  // keep short numeric tokens like "1"
+}
+/* Score the sheet's project string against BOTH sources (PRJ + CRM) and take the genuine best match.
+   A hit on the project NAME counts double a hit on the client, and a candidate must match the name at
+   all — otherwise a shared client (e.g. a CRM opp whose customer is Con Edison) can hijack the match.
+   Ties go to PRJ (real delivery work) over CRM (pipeline). */
+function guessProject(name){
+  const nt=projTokens(name); if(!nt.length) return "";
+  let best="", bestScore=0, bestSrc="";
+  for(const pr of ALL_PROJECTS){
+    const nameTok=new Set(projTokens(pr.name)), cliTok=new Set(projTokens(pr.client||""));
+    let nameScore=0, cliScore=0;
+    nt.forEach(t=>{
+      if(nameTok.has(t)) nameScore+=2;
+      else if(t.length>=3 && [...nameTok].some(x=>x.includes(t)||t.includes(x))) nameScore+=1;   // "con" → "ConEd"
+      else if(cliTok.has(t)) cliScore+=1.5;      // a client/company hit beats a generic word like "implementation"
+      else if(t.length>=3 && [...cliTok].some(x=>x.includes(t)||t.includes(x))) cliScore+=0.75;
+    });
+    if(nameScore<=0) continue;                 // client-only overlap is not a match
+    const sc=nameScore+cliScore;
+    if(sc<2) continue;
+    if(sc>bestScore || (sc===bestScore && pr.src==="PRJ" && bestSrc==="CRM")){ bestScore=sc; best=pr.id; bestSrc=pr.src; }
+  }
+  return best;
+}
+const HIRE_RX=/resource|to.?be.?hired|\btbh\b|\btbd\b|new hire|open role|vacan|placeholder|unfilled|\bhire\b/i;
+function looksLikeHire(name){ return HIRE_RX.test(name||""); }
+/* What the matcher would pick on its own ("skip" when it finds nothing).
+   A remembered mapping is stored ONLY when it differs from this — so auto-matches always
+   re-run with the current logic instead of replaying a stale choice. */
+function autoPerson(n){ const a=guessPerson(n) || (looksLikeHire(n)?"__tbh__":""); return a? String(a) : "skip"; }
+function autoProject(n){ const a=guessProject(n); return a? String(a) : "skip"; }
+
+function personOptions(sel){ return `<option value="skip"${sel==="skip"?" selected":""}>— skip —</option>`+
+  `<option value="__tbh__"${sel==="__tbh__"?" selected":""}>➕ Create as To-Be-Hired</option>`+
+  PEOPLE.slice().sort((a,b)=>DEPTS.indexOf(a.dept)-DEPTS.indexOf(b.dept)||a.name.localeCompare(b.name))
+  .map(p=>`<option value="${p.id}"${String(sel)===String(p.id)?" selected":""}>${esc(p.name)} · ${esc(p.role||p.dept)}</option>`).join(""); }
+function projectOptions(sel){ return `<option value="skip"${sel==="skip"?" selected":""}>— skip —</option>`+
+  sortedProjects()   // PRJ first, then CRM
+  .map(p=>`<option value="${p.id}"${String(sel)===String(p.id)?" selected":""}>${esc(projLabel(p))}${p.client&&p.client!=="Internal"?" · "+esc(p.client):""}</option>`).join(""); }
+
+async function handleXlsxFile(file){
+  try{
+    toast("Reading "+file.name+"…");
+    const ab=await file.arrayBuffer();
+    const files=await unzip(ab);
+    const parsed=readWorkbook(files);
+    let records=null, sheetName=null;
+    const bk=findBacklogSheet(files,parsed);            // Layout B: weekly Backlog Forecast grid
+    if(bk){ records=interpretBacklog(bk); sheetName=bk.sheet.name; }
+    if(!records || !records.length){                    // Layout A: month-column person blocks
+      const fsheet=findForecastSheet(files,parsed);
+      if(fsheet){ records=interpretForecast(fsheet); sheetName=fsheet.sheet.name; }
+    }
+    if(!records){ toast("No forecast grid found — expected weekly Hours/Dollars columns or monthly columns."); return; }
+    if(!records.length){ toast("Forecast sheet found, but no staffed hours to import."); return; }
+    openImportModal(records, sheetName);
+  }catch(err){ toast("Import failed: "+(err&&err.message?err.message:err)); }
+}
+function openImportModal(records, sheetName){
+  const persons=[...new Set(records.map(r=>r.person))];
+  const projects=[...new Set(records.map(r=>r.project))];
+  const personHrs={}, projHrs={}; let totalHrs=0;
+  records.forEach(r=>{ const t=Object.values(r.months).reduce((s,x)=>s+x,0); totalHrs+=t; personHrs[r.person]=(personHrs[r.person]||0)+t; projHrs[r.project]=(projHrs[r.project]||0)+t; });
+  const selP=n=> (n in state.importMap.people)? String(state.importMap.people[n]) : autoPerson(n);
+  const selPr=n=> (n in state.importMap.projects)? String(state.importMap.projects[n]) : autoProject(n);
+  const overrides=persons.filter(n=>n in state.importMap.people).length + projects.filter(n=>n in state.importMap.projects).length;
+  const matchedP=persons.filter(n=>{const v=selP(n);return v&&v!=="skip";}).length;
+  const matchedPr=projects.filter(n=>{const v=selPr(n);return v&&v!=="skip";}).length;
+  const tag=(m,t)=>`<span class="pill ${m===t?"ok2":"warn"}">${m}/${t}</span>`;
+  const html=`<div class="backdrop" id="impBackdrop"><div class="modal" role="dialog" aria-modal="true">
+    <div class="modal-hd"><h2>Import forecast — ${esc(sheetName)}</h2>
+      <p>Check how the spreadsheet's people and projects map to Odoo, then apply. Rows left on “skip” are ignored. Applying <b>replaces</b> the current plan.</p>
+      ${records.skipped?`<p style="color:var(--u-full-ink);font-size:12.5px;margin:6px 0 0">⚠ ${records.skipped} row${records.skipped>1?"s":""} skipped — no project name in the project column (e.g. a bill rate in the wrong cell). Fix the workbook to include ${records.skipped>1?"them":"it"}.</p>`:""}</div>
+    <div class="modal-bd">
+      <div class="sumrow">
+        <div class="stat"><div class="n tnum">${persons.length}</div><div class="l">People in sheet</div></div>
+        <div class="stat"><div class="n tnum">${projects.length}</div><div class="l">Projects in sheet</div></div>
+        <div class="stat"><div class="n tnum">${fmt0(totalHrs)}</div><div class="l">Forecast hours</div></div>
+      </div>
+      <div class="mapsec"><h3>People ${tag(matchedP,persons.length)} <span class="cnt">matched by first name</span></h3>
+        <div class="scrollbox"><table class="maptbl"><thead><tr><th>In spreadsheet</th><th>Hours</th><th>Maps to (Odoo person)</th></tr></thead><tbody>
+        ${persons.map(n=>`<tr><td class="src">${esc(n)}</td><td class="hrs">${fmt0(personHrs[n])}h</td><td><select data-mapp="${esc(n)}">${personOptions(selP(n))}</select></td></tr>`).join("")}
+        </tbody></table></div></div>
+      <div class="mapsec"><h3>Projects ${tag(matchedPr,projects.length)} <span class="cnt">matched by client / name</span></h3>
+        <div class="scrollbox"><table class="maptbl"><thead><tr><th>In spreadsheet</th><th>Hours</th><th>Maps to (Odoo project)</th></tr></thead><tbody>
+        ${projects.map(n=>`<tr><td class="src">${esc(n)}</td><td class="hrs">${fmt0(projHrs[n])}h</td><td><select data-mappr="${esc(n)}">${projectOptions(selPr(n))}</select></td></tr>`).join("")}
+        </tbody></table></div></div>
+    </div>
+    <div class="modal-ft"><span class="muted" style="font-size:12px">Auto-matched against PRJ + CRM each import · only your manual changes are remembered${overrides?` (<b>${overrides}</b> kept)`:""}.</span>
+      <span style="display:flex;gap:8px">${overrides?`<button class="btn" id="impReset">Re-run auto-match</button>`:""}<button class="btn" id="impCancel">Cancel</button><button class="btn primary" id="impApply">Apply &amp; replace plan</button></span></div>
+  </div></div>`;
+  document.getElementById("modalRoot").innerHTML=html;
+  document.getElementById("impCancel").addEventListener("click",closeModal);
+  const impReset=document.getElementById("impReset");
+  if(impReset) impReset.addEventListener("click",()=>{     // discard remembered overrides and re-match from scratch
+    persons.forEach(n=>delete state.importMap.people[n]);
+    projects.forEach(n=>delete state.importMap.projects[n]);
+    /*saved via API*/ openImportModal(records, sheetName); toast("Re-matched against PRJ + CRM");
+  });
+  document.getElementById("impBackdrop").addEventListener("click",e=>{ if(e.target.id==="impBackdrop") closeModal(); });
+  document.getElementById("impApply").addEventListener("click",()=>{
+    const pmap={}, prmap={};
+    document.querySelectorAll("[data-mapp]").forEach(s=>pmap[s.getAttribute("data-mapp")]=s.value);
+    document.querySelectorAll("[data-mappr]").forEach(s=>prmap[s.getAttribute("data-mappr")]=s.value);
+    applyImport(records,pmap,prmap,sheetName);
+  });
+}
+function closeModal(){ document.getElementById("modalRoot").innerHTML=""; }
+function applyImport(records,pmap,prmap,sheetName){
+  // Remember ONLY what the user changed. Anything matching the auto-guess is left unstored so the
+  // next import re-runs the matcher (and picks up any improvement) rather than replaying a stale pick.
+  Object.keys(pmap).forEach(n=>{
+    const manual = String(pmap[n])!==autoPerson(n);
+    if(manual) state.importMap.people[n]=pmap[n]; else delete state.importMap.people[n];
+    api("PUT","/api/importmap",{kind:"person",sourceName:n,targetKey:manual?String(pmap[n]):null}).catch(()=>{});
+  });
+  Object.keys(prmap).forEach(n=>{
+    const manual = String(prmap[n])!==autoProject(n);
+    if(manual) state.importMap.projects[n]=prmap[n]; else delete state.importMap.projects[n];
+    api("PUT","/api/importmap",{kind:"project",sourceName:n,targetKey:manual?String(prmap[n]):null}).catch(()=>{});
+  });
+  state.importMap.v=MATCH_V;
+  state.alloc={}; state.capacity=state.capacity||{};
+  // create/reuse to-be-hired resources for people mapped to "Create as To-Be-Hired"
+  const tbhIds={};
+  function ensureTbh(name){
+    if(tbhIds[name]) return tbhIds[name];
+    let ex=state.tbh.find(t=>t.name===name);
+    if(ex){ tbhIds[name]=ex.id; return ex.id; }
+    const rec=records.find(r=>r.person===name)||{};
+    const dept=DEPTS.includes(rec.dept)?rec.dept:"";
+    const id="tbh-imp-"+name.replace(/[^a-z0-9]+/gi,"-").toLowerCase();
+    state.tbh.push({id,name,role:rec.role||"To be hired",dept,type:"tbh",start:CURRENT_KEY,cap:160});
+    tbhIds[name]=id; return id;
+  }
+  let applied=0;
+  records.forEach(r=>{ let pid=pmap[r.person]; const prj=prmap[r.project];
+    if(pid==="__tbh__") pid=ensureTbh(r.person);
+    if(!pid||pid==="skip"||!prj||prj==="skip") return;
+    Object.keys(r.months).forEach(mi=>{ mi=+mi; if(isPastMi(mi)) return;   // past months come from actuals, not forecast
+      const M=MONTHS[mi]; if(!M) return;
+      setAlloc(pid,prj,M.key, alloc(pid,prj,M.key)+r.months[mi]); applied++; });
+  });
+  state.lastImport={sheet:sheetName,date:today(),count:applied}; bannerDismissed=false;
+  closeModal(); render();
+  const batch=[];
+  Object.keys(state.alloc).forEach(pid=>Object.keys(state.alloc[pid]).forEach(jid=>
+    Object.keys(state.alloc[pid][jid]).forEach(mk=>{
+      const mi=MONTHS.findIndex(m=>m.key===mk); if(mi<0||isPastMi(mi)) return;
+      batch.push({resourceKey:resKey(pid),targetKey:tgtKey(jid),month:mk,hours:state.alloc[pid][jid][mk],version:VER[verKey(pid,jid,mk)]||0});
+    })));
+  pushBatch(batch, "Imported "+applied+" allocations from "+sheetName); toast("Imported "+applied+" allocations from "+sheetName);
+}
+function renderBanner(){
+  const el=document.getElementById("bannerRoot"); if(!el) return;
+  if(bannerDismissed){ el.innerHTML=""; return; }
+  const check=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h10l6 6v10H4Z"/><path d="M14 4v6h6"/><path d="m9 15 2 2 4-4"/></svg>`;
+  if(state.lastImport){
+    el.innerHTML=`<div class="banner" style="background:var(--surface-2);border-color:var(--line-strong);color:var(--ink-2)">${check}<div class="sp">Imported <b>${esc(state.lastImport.sheet)}</b> — ${state.lastImport.count} allocations on ${esc(state.lastImport.date)}. Re-import to refresh from the latest workbook.</div><button id="bannerImport">Re-import</button><button class="x" id="bannerX" title="Dismiss">×</button></div>`;
+  } else {
+    el.innerHTML=`<div class="banner">${check}<div class="sp">Showing a <b>June-actuals draft</b>. Import your <b>CY26 forecast workbook</b> to load the real plan — it's parsed in your browser, nothing is uploaded.</div><button id="bannerImport">Import forecast</button><button class="x" id="bannerX" title="Dismiss">×</button></div>`;
+  }
+  el.querySelector("#bannerImport").addEventListener("click",()=>document.getElementById("xlsxInput").click());
+  el.querySelector("#bannerX").addEventListener("click",()=>{ bannerDismissed=true; el.innerHTML=""; });
+}
+document.getElementById("btnImportXlsx").addEventListener("click",()=>document.getElementById("xlsxInput").click());
+document.getElementById("xlsxInput").addEventListener("change",e=>{ const f=e.target.files[0]; if(f) handleXlsxFile(f); e.target.value=""; });
+
+/* ============================ BULK ALLOCATE ============================ */
+function bulkPeopleOpts(){ return allPeople().slice().sort((a,b)=>DEPTS.indexOf(a.dept)-DEPTS.indexOf(b.dept)||a.name.localeCompare(b.name))
+  .map(p=>`<option value="${p.id}">${esc(p.name)}${p.type==="tbh"?" (TBH)":""} · ${esc(p.role||p.dept)}</option>`).join(""); }
+function bulkProjOpts(){ return sortedProjects()   // PRJ first, then CRM
+  .map(p=>`<option value="${p.id}">${esc(projLabel(p))}${p.client&&p.client!=="Internal"?" · "+esc(p.client):""}</option>`).join(""); }
+function bulkMonthOpts(sel){ return MONTHS.filter(m=>!isPastMi(m.mi)).map(m=>`<option value="${m.key}"${m.key===sel?" selected":""}>${m.label}</option>`).join(""); }
+function bulkRange(){
+  const si=MONTHS.findIndex(m=>m.key===document.getElementById("bkStart").value);
+  const ei=MONTHS.findIndex(m=>m.key===document.getElementById("bkEnd").value);
+  let a=Math.min(si,ei), b=Math.max(si,ei); a=Math.max(a,CURRENT_MI);
+  const months=[]; for(let i=a;i<=b;i++) if(!isPastMi(i)) months.push(i);
+  return months;
+}
+function bulkValues(months){
+  const hours=Math.max(0,parseFloat(document.getElementById("bkHours").value)||0);
+  const n=months.length; if(!n) return [];
+  if(document.getElementById("bkMode").value==="permonth") return months.map(()=>Math.round(hours));
+  const per=Math.round(hours/n), vals=months.map(()=>per);
+  vals[n-1]+=Math.round(hours)-per*n; if(vals[n-1]<0) vals[n-1]=0;
+  return vals;
+}
+function bulkPreview(){
+  const el=document.getElementById("bkPreview"); if(!el) return;
+  const months=bulkRange(), vals=bulkValues(months);
+  if(!months.length){ el.textContent="Select a valid future month range (Jul–Dec)."; return; }
+  const total=vals.reduce((s,x)=>s+x,0), label=MONTHS[months[0]].label+"–"+MONTHS[months[months.length-1]].label;
+  el.innerHTML=`→ <b>${vals.join(" · ")}</b>h across <b>${months.length}</b> month${months.length>1?"s":""} (${label}) — <b>${total}h</b> total, ~${Math.round(total/months.length*10)/10}h/mo`;
+}
+function openBulkModal(){
+  const futures=MONTHS.filter(m=>!isPastMi(m.mi));
+  const startDef=futures[0].key, endDef=(futures[2]||futures[futures.length-1]).key;
+  document.getElementById("modalRoot").innerHTML=`<div class="backdrop" id="bulkBackdrop"><div class="modal" style="width:min(540px,100%)" role="dialog" aria-modal="true">
+    <div class="modal-hd"><h2>Bulk allocate hours</h2><p>Spread hours across a month range for one person on one project. Past months (actuals) are excluded.</p></div>
+    <div class="modal-bd">
+      <div class="form-grid">
+        <div class="field"><label>Person</label><select id="bkPerson">${bulkPeopleOpts()}</select></div>
+        <div class="field"><label>Project</label><select id="bkProject">${bulkProjOpts()}</select></div>
+      </div>
+      <div class="form-grid">
+        <div class="field"><label>Start month</label><select id="bkStart">${bulkMonthOpts(startDef)}</select></div>
+        <div class="field"><label>End month</label><select id="bkEnd">${bulkMonthOpts(endDef)}</select></div>
+      </div>
+      <div class="form-grid">
+        <div class="field"><label>Hours</label><input type="number" id="bkHours" min="0" step="1" value="300"></div>
+        <div class="field"><label>Interpret hours as</label><select id="bkMode"><option value="total">Total across range (split evenly)</option><option value="permonth">Per month (same each month)</option></select></div>
+      </div>
+      <div class="sugg" style="border-style:solid"><div class="txt" id="bkPreview"></div></div>
+    </div>
+    <div class="modal-ft"><span class="muted" style="font-size:12px">Overwrites those months for the chosen person + project.</span>
+      <span style="display:flex;gap:8px"><button class="btn" id="bkCancel">Cancel</button><button class="btn primary" id="bkApply">Apply</button></span></div>
+  </div></div>`;
+  ["bkPerson","bkProject","bkStart","bkEnd","bkHours","bkMode"].forEach(id=>document.getElementById(id).addEventListener("input",bulkPreview));
+  document.getElementById("bkCancel").addEventListener("click",closeBulk);
+  document.getElementById("bulkBackdrop").addEventListener("click",e=>{ if(e.target.id==="bulkBackdrop") closeBulk(); });
+  document.getElementById("bkApply").addEventListener("click",applyBulk);
+  bulkPreview();
+}
+function closeBulk(){ document.getElementById("modalRoot").innerHTML=""; }
+function applyBulk(){
+  const pid=document.getElementById("bkPerson").value, prj=document.getElementById("bkProject").value, months=bulkRange();
+  if(!pid||!prj){ toast("Pick a person and project."); return; }
+  if(!months.length){ toast("That range is entirely in the past — actuals are locked."); return; }
+  const vals=bulkValues(months);
+  months.forEach((mi,k)=> setAlloc(pid,prj,MONTHS[mi].key, vals[k]) );
+  openSet.add(String(pid)); closeBulk(); render();
+  pushBatch(months.map((mi,k)=>({ resourceKey:resKey(pid), targetKey:tgtKey(prj), month:MONTHS[mi].key, hours:vals[k],
+    version:VER[verKey(pid,prj,MONTHS[mi].key)]||0 })));
+  toast("Allocated "+vals.reduce((s,x)=>s+x,0)+"h across "+months.length+" month"+(months.length>1?"s":""));
+}
+
+/* ============================ INIT ============================ */
+(function initFilters(){
+  const sel=document.getElementById("fDept");
+  sel.innerHTML=`<option value="all">All departments</option>`+DEPTS.map(d=>`<option value="${d}">${d}</option>`).join("")+`<option value="__none__">Unassigned</option>`;
+})();
+document.getElementById("foot").innerHTML=
+  `Roster &amp; projects from Odoo via CData · ${DATA_DATE}. ${PEOPLE.length} people · ${PROJECTS.length} PRJ projects + ${CRM_PROJECTS.length} CRM pipeline opportunities · calendar year ${YEAR}. `+
+  `<b>Jan–Jun show actual timesheet hours (locked)</b>; Jul–Dec are forecast. Until you import, Jul–Sep are seeded from June actuals as a draft. `+
+  `Use <b>Import forecast</b> to load your CY26 workbook for Jul–Dec (parsed in your browser — nothing is uploaded). `+
+  `Shared plan — every change is saved for everyone and attributed to you.`;
+
+/* ============================ BOOTSTRAP ============================ */
+/* One round-trip: identity + Odoo reference data + the shared plan. Nothing is
+   rendered until this resolves, so we never show a stale or empty grid as if it
+   were real. */
+async function bootstrap(){
+  status("Loading…");
+  const { me, reference, plan } = await api("GET","/api/bootstrap");
+
+  ME = me;
+  PEOPLE = reference.people.map(p=>({ ...p, id:p.id }));
+  PROJECTS = reference.projects.map(p=>({ ...p, src:"PRJ" }));
+  CRM_PROJECTS = reference.opportunities.map(o=>({ id:"crm-"+o.id, name:o.name, client:o.client, stage:o.stage, src:"CRM", billable:true }));
+  rebuildProjects();
+  SYNC = reference.sync || [];
+
+  ACTUALS = new Map();
+  reference.actuals.forEach(a=>ACTUALS.set(`${a.employeeId}|${a.projectId}|${a.month}`, a.hours));
+
+  // plan -> local mirror, remembering each row's version for optimistic concurrency
+  state.alloc={}; VER={};
+  plan.allocations.forEach(a=>{
+    const pid=fromResKey(a.resourceKey), jid=fromTgtKey(a.targetKey);
+    setAlloc(pid,jid,a.month,a.hours);
+    VER[`${a.resourceKey}|${a.targetKey}|${a.month}`]=a.version;
+  });
+  state.capacity={}; plan.capacity.forEach(c=>{ state.capacity[fromResKey(c.resourceKey)]=c.hoursPerMonth; });
+  state.tbh = plan.tbh.map(t=>({ id:"tbh-"+t.tbhKey, name:t.name, role:t.role, dept:t.dept, type:"tbh", start:t.start, cap:t.cap }));
+  state.importMap = { ...plan.importMap, v:MATCH_V };
+
+  document.body.classList.toggle("viewer", !ME.canEdit);
+  const who=document.getElementById("whoami");
+  if(who) who.innerHTML = `${esc(ME.name||ME.upn)} · ${ME.canEdit?"editor":"view only"} · <a href="/auth/logout">sign out</a>`;
+
+  const stale = SYNC.length===0;
+  const foot=document.getElementById("foot");
+  if(foot) foot.innerHTML =
+    `${PEOPLE.length} people · ${PROJECTS.length} PRJ projects + ${CRM_PROJECTS.length} CRM opportunities · calendar year ${YEAR}. `+
+    (stale ? `<b>Odoo reference data has never been synced</b> — run a sync to populate people and projects.`
+           : `Odoo last synced ${SYNC.map(s=>`${s.source.replace("ref_","")} ${String(s.at).slice(0,10)}`).join(" · ")}.`)+
+    `<br>Shared plan — every change is saved for everyone and attributed to you.`;
+
+  status("Up to date");
+  render();
+}
+
+bootstrap().catch(e=>{
+  document.getElementById("viewRoot").innerHTML =
+    `<div class="panel"><div class="panel-hd"><h2>Couldn't load the plan</h2></div>`+
+    `<div style="padding:18px"><p>${esc(e.message)}</p>`+
+    `<p class="muted">If this persists, check the service logs — the database or Odoo reference data may not be ready yet.</p></div></div>`;
+  status("Offline");
+});
+</script>
