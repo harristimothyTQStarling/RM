@@ -5,15 +5,16 @@
  */
 const test = require("node:test");
 const assert = require("node:assert");
-const { open } = require("../src/db");
-const { handle } = require("../src/handlers");
+const { as, fresh, call: rawCall } = require("./helpers");
 
-const EDITOR = { "x-ms-client-principal": Buffer.from(JSON.stringify({ userId: "1", userDetails: "tim@tqstarling.com", userRoles: ["authenticated", "Planner.Editor"] })).toString("base64") };
-const VIEWER = { "x-ms-client-principal": Buffer.from(JSON.stringify({ userId: "2", userDetails: "jane@tqstarling.com", userRoles: ["authenticated", "Planner.Viewer"] })).toString("base64") };
-const OTHER  = { "x-ms-client-principal": Buffer.from(JSON.stringify({ userId: "3", userDetails: "sam@tqstarling.com", userRoles: ["authenticated", "Planner.Editor"] })).toString("base64") };
+// Two named editors + one colleague who may only view.
+process.env.EDITOR_UPNS = "tim@tqstarling.com,sam@tqstarling.com";
 
-const fresh = () => open({ driver: "sqlite", file: ":memory:" });
-const call = (db, method, path, body, headers = EDITOR, query = {}) => handle(db, { method, path, body, headers, query });
+const EDITOR = as("tim@tqstarling.com");
+const OTHER  = as("sam@tqstarling.com");   // the second editor
+const VIEWER = as("jane@tqstarling.com");  // signed in, not an editor
+
+const call = (db, method, path, body, headers = EDITOR, query = {}) => rawCall(db, method, path, body, headers, query);
 const putAlloc = (db, hours, version, headers = EDITOR) =>
   call(db, "PUT", "/api/allocation", { resourceKey: "emp:110", targetKey: "prj:119", month: "2026-08", hours, version }, headers);
 

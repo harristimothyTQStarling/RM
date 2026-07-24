@@ -1,13 +1,13 @@
-node_modules/
-*.db
-*.db-wal
-*.db-shm
-.dev.db*
-local.settings.json
-.env
-.azure/
-dist/
-*.log
 
 # real parameter/config files (may hold environment values)
+*.db
+*.db-shm
+*.db-wal
+*.log
+.azure/
+.dev.db*
+.env
+dist/
 infra/main.parameters.json
+local.settings.json
+node_modules/

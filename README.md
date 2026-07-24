@@ -3,142 +3,113 @@
 Shared, multi-user resource planning for calendar-year staffing: allocate hours per
 person per project per month, and see utilization by employee, role and customer.
 
-Replaces the single-user browser tool. One link, one plan, real persistence.
+Replaces the single-user browser tool — one link, one plan, real persistence.
+
+**Deploying:** see [DEPLOY.md](DEPLOY.md) (Railway + Postgres + Entra sign-in).
 
 ---
 
 ## Architecture
 
 ```
-  Browser (web/)                 Azure Static Web Apps
-        │  Entra ID sign-in  ──────────────┐
-        ▼                                  │
-   /api/*  ──►  Azure Functions (api/)  ───┤
-                    │                      │
-                    ├──► Azure SQL Basic  ─┘   the PLAN  (read/write)
-                    │       Managed Identity — no password
-                    │
-                    └──► Odoo (read-only)      people · projects · CRM · actuals
+  Browser
+     |   Microsoft Entra sign-in (OIDC, implemented in-app)
+     v
+  Railway service  -- one process, api/src/server.js
+     |
+     |-- /auth/*   Entra OpenID Connect  ->  signed session cookie
+     |-- /api/*    JSON API   handlers.js -> store.js -> db.js
+     |-- /*        static UI from web/
+     |
+     +--> Railway Postgres    the PLAN (read/write) + Odoo reference cache
+     +--> Odoo (read-only)    people | projects | CRM | actuals
 ```
 
 **Odoo stays the system of record** for people, projects, CRM pipeline and timesheet
-actuals. This app reads it and never writes to it — so it cannot corrupt the ERP, and
-you only need a **read-only** service account (far easier to get approved than write
-access plus a schema change).
+actuals, and is **read-only** — this app cannot corrupt the ERP, and only a read-only
+service account is needed (far easier to get approved than write access). Its data is
+cached in the `ref_*` tables so a page load never blocks on Odoo, and the app keeps
+working if Odoo is briefly unreachable.
 
-**Azure SQL stores only the forward plan.** Roughly 2–4k rows a year — Basic tier is
-~1% utilised and costs about $5/month.
+**Postgres stores the forward plan** — roughly 2–4k rows a year.
 
-### Deliberate decisions
+## Deliberate decisions
 
 | Decision | Why |
 |---|---|
-| `resource_key` / `target_key` composite text keys | A resource is an employee **or** a to-be-hired placeholder; a target is a project **or** a CRM opportunity. Nullable FK columns would need CHECK gymnastics, and SQL Server's UNIQUE treats NULLs as equal — permitting only one NULL row and breaking the natural key. |
-| Explicit `version INT`, not `rowversion` | Same optimistic-concurrency semantics, but portable — the identical logic runs on SQLite locally, so concurrency is testable with no Azure dependency. |
+| `resource_key` / `target_key` composite text keys | A resource is an employee **or** a to-be-hired seat; a target is a project **or** a CRM opportunity. Nullable FK columns would need CHECK gymnastics and break natural-key uniqueness. |
+| Explicit `version INT`, not `xmin`/`rowversion` | Same optimistic-concurrency semantics but portable — identical logic runs on SQLite locally, so concurrency is testable with **no database server**. |
 | `scenario` column from day one | Enables what-if planning ("what if we win Medtronic?"). Free now; retrofitting means touching every row and query. |
-| SQL Basic, **not** serverless | Auto-pause means a 30–60s cold start. An interactive planner that hangs on first load feels broken. Basic never sleeps and costs less. |
-| Managed Identity for SQL | No database password exists anywhere. The Odoo service account is the entire secret footprint. |
-| No CData in the app | CData is a BI/query gateway — an extra hop and likely per-seat licensing. The API talks to Odoo directly. |
-| `EDITOR_UPNS` allowlist alongside App Roles | With a single editor, App Roles mean defining roles and assigning users in Entra for no benefit. An allowlist is one app setting. The role path still works, so growing to several editors needs no code change. |
+| `jose` for token validation, hand-rolled redirect | The redirect/token-exchange is plain, well-specified HTTP. Signature/issuer/audience/expiry validation is where auth bugs ship, so that goes to an audited library. |
+| Edit rights via `EDITOR_UPNS`, not Entra App Roles | Adding an editor is an env-var change (instant, no redeploy, no Entra admin work), and we don't depend on role assignment being configured correctly. |
+| Postgres type parsers pinned | node-postgres returns `NUMERIC` as a **string** (hour arithmetic would concatenate) and `DATE` as a local-time `Date` (months could shift). Both are overridden in `db.js`. |
+| Odoo cached in `ref_*` tables | A page load never blocks on Odoo, and an Odoo outage doesn't take the planner down. |
 
-## Who can do what
+## Access model
 
-**One editor; everyone else in the tenant is read-only.**
+| | |
+|---|---|
+| **Sign in** | anyone in your Entra tenant (the `tid` claim is verified — no outside accounts) |
+| **Edit** | only addresses in `EDITOR_UPNS` |
+| **Everyone else** | read-only |
+| **Add/remove an editor** | edit the variable — immediate, no redeploy |
+| **Revoke all sessions** | rotate `SESSION_SECRET` |
 
-Write access is granted by *either*:
-
-- **`EDITOR_UPNS`** app setting — `tim@tqstarling.com`. Changing it takes effect
-  immediately, no redeploy. This is the simple path while it's just you.
-- **`Planner.Editor`** App Role — the path once several people edit.
-
-Anyone signed in can read. Nobody signed out can do anything. An empty allowlist
-denies rather than falling open, and `DEV_USER` impersonation is inert in Azure —
-both are covered by tests, because "accidentally world-writable" is the one bug
-that must never ship.
-
-Concurrency control is kept even with a single editor: you *will* eventually have
-the planner open in two tabs, and it costs nothing.
+Sessions are a signed, HttpOnly, Secure, SameSite=Lax cookie lasting 10 hours. We
+request only `openid profile email` and never store Microsoft tokens.
 
 ---
 
 ## Run it locally
 
-No Azure, no npm install, no database server — `node:sqlite` is built in.
+No Postgres, no Azure, no npm install needed for the database — `node:sqlite` is
+built into Node 20+.
 
 ```bash
-DEV_USER="you@tqstarling.com" DEV_ROLES="Planner.Editor" node api/src/server.js
+cd api && npm install
+DEV_USER="you@tqstarling.com" EDITOR_UPNS="you@tqstarling.com" npm run dev
 # http://localhost:7071
 ```
 
-`DEV_USER` impersonation is hard-disabled when running in Azure, so a
-misconfigured deploy cannot fall open.
+`DEV_USER` impersonation is **hard-disabled** when `NODE_ENV=production` or when the
+`AAD_*` variables are set, so a misconfigured deploy can never accept a forged
+identity. (There's a test for exactly that.)
 
 ### Tests
 
 ```bash
-cd api && npm test          # or: node --test "api/test/*.test.js"
+cd api && npm test        # 27 tests, no external services
 ```
 
-(Pass the glob, not the directory — `node --test api/test/` misreads it as a
-module path and reports a spurious failure.)
+They cover what actually matters for a shared plan: a stale write is **rejected
+rather than silently clobbering** a colleague; batch imports are **atomic**; viewers
+can't write; the allowlist **denies when empty** rather than falling open; tampered,
+wrongly-signed and expired session cookies are all rejected; TBH deletion leaves no
+orphaned demand; scenarios stay isolated.
 
-Covers the things that actually matter for multi-user: a stale write is **rejected
-rather than silently clobbering** a colleague, batch imports are **atomic**, viewers
-can't write, TBH deletion doesn't leave orphaned demand, and scenarios stay isolated.
+## Layout
 
----
-
-## Deploy
-
-You run these under your own `az login`. **No credential ever passes through the
-tooling that generated this repo.**
-
-```bash
-# 1. resource group
-az group create -n rg-tqs-planner -l eastus
-
-# 2. infrastructure  (sqlAdminSid = object id of the Entra group/user that owns SQL)
-az deployment group create -g rg-tqs-planner -f infra/main.bicep \
-   -p sqlAdminLogin="TQS Planner Admins" sqlAdminSid="<object-id>" \
-      editorUpns="tim@tqstarling.com" \
-      odooUrl="https://<your>.odoo.com" odooDb="<db>" odooUser="svc_planner_ro"
-
-# 3. schema
-sqlcmd -S <sqlServerFqdn> -d tqsplanner-db -G -i db/schema.sql
-
-# 4. let the site's identity reach the database  (edit <SWA_NAME> first)
-sqlcmd -S <sqlServerFqdn> -d tqsplanner-db -G -i scripts/grant-sql.sql
-
-# 5. the one secret
-az keyvault secret set --vault-name <keyVaultName> -n odoo-password --value "<password>"
 ```
-
-### Entra app registration
-
-1. Register an app. Redirect URI: `https://<site>/.auth/login/aad/callback`.
-2. Put `<TENANT_ID>` into `web/staticwebapp.config.json`.
-3. Add `AAD_CLIENT_ID` / `AAD_CLIENT_SECRET` as Static Web App settings.
-
-That's it while you're the only editor — `EDITOR_UPNS` handles write access, so
-there are **no App Roles to define and nobody to assign**. Admin consent is still
-required for sign-in; you approve it as tenant admin.
-
-**Later, to add editors:** either append to `EDITOR_UPNS` (instant, no redeploy),
-or add a `Planner.Editor` App Role and assign people to it — the API already
-honours both.
-
----
+api/src/server.js    one process: auth routes, API, static UI
+api/src/oidc.js      Entra OIDC (PKCE, state/nonce, tenant lock, session cookie)
+api/src/auth.js      identity from the cookie + EDITOR_UPNS edit rights
+api/src/handlers.js  routing; framework-free (method, path, body) -> {status, body}
+api/src/store.js     the plan + optimistic concurrency + audit log
+api/src/db.js        sqlite (dev/test) | postgres (prod), one interface
+api/src/migrate.js   applies db/schema.postgres.sql on boot, idempotent
+db/                  schema.postgres.sql + schema.sqlite.sql (kept in step)
+web/                 static UI  ** placeholder — port pending **
+Dockerfile           what Railway builds
+```
 
 ## Status
 
-- [x] Schema (Azure SQL + SQLite dev mirror)
+- [x] Postgres schema + driver, SQLite mirror for local/tests
 - [x] API: plan read, allocation/capacity/TBH/import-map writes, optimistic concurrency, audit log
-- [x] Entra role enforcement (`Planner.Editor` to write)
-- [x] Local dev server + test suite (15 tests, no dependencies)
-- [x] Bicep: Static Web App, SQL Basic, Key Vault, App Insights
-- [ ] **UI refactor** — port the existing planner from `localStorage` to the API
-- [ ] **Odoo read path** — currently mocked; must be verified against a real
-      response before it ships. Needs the service account to exist.
-
-The two open items are sequenced that way on purpose: the Odoo integration will be
-written against an **observed** request/response, not a guessed one.
+- [x] Microsoft Entra sign-in (OIDC + PKCE), signed sessions, tenant lock
+- [x] Named-editor allowlist; everyone else read-only
+- [x] Railway container, boot migrations, healthcheck
+- [x] 27 tests, no external services required
+- [ ] **UI port** — move the planner off `localStorage` onto the API
+- [ ] **Live Odoo sync** — populate `ref_*`; to be written and **verified against a
+      real response**, not guessed. Needs the read-only service account.

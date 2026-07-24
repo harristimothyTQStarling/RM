@@ -1,12 +1,15 @@
 "use strict";
 /**
  * Data layer. One interface, two drivers:
- *   - sqlite : local dev, uses node's built-in node:sqlite (zero npm deps)
- *   - mssql  : Azure SQL, via Managed Identity (no password anywhere)
+ *   - sqlite   : local dev + tests, node's built-in node:sqlite (zero npm deps)
+ *   - postgres : Railway Postgres in production, via DATABASE_URL
  *
- * Driver is chosen by DB_DRIVER. The handlers never see the difference; the SQL
- * is kept to the common subset so behaviour — especially optimistic concurrency —
- * is identical in both.
+ * Driver is chosen by DB_DRIVER (default sqlite). The handlers never see the
+ * difference; SQL is kept to the common subset so behaviour — especially the
+ * optimistic-concurrency logic in store.js — is identical in both. That's what
+ * lets the full test suite run locally with no database server.
+ *
+ * Placeholders are written `?` everywhere and rewritten to $1..$n for Postgres.
  */
 const fs = require("fs");
 const path = require("path");
@@ -34,40 +37,54 @@ function sqliteDriver(file) {
   };
 }
 
-/* ------------------------------------------------------------------- mssql -- */
-/* Lazily required so local dev never needs the package installed. Auth is
-   Managed Identity in Azure; DB_CONN may supply a connection string locally. */
-function mssqlDriver() {
-  const sql = require("mssql");
-  const cfg = process.env.DB_CONN
-    ? process.env.DB_CONN
-    : {
-        server: process.env.DB_SERVER,
-        database: process.env.DB_NAME,
-        authentication: { type: "azure-active-directory-msi-app-service" },
-        options: { encrypt: true, trustServerCertificate: false },
-      };
-  let poolPromise = null;
-  const pool = () => (poolPromise ||= sql.connect(cfg));
-  const bind = (req, params) => { params.forEach((v, i) => req.input(`p${i + 1}`, v)); return req; };
-  const toNamed = (s) => { let i = 0; return s.replace(/\?/g, () => `@p${++i}`); };
+/* ---------------------------------------------------------------- postgres -- */
+/* Lazily required so local dev/tests never need the package. Railway injects
+   DATABASE_URL; its managed Postgres requires TLS but presents a cert signed by
+   an internal CA, hence rejectUnauthorized:false (standard for Railway/Heroku). */
+function pgDriver(connStr) {
+  const pg = require("pg");
+  const { Pool } = pg;
+  // node-postgres defaults that would silently corrupt this app:
+  //   NUMERIC (1700) arrives as a STRING to avoid float precision loss — but every
+  //   hours value would then be "100.00" and arithmetic would concatenate.
+  //   DATE (1082) arrives as a JS Date in LOCAL time — 2026-08-01 can become
+  //   2026-07-31T23:00 and land in the wrong month. Keep it as the raw string.
+  pg.types.setTypeParser(1700, (v) => (v === null ? null : parseFloat(v)));
+  pg.types.setTypeParser(1082, (v) => v);
+  const conn = connStr || process.env.DATABASE_URL;
+  if (!conn) throw new Error("DATABASE_URL is required for the postgres driver");
+  const pool = new Pool({
+    connectionString: conn,
+    ssl: /localhost|127\.0\.0\.1/.test(conn) ? false : { rejectUnauthorized: false },
+    max: 5,
+  });
+  // `?` placeholders -> $1..$n  (keeps one SQL dialect across both drivers)
+  const toNumbered = (s) => { let i = 0; return s.replace(/\?/g, () => `$${++i}`); };
+  // Inside tx() every statement must run on the SAME client, or BEGIN/COMMIT
+  // would apply to a different pooled connection than the writes.
+  let txClient = null;
+  const exec = async (q, params) => (txClient || pool).query(toNumbered(q), params);
   return {
-    kind: "mssql",
-    all: async (q, params = []) => (await bind((await pool()).request(), params).query(toNamed(q))).recordset,
-    get: async (q, params = []) => (await bind((await pool()).request(), params).query(toNamed(q))).recordset[0],
-    run: async (q, params = []) => { const r = await bind((await pool()).request(), params).query(toNamed(q)); return { changes: r.rowsAffected[0] || 0 }; },
+    kind: "postgres",
+    all: async (q, params = []) => (await exec(q, params)).rows,
+    get: async (q, params = []) => (await exec(q, params)).rows[0],
+    run: async (q, params = []) => ({ changes: (await exec(q, params)).rowCount || 0 }),
     tx: async (fn) => {
-      const t = new sql.Transaction(await pool());
-      await t.begin();
-      try { const out = await fn(); await t.commit(); return out; } catch (e) { await t.rollback(); throw e; }
+      if (txClient) return fn();                  // already inside a transaction
+      const c = await pool.connect();
+      txClient = c;
+      try { await c.query("BEGIN"); const out = await fn(); await c.query("COMMIT"); return out; }
+      catch (e) { await c.query("ROLLBACK"); throw e; }
+      finally { txClient = null; c.release(); }
     },
-    close: async () => { if (poolPromise) (await poolPromise).close(); },
+    close: () => pool.end(),
   };
 }
 
 function open(opts = {}) {
   const driver = opts.driver || process.env.DB_DRIVER || "sqlite";
-  return driver === "mssql" ? mssqlDriver() : sqliteDriver(opts.file || process.env.DB_FILE || ":memory:");
+  if (driver === "postgres") return pgDriver(opts.conn);
+  return sqliteDriver(opts.file || process.env.DB_FILE || ":memory:");
 }
 
 /* --------------------------------------------------------------- audit log -- */

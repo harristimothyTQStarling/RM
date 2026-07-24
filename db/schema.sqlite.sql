@@ -65,3 +65,49 @@ CREATE TABLE IF NOT EXISTS AuditLog (
   new_value  TEXT
 );
 CREATE INDEX IF NOT EXISTS IX_AuditLog_at ON AuditLog (at DESC);
+
+-- ---------------------------------------------------------------------------
+-- Odoo reference cache (mirrors the ref_* tables in db/schema.postgres.sql).
+-- Cached rather than queried live so a page load never blocks on Odoo and the
+-- app keeps working if Odoo is briefly unreachable.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS ref_person (
+  id     INTEGER PRIMARY KEY,
+  name   TEXT NOT NULL,
+  role   TEXT NOT NULL DEFAULT '',
+  dept   TEXT NOT NULL DEFAULT '',
+  type   TEXT NOT NULL DEFAULT 'employee',
+  active INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS ref_project (
+  id       INTEGER PRIMARY KEY,
+  name     TEXT NOT NULL,
+  client   TEXT NOT NULL DEFAULT '',
+  billable INTEGER NOT NULL DEFAULT 1,
+  active   INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS ref_opportunity (
+  id     INTEGER PRIMARY KEY,
+  name   TEXT NOT NULL,
+  client TEXT NOT NULL DEFAULT '',
+  stage  TEXT NOT NULL DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS ref_actual (
+  employee_id INTEGER NOT NULL,
+  project_id  INTEGER NOT NULL,
+  month       TEXT NOT NULL,
+  hours       REAL NOT NULL,
+  PRIMARY KEY (employee_id, project_id, month)
+);
+
+CREATE TABLE IF NOT EXISTS sync_state (
+  source    TEXT PRIMARY KEY,
+  synced_at TEXT NOT NULL,
+  row_count INTEGER NOT NULL DEFAULT 0,
+  ok        INTEGER NOT NULL DEFAULT 1,
+  message   TEXT
+);
