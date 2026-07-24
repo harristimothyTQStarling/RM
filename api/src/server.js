@@ -123,12 +123,30 @@ const server = http.createServer(async (req, res) => {
 
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+/** First run: if Odoo is configured and the reference cache is empty, populate it
+ *  so a fresh deploy is usable immediately with no manual sync step. A failure
+ *  here must NOT stop the server booting — the app still works, just without
+ *  reference data until a sync succeeds. */
+async function initialSyncIfEmpty() {
+  const { Odoo, syncAll } = require("./odoo");
+  const odoo = new Odoo();
+  if (!odoo.configured) return "Odoo not configured (set ODOO_* to enable sync)";
+  const row = await db.get("SELECT COUNT(*) AS n FROM ref_person");
+  if (row && Number(row.n) > 0) return "reference cache present, skipping initial sync";
+  const y = new Date().getUTCFullYear();
+  const counts = await syncAll(db, odoo, { actualsFrom: `${y}-01-01`, actualsTo: `${y}-12-31` });
+  return `initial sync ${JSON.stringify(counts)}`;
+}
+
 (async () => {
   const m = await migrate(db);
+  let odooMsg = "skipped";
+  try { odooMsg = await initialSyncIfEmpty(); } catch (e) { odooMsg = `initial sync FAILED: ${e.message}`; console.error(odooMsg); }
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`resource-planner listening on :${PORT}`);
     console.log(`  db     : ${db.kind}${m.applied ? ` (schema applied, ${m.statements} statements)` : ""}`);
     console.log(`  auth   : ${oidc.isConfigured() ? "Entra ID" : process.env.DEV_USER ? `DEV impersonation as ${process.env.DEV_USER}` : "NOT CONFIGURED"}`);
     console.log(`  editors: ${process.env.EDITOR_UPNS || "(none — nobody can edit)"}`);
+    console.log(`  odoo   : ${odooMsg}`);
   });
 })().catch((e) => { console.error("startup failed:", e); process.exit(1); });

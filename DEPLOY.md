@@ -1,5 +1,47 @@
 # Deploy to Railway — runbook
 
+## THIS DEPLOYMENT (created 2026-07-24)
+
+The Railway project, Postgres and service are already created and configured.
+What's left is on you (GitHub push + Entra + two secrets) — see the checklist.
+
+| | |
+|---|---|
+| **App URL** | https://planner-production-1a7b.up.railway.app |
+| **Entra redirect URI** | `https://planner-production-1a7b.up.railway.app/auth/callback` |
+| Railway project | `tqs-resource-planner` (`c327e565-e2c3-46d3-b743-abc2523f96ec`) |
+| `planner` service | `813eeb8d-1d69-4307-a5b7-dbfc646ab2c5` |
+| Postgres service | `d70c9a7e-6aea-45de-a1b4-62e6341ce245` |
+| Vars already set | `DB_DRIVER, DATABASE_URL, EDITOR_UPNS, ODOO_URL, ODOO_DB, ODOO_USER, PUBLIC_URL, SESSION_SECRET` |
+| **You still set** | `AAD_TENANT_ID, AAD_CLIENT_ID, AAD_CLIENT_SECRET, ODOO_PASSWORD` |
+
+### Remaining checklist
+
+1. **Create the private GitHub repo and push.** On github.com create a **Private**
+   repo named `tqs-resource-planner` under `harristimothyTQStarling`, then:
+   ```bash
+   cd C:\Users\timha\tqs-resource-planner
+   git push -u origin main
+   ```
+2. **Give Railway access to the repo.** In Railway → the `planner` service →
+   Settings → Source, connect GitHub and select `harristimothyTQStarling/tqs-resource-planner`.
+   This triggers the first build from the Dockerfile.
+3. **Register the Entra app** (Entra ID → App registrations → New):
+   - Redirect URI (Web): `https://planner-production-1a7b.up.railway.app/auth/callback`
+   - Create a client secret; note the client id and tenant id; grant admin consent.
+4. **Set the four secret variables** on the `planner` service in Railway:
+   `AAD_TENANT_ID`, `AAD_CLIENT_ID`, `AAD_CLIENT_SECRET`, `ODOO_PASSWORD`
+   (the read-only `svc_planner_ro` password).
+5. **Done.** On deploy the schema is applied and — because Odoo is now
+   configured — the reference data syncs from Odoo automatically on first boot.
+   Open the URL, sign in with Microsoft, and you're in.
+
+Detailed reference for each step follows.
+
+---
+
+
+
 You run these steps under your own accounts. **No credential passes through the
 tooling that generated this repo.** There's a chicken-and-egg with the Entra
 redirect URI (you need the Railway URL first), so the order below matters.
