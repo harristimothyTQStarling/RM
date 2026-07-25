@@ -18,13 +18,13 @@ What's left is on you (GitHub push + Entra + two secrets) — see the checklist.
 ### Remaining checklist
 
 1. **Create the private GitHub repo and push.** On github.com create a **Private**
-   repo named `tqs-resource-planner` under `harristimothyTQStarling`, then:
+   repo named `RM` under `harristimothyTQStarling`, then:
    ```bash
    cd C:\Users\timha\tqs-resource-planner
    git push -u origin main
    ```
 2. **Give Railway access to the repo.** In Railway → the `planner` service →
-   Settings → Source, connect GitHub and select `harristimothyTQStarling/tqs-resource-planner`.
+   Settings → Source, connect GitHub and select `harristimothyTQStarling/RM`.
    This triggers the first build from the Dockerfile.
 3. **Register the Entra app** (Entra ID → App registrations → New):
    - Redirect URI (Web): `https://planner-production-1a7b.up.railway.app/auth/callback`
@@ -68,7 +68,7 @@ redirect URI (you need the Railway URL first), so the order below matters.
 
 ```bash
 cd C:\Users\timha\tqs-resource-planner
-git remote add origin https://github.com/<your-username>/tqs-resource-planner.git
+git remote add origin https://github.com/harristimothyTQStarling/RM.git
 git branch -M main
 git push -u origin main
 ```
@@ -176,10 +176,8 @@ We never store Microsoft tokens.
 | `sign-in is not configured` | one of `AAD_*` / `PUBLIC_URL` / `SESSION_SECRET` is missing |
 | Everyone read-only | `EDITOR_UPNS` empty or a typo'd address (it denies rather than falling open, by design) |
 | `DATABASE_URL is required` | Postgres plugin not attached to the service |
-| Odoo sync fails | expected until the service account exists; doesn't block sign-in or planning |
+| Odoo sync fails | check `ODOO_PASSWORD`; the boot log prints the sync result. Doesn't block sign-in or planning — the app just has no reference data until a sync succeeds. |
+| `planner` service offline | expected until the GitHub repo is pushed and connected (checklist steps 1–2) |
 
-## Remaining work before this is useful
-
-1. **Port the UI** off `localStorage` to the API (`web/` is a placeholder).
-2. **Live Odoo sync** — write + verify against a real response, then populate the
-   `ref_*` tables. Needs `ODOO_*` credentials to exist.
+The UI, the API, the Entra sign-in and the live Odoo sync are all built and
+tested — the checklist at the top is genuinely all that remains.
