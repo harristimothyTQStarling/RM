@@ -149,7 +149,16 @@ async function completeLogin(query, headers) {
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body,
   });
-  if (!res.ok) throw new Error(`token exchange failed (${res.status})`);
+  if (!res.ok) {
+    // Surface Microsoft's actual reason (the AADSTS code). This body is a
+    // diagnostic message, not a secret — safe to log and show. It tells us
+    // exactly what's wrong (bad client secret, wrong platform type, etc.).
+    let detail = "";
+    try { const eb = await res.json(); detail = String(eb.error_description || eb.error || ""); } catch {}
+    const short = detail.split(/[\r\n]/)[0];
+    console.error(`OIDC token exchange failed (${res.status}): ${short}`);
+    throw new Error(`token exchange failed (${res.status})${short ? ": " + short : ""}`);
+  }
   const tok = await res.json();
   if (!tok.id_token) throw new Error("no id_token in token response");
 
