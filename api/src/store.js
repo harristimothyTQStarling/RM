@@ -174,6 +174,22 @@ async function reassignAllocations(db, user, fromKey, toKey) {
   });
 }
 
+/**
+ * Manually map a closed CRM opportunity to a delivery project: the human override
+ * for when the sync's matcher wasn't confident (or the names simply differ). Moves
+ * the forecast crm:<oppId> -> prj:<projectId>, then retires the opportunity from
+ * the reference cache (active=0) so it leaves the UI — its forecast now lives on
+ * the project. Not wrapped in an outer transaction because reassignAllocations
+ * runs its own, and SQLite has no nested transactions; a failure between the two
+ * steps is self-healing (the next sync re-flags an opp that still has allocations).
+ */
+async function mapOpportunityToProject(db, user, oppId, projectId) {
+  const out = await reassignAllocations(db, user, `crm:${oppId}`, `prj:${projectId}`);
+  await db.run("UPDATE ref_opportunity SET active = 0, needs_project = 0 WHERE id = ?", [oppId]);
+  await audit(db, user.upn, "opportunity", `crm:${oppId}`, "map", `crm:${oppId}`, `prj:${projectId}`);
+  return { ...out, from: `crm:${oppId}`, to: `prj:${projectId}` };
+}
+
 /* ---------------------------------------------------------------- capacity -- */
 async function putCapacity(db, user, c) {
   const scenario = c.scenario || "baseline";
@@ -247,4 +263,4 @@ async function putImportMap(db, user, m) {
   return { ok: true };
 }
 
-module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, putCapacity, putTbh, deleteTbh, putImportMap, Conflict, monthKey };
+module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, mapOpportunityToProject, putCapacity, putTbh, deleteTbh, putImportMap, Conflict, monthKey };

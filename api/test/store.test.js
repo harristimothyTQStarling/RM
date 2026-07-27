@@ -83,6 +83,26 @@ test("insert claiming a version conflicts when the row already exists", async ()
   assert.equal(dupe.status, 409);
 });
 
+/* ---- map a closed CRM opportunity to a project (manual override) ---- */
+
+test("editor can map a closed CRM opp's forecast onto a project; viewer cannot", async () => {
+  const db = fresh();
+  db.run("INSERT INTO ref_project (id,name,client,billable,active) VALUES (119,'Bain Phase 2B','Bain',1,1)");
+  await call(db, "PUT", "/api/allocation", { resourceKey: "emp:110", targetKey: "crm:222", month: "2026-09", hours: 80, version: 0 });
+
+  const forbidden = await call(db, "POST", "/api/opportunity/map", { oppId: 222, projectId: 119 }, VIEWER);
+  assert.equal(forbidden.status, 403, "viewer must not map");
+
+  const bad = await call(db, "POST", "/api/opportunity/map", { oppId: 222, projectId: 99999 });
+  assert.equal(bad.status, 400, "unknown project rejected");
+
+  const ok = await call(db, "POST", "/api/opportunity/map", { oppId: 222, projectId: 119 });
+  assert.equal(ok.status, 200);
+  const plan = await call(db, "GET", "/api/plan");
+  const rows = plan.body.allocations.filter((a) => a.resourceKey === "emp:110");
+  assert.deepEqual(rows.map((a) => a.targetKey), ["prj:119"], "forecast now lives on the project");
+});
+
 /* ---- permissions ---- */
 
 test("viewer can read but not write", async () => {

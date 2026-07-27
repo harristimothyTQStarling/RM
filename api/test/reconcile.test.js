@@ -9,7 +9,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const { open } = require("../src/db");
 const { reconcileClosedCrm } = require("../src/odoo");
-const { reassignAllocations, getReference } = require("../src/store");
+const { reassignAllocations, mapOpportunityToProject, getReference } = require("../src/store");
 
 const U = { upn: "tester@tqstarling.com" };
 
@@ -110,6 +110,24 @@ test("an opp that is still OPEN is left untouched", async () => {
   const r = await reconcileClosedCrm(db, odoo, [], new Set([222]));   // 222 in the open set
   assert.deepEqual({ migrated: r.migrated, flagged: r.flagged, closed: r.closed }, { migrated: 0, flagged: 0, closed: 0 });
   assert.equal(allocOf(db, "crm:222").length, 1);
+});
+
+test("mapOpportunityToProject moves the forecast and retires the opp from the UI", async () => {
+  const db = open({ driver: "sqlite", file: ":memory:" });
+  seedAlloc(db, "emp:110", "crm:223", "2026-08", 80);
+  // a flagged opp as reconcile would have left it, plus the target project in cache
+  db.run("INSERT INTO ref_opportunity (id,name,client,stage,active,needs_project) VALUES (223,'Mystery Deal','Nobody','Lost',1,1)");
+  db.run("INSERT INTO ref_project (id,name,client,billable,active) VALUES (777,'Rescued Project','Nobody',1,1)");
+
+  const out = await mapOpportunityToProject(db, U, 223, 777);
+  assert.deepEqual({ moved: out.moved, from: out.from, to: out.to }, { moved: 1, from: "crm:223", to: "prj:777" });
+  assert.equal(allocOf(db, "crm:223").length, 0);
+  assert.deepEqual(allocOf(db, "prj:777").map((x) => x.hours), [80]);
+
+  const ref = await getReference(db);
+  assert.equal(ref.opportunities.find((o) => o.id === 223), undefined, "retired opp (active=0) no longer surfaces");
+  const log = db.all("SELECT action FROM audit_log WHERE entity='opportunity'");
+  assert.deepEqual(log.map((l) => l.action), ["map"]);
 });
 
 test("reassignAllocations audits every move", async () => {

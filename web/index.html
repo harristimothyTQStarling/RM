@@ -145,6 +145,10 @@
   .badge.prj{background:var(--accent-wash);color:var(--accent-ink);}
   .badge.crm{background:var(--tbh-wash);color:var(--tbh);}
   .badge.np{background:var(--u-full-wash,#fbe9d0);color:var(--u-full-ink,#8a4b00);border:1px solid currentColor;cursor:help;}
+  .np-map{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;margin:2px 0 6px;
+    background:var(--u-full-wash,#fbe9d0);border:1px solid var(--u-full-ink,#8a4b00);border-radius:8px;}
+  .np-map-t{font-size:12.5px;color:var(--u-full-ink,#8a4b00);font-weight:600;}
+  .np-map select{max-width:340px;}
   .avatar{width:28px;height:28px;border-radius:50%;flex:0 0 auto;display:grid;place-items:center;font-size:11px;font-weight:650;color:#fff;}
 
   .mgrid{display:grid;grid-template-columns:repeat(12,minmax(46px,1fr)) 62px;}
@@ -887,7 +891,18 @@ function projectBody(pr){
   const have=people.map(p=>String(p.id));
   const avail=allPeople().filter(p=>!have.includes(String(p.id))).sort(byPersonOrder);
   const opts=avail.map(p=>`<option value="${p.id}">${esc(p.name)}${p.type==="tbh"?" (TBH)":""} · ${esc(p.role||deptLabel(p.dept))}</option>`).join("");
-  return rows+`<div class="addproj"><select data-addres="${String(pr.id)}"><option value="">+ Add resource…</option>${opts}</select></div>`;
+  const mapBanner=(pr.needsProject && canEdit())? npMapBanner(pr) : "";
+  return mapBanner+rows+`<div class="addproj"><select data-addres="${String(pr.id)}"><option value="">+ Add resource…</option>${opts}</select></div>`;
+}
+/* Editor control shown inside a closed-but-unmatched CRM opportunity: pick the
+   real delivery project and move this forecast onto it. */
+function npMapBanner(pr){
+  const oppId=String(pr.id).replace(/^crm-/,"");
+  const opts=PROJECTS.slice().sort((a,b)=>a.name.localeCompare(b.name))
+    .map(p=>`<option value="${p.id}">${esc(p.name)}${p.client&&p.client!=="Internal"?" · "+esc(p.client):""}</option>`).join("");
+  return `<div class="np-map"><span class="np-map-t">⚠ This opportunity has closed. Move its forecast to a delivery project:</span>`+
+    `<select data-mapsel="${esc(oppId)}"><option value="">Choose a project…</option>${opts}</select>`+
+    `<button class="btn primary" data-mapopp="${esc(oppId)}">Map &amp; move forecast</button></div>`;
 }
 function resLine(p,pr){
   const inputs=MONTHS.map(m=>{ const v=alloc(p.id,pr.id,m.key), past=isPastMi(m.mi);
@@ -1081,6 +1096,10 @@ document.getElementById("viewRoot").addEventListener("click",e=>{
   if(ptog){ const id=ptog.dataset.ptoggle; if(projOpen.has(id)) projOpen.delete(id); else projOpen.add(id); renderByProj(); return; }
   const rmr=e.target.closest("[data-rmres]");      // By Project: remove a resource from a project
   if(rmr){ const [pid,projid]=rmr.dataset.rmres.split("|"); if(state.alloc[pid]) delete state.alloc[pid][projid]; /*saved via API*/ renderByProj(); renderKpis(); return; }
+  const mo=e.target.closest("[data-mapopp]");      // By Project: map a closed CRM opp's forecast onto a project
+  if(mo){ const oppId=mo.dataset.mapopp; const sel=document.querySelector(`[data-mapsel="${oppId}"]`);
+    const projectId=sel&&sel.value; if(!projectId){ toast("Choose a project to map to."); return; }
+    mapOppToProject(oppId,projectId); return; }
   const tog=e.target.closest("[data-toggle]");
   if(tog){ const id=tog.dataset.toggle; if(openSet.has(id)) openSet.delete(id); else openSet.add(id); renderAllocate(); return; }
   const rm=e.target.closest("[data-rmproj]");
@@ -1095,6 +1114,15 @@ document.getElementById("viewRoot").addEventListener("click",e=>{
   if(pf){ const parts=decodeURIComponent(pf.dataset.prefill).split(" · "); openTbhForm(parts[1]||"",parts[0]||""); return; }
   if(e.target.id==="tbhAdd"){ addTbh(); return; }
 });
+async function mapOppToProject(oppId,projectId){
+  if(!canEdit()) return;
+  try{
+    status("Mapping…");
+    const r=await api("POST","/api/opportunity/map",{oppId:Number(oppId),projectId:Number(projectId)});
+    toast(`Forecast moved to the project${r&&r.merged?` (${r.merged} month${r.merged>1?"s":""} merged)`:""}.`);
+    await bootstrap();   // reload reference + plan from the server's new truth
+  }catch(e){ status("Map failed"); toast("Map failed: "+(e&&e.message?e.message:e)); }
+}
 function openTbhForm(role,dept){
   const r=document.getElementById("tbhRole"), d=document.getElementById("tbhDept");
   if(r) r.value=role; if(d&&dept&&DEPTS.includes(dept)) d.value=dept;

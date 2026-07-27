@@ -66,6 +66,15 @@ async function handle(db, req) {
     if (method === "DELETE" && path.startsWith("/api/tbh/")) {
       return json(200, await store.deleteTbh(db, user, decodeURIComponent(path.slice("/api/tbh/".length)), scenario));
     }
+    if (method === "POST" && path === "/api/opportunity/map") {
+      // Manually map a closed CRM opportunity's forecast onto a delivery project.
+      const oppId = parseInt(body.oppId, 10);
+      const projectId = parseInt(body.projectId, 10);
+      if (!Number.isInteger(oppId) || !Number.isInteger(projectId)) return json(400, { error: "oppId and projectId are required" });
+      const proj = await db.get("SELECT id FROM ref_project WHERE id = ? AND active = 1", [projectId]);
+      if (!proj) return json(400, { error: "no such active project" });
+      return json(200, await store.mapOpportunityToProject(db, user, oppId, projectId));
+    }
     if (method === "PUT" && path === "/api/importmap") {
       if (!body.kind || !body.sourceName) return json(400, { error: "kind and sourceName required" });
       return json(200, await store.putImportMap(db, user, { ...body, scenario }));
