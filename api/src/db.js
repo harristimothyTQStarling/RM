@@ -90,7 +90,7 @@ function open(opts = {}) {
 /* --------------------------------------------------------------- audit log -- */
 async function audit(db, actor, entity, key, action, oldV, newV) {
   await db.run(
-    "INSERT INTO AuditLog (at, actor, entity, entity_key, action, old_value, new_value) VALUES (?,?,?,?,?,?,?)",
+    "INSERT INTO audit_log (at, actor, entity, entity_key, action, old_value, new_value) VALUES (?,?,?,?,?,?,?)",
     [nowIso(), actor, entity, key, action, oldV == null ? null : String(oldV), newV == null ? null : String(newV)]
   );
 }

@@ -3,7 +3,7 @@
 -- and the SAME concurrency logic run locally and on Azure SQL. Only the dialect
 -- differs (INTEGER PRIMARY KEY vs IDENTITY, TEXT dates vs DATE/DATETIME2).
 
-CREATE TABLE IF NOT EXISTS Allocation (
+CREATE TABLE IF NOT EXISTS allocation (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   scenario     TEXT NOT NULL DEFAULT 'baseline',
   resource_key TEXT NOT NULL,            -- 'emp:110' | 'tbh:resource-3'
@@ -15,9 +15,9 @@ CREATE TABLE IF NOT EXISTS Allocation (
   version      INTEGER NOT NULL DEFAULT 1,
   UNIQUE (scenario, resource_key, target_key, month)
 );
-CREATE INDEX IF NOT EXISTS IX_Allocation_scenario_month ON Allocation (scenario, month);
+CREATE INDEX IF NOT EXISTS IX_Allocation_scenario_month ON allocation (scenario, month);
 
-CREATE TABLE IF NOT EXISTS CapacityOverride (
+CREATE TABLE IF NOT EXISTS capacity_override (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   scenario        TEXT NOT NULL DEFAULT 'baseline',
   resource_key    TEXT NOT NULL,
@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS CapacityOverride (
   UNIQUE (scenario, resource_key)
 );
 
-CREATE TABLE IF NOT EXISTS Tbh (
+CREATE TABLE IF NOT EXISTS tbh (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   scenario    TEXT NOT NULL DEFAULT 'baseline',
   tbh_key     TEXT NOT NULL,
@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS Tbh (
   UNIQUE (scenario, tbh_key)
 );
 
-CREATE TABLE IF NOT EXISTS ImportMap (
+CREATE TABLE IF NOT EXISTS import_map (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   scenario    TEXT NOT NULL DEFAULT 'baseline',
   kind        TEXT NOT NULL CHECK (kind IN ('person','project')),
@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS ImportMap (
   UNIQUE (scenario, kind, source_name)
 );
 
-CREATE TABLE IF NOT EXISTS AuditLog (
+CREATE TABLE IF NOT EXISTS audit_log (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   at         TEXT NOT NULL,
   actor      TEXT NOT NULL,
@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS AuditLog (
   old_value  TEXT,
   new_value  TEXT
 );
-CREATE INDEX IF NOT EXISTS IX_AuditLog_at ON AuditLog (at DESC);
+CREATE INDEX IF NOT EXISTS IX_AuditLog_at ON audit_log (at DESC);
 
 -- ---------------------------------------------------------------------------
 -- Odoo reference cache (mirrors the ref_* tables in db/schema.postgres.sql).

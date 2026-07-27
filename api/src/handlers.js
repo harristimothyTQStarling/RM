@@ -36,7 +36,7 @@ async function handle(db, req) {
     return json(200, { me: { upn: user.upn, name: user.name, canEdit: canEdit(user) }, reference, plan });
   }
   if (method === "GET" && path === "/api/audit") {
-    const rows = await db.all("SELECT at, actor, entity, entity_key, action, old_value, new_value FROM AuditLog ORDER BY at DESC, id DESC LIMIT 200");
+    const rows = await db.all("SELECT at, actor, entity, entity_key, action, old_value, new_value FROM audit_log ORDER BY at DESC, id DESC LIMIT 200");
     return json(200, { entries: rows });
   }
 
