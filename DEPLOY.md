@@ -120,6 +120,7 @@ AAD_CLIENT_SECRET=<the secret VALUE>
 PUBLIC_URL=https://<your-domain>          # no trailing slash
 SESSION_SECRET=<openssl rand -base64 48>
 EDITOR_UPNS=tim@tqstarling.com,someone@tqstarling.com
+IMPORTER_UPNS=tim@tqstarling.com            # optional; who may IMPORT a forecast. Unset => tim only. Empty => nobody.
 ODOO_URL=https://<your>.odoo.com
 ODOO_DB=<odoo database name>
 ODOO_USER=<read-only service account>
@@ -152,6 +153,7 @@ curl https://<your-domain>/healthz          # {"ok":true,"db":"postgres"}
 |---|---|
 | **Sign in** | anyone in your Entra tenant (the `tid` claim is checked, so no outside accounts) |
 | **Edit** | only addresses listed in `EDITOR_UPNS` |
+| **Import a forecast** | only addresses in `IMPORTER_UPNS` (unset ⇒ `tim@tqstarling.com`; must also be an editor) — an import rewrites the whole plan, so it is held tighter than editing |
 | **Everyone else** | read-only |
 | **Changing editors** | edit the variable — takes effect immediately, no redeploy |
 | **Revoking all sessions** | rotate `SESSION_SECRET` — every cookie becomes invalid |

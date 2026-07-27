@@ -1,6 +1,9 @@
 <title>TQStarling Resource Planner</title>
 <style>
   :root{
+    /* Default (no explicit choice): honor the OS light/dark preference — this also
+       themes native controls (number inputs, selects) and scrollbars to match. */
+    color-scheme: light dark;
     --bg:#eef1f5; --surface:#ffffff; --surface-2:#f6f8fb; --surface-3:#eff3f8;
     --ink:#16202e; --ink-2:#42505f; --muted:#71808f; --faint:#9aa7b4;
     --line:#dde3ea; --line-strong:#c8d1db;
@@ -37,6 +40,7 @@
     }
   }
   :root[data-theme="light"]{
+    color-scheme: light;
     --bg:#eef1f5; --surface:#ffffff; --surface-2:#f6f8fb; --surface-3:#eff3f8;
     --ink:#16202e; --ink-2:#42505f; --muted:#71808f; --faint:#9aa7b4;
     --line:#dde3ea; --line-strong:#c8d1db;
@@ -52,6 +56,7 @@
     --shadow:0 1px 2px rgba(20,32,46,.06),0 6px 20px rgba(20,32,46,.06);
   }
   :root[data-theme="dark"]{
+    color-scheme: dark;
     --bg:#0e141c; --surface:#161f2b; --surface-2:#1a2531; --surface-3:#202c3a;
     --ink:#eaf0f6; --ink-2:#b9c6d3; --muted:#8496a6; --faint:#61707f;
     --line:#26323f; --line-strong:#33424f;
@@ -268,6 +273,10 @@
   body.viewer .addproj,
   body.viewer #bannerImport,
   body.viewer .card:has(#tbhAdd){display:none!important;}
+  /* forecast import is restricted to importers (IMPORTER_UPNS); the server enforces
+     it too — this just hides controls that would 403. */
+  body.noimport #btnImportXlsx,
+  body.noimport #bannerImport{display:none!important;}
   body.viewer .a-inputs input,
   body.viewer .cap-row input{pointer-events:none;background:var(--surface-3);color:var(--muted);}
   /* export menu + toast + arm */
@@ -428,10 +437,11 @@ const isPastMi = mi => mi < CURRENT_MI;
    every edit is PUT immediately and carries the version it was read at, so a stale
    write is rejected rather than silently overwriting a colleague. */
 const MATCH_V=2;   // bump when the auto-matcher changes — invalidates remembered mappings
-let ME = { upn:"", name:"", canEdit:false };
+let ME = { upn:"", name:"", canEdit:false, canImport:false };
 let state = { alloc:{}, capacity:{}, tbh:[], theme:null, importMap:{people:{},projects:{},v:MATCH_V}, lastImport:null };
 let VER = {};                      // "resourceKey|targetKey|YYYY-MM" -> version last seen from the server
 const canEdit = () => !!ME.canEdit;
+const canImport = () => !!ME.canImport;
 
 /* ---- id <-> API key mapping -------------------------------------------------
    The UI keys people/projects by their Odoo id (or a tbh-/crm- prefixed string);
@@ -465,11 +475,11 @@ let capVer = {};                   // resource id -> capacity-override version
 
 /* Write many cells at once (bulk allocate, forecast import). The server applies
    the batch atomically, so a conflict mid-way leaves nothing half-applied. */
-async function pushBatch(items, okMsg){
+async function pushBatch(items, okMsg, extra){
   if(!items.length) return true;
   try{
     status("Saving…");
-    const r = await api("POST","/api/allocations",{ items });
+    const r = await api("POST","/api/allocations",{ items, ...(extra||{}) });
     (r.results||[]).forEach((res,i)=>{
       const it=items[i]; const k=`${it.resourceKey}|${it.targetKey}|${it.month}`;
       if(res && res.deleted) delete VER[k]; else if(res && res.version) VER[k]=res.version;
@@ -1366,6 +1376,7 @@ function projectOptions(sel){ return `<option value="skip"${sel==="skip"?" selec
   .map(p=>`<option value="${p.id}"${String(sel)===String(p.id)?" selected":""}>${esc(projLabel(p))}${p.client&&p.client!=="Internal"?" · "+esc(p.client):""}</option>`).join(""); }
 
 async function handleXlsxFile(file){
+  if(!canImport()){ toast("Forecast import is restricted to the planning admin."); return; }
   try{
     toast("Reading "+file.name+"…");
     const ab=await file.arrayBuffer();
@@ -1476,21 +1487,27 @@ function applyImport(records,pmap,prmap,sheetName){
       const mi=MONTHS.findIndex(m=>m.key===mk); if(mi<0||isPastMi(mi)) return;
       batch.push({resourceKey:resKey(pid),targetKey:tgtKey(jid),month:mk,hours:state.alloc[pid][jid][mk],version:VER[verKey(pid,jid,mk)]||0});
     })));
-  pushBatch(batch, "Imported "+applied+" allocations from "+sheetName); toast("Imported "+applied+" allocations from "+sheetName);
+  pushBatch(batch, "Imported "+applied+" allocations from "+sheetName, {mode:"import"}); toast("Imported "+applied+" allocations from "+sheetName);
 }
 function renderBanner(){
   const el=document.getElementById("bannerRoot"); if(!el) return;
   if(bannerDismissed){ el.innerHTML=""; return; }
   const check=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h10l6 6v10H4Z"/><path d="M14 4v6h6"/><path d="m9 15 2 2 4-4"/></svg>`;
+  // Import CTA only for importers; others get the same context without an action.
+  const impBtn = canImport() ? `<button id="bannerImport">${state.lastImport?"Re-import":"Import forecast"}</button>` : "";
   if(state.lastImport){
-    el.innerHTML=`<div class="banner" style="background:var(--surface-2);border-color:var(--line-strong);color:var(--ink-2)">${check}<div class="sp">Imported <b>${esc(state.lastImport.sheet)}</b> — ${state.lastImport.count} allocations on ${esc(state.lastImport.date)}. Re-import to refresh from the latest workbook.</div><button id="bannerImport">Re-import</button><button class="x" id="bannerX" title="Dismiss">×</button></div>`;
+    el.innerHTML=`<div class="banner" style="background:var(--surface-2);border-color:var(--line-strong);color:var(--ink-2)">${check}<div class="sp">Imported <b>${esc(state.lastImport.sheet)}</b> — ${state.lastImport.count} allocations on ${esc(state.lastImport.date)}.${canImport()?" Re-import to refresh from the latest workbook.":""}</div>${impBtn}<button class="x" id="bannerX" title="Dismiss">×</button></div>`;
   } else {
-    el.innerHTML=`<div class="banner">${check}<div class="sp">Showing a <b>June-actuals draft</b>. Import your <b>CY26 forecast workbook</b> to load the real plan — it's parsed in your browser, nothing is uploaded.</div><button id="bannerImport">Import forecast</button><button class="x" id="bannerX" title="Dismiss">×</button></div>`;
+    const msg = canImport()
+      ? `Showing a <b>June-actuals draft</b>. Import your <b>CY26 forecast workbook</b> to load the real plan — it's parsed in your browser, nothing is uploaded.`
+      : `Showing a <b>June-actuals draft</b>. The <b>CY26 forecast</b> is imported by the planning admin.`;
+    el.innerHTML=`<div class="banner">${check}<div class="sp">${msg}</div>${impBtn}<button class="x" id="bannerX" title="Dismiss">×</button></div>`;
   }
-  el.querySelector("#bannerImport").addEventListener("click",()=>document.getElementById("xlsxInput").click());
+  const bi=el.querySelector("#bannerImport");
+  if(bi) bi.addEventListener("click",()=>{ if(!canImport()) return; document.getElementById("xlsxInput").click(); });
   el.querySelector("#bannerX").addEventListener("click",()=>{ bannerDismissed=true; el.innerHTML=""; });
 }
-document.getElementById("btnImportXlsx").addEventListener("click",()=>document.getElementById("xlsxInput").click());
+document.getElementById("btnImportXlsx").addEventListener("click",()=>{ if(!canImport()) return; document.getElementById("xlsxInput").click(); });
 document.getElementById("xlsxInput").addEventListener("change",e=>{ const f=e.target.files[0]; if(f) handleXlsxFile(f); e.target.value=""; });
 
 /* ============================ BULK ALLOCATE ============================ */
@@ -1609,6 +1626,7 @@ async function bootstrap(){
   state.importMap = { ...plan.importMap, v:MATCH_V };
 
   document.body.classList.toggle("viewer", !ME.canEdit);
+  document.body.classList.toggle("noimport", !ME.canImport);   // forecast import is importer-only
   const who=document.getElementById("whoami");
   if(who) who.innerHTML = `${esc(ME.name||ME.upn)} · ${ME.canEdit?"editor":"view only"} · <a href="/auth/logout">sign out</a>`;
 

@@ -15,8 +15,11 @@ const JANE = as("jane@tqstarling.com");    // signed in, view only
 const write = (db, headers) => call(db, "PUT", "/api/allocation",
   { resourceKey: "emp:110", targetKey: "prj:119", month: "2026-08", hours: 100, version: 0 }, headers);
 
-test.beforeEach(() => { process.env.EDITOR_UPNS = "tim@tqstarling.com, sam@tqstarling.com"; });
-test.after(() => { delete process.env.EDITOR_UPNS; });
+test.beforeEach(() => { process.env.EDITOR_UPNS = "tim@tqstarling.com, sam@tqstarling.com"; delete process.env.IMPORTER_UPNS; });
+test.after(() => { delete process.env.EDITOR_UPNS; delete process.env.IMPORTER_UPNS; });
+
+const importBatch = (db, headers) => call(db, "POST", "/api/allocations",
+  { mode: "import", items: [{ resourceKey: "emp:110", targetKey: "prj:119", month: "2026-08", hours: 10, version: 0 }] }, headers);
 
 test("named editors can write", async () => {
   const db = fresh();
@@ -35,6 +38,39 @@ test("/api/me tells the UI whether to render editing controls", async () => {
   const db = fresh();
   assert.equal((await call(db, "GET", "/api/me", {}, TIM)).body.canEdit, true);
   assert.equal((await call(db, "GET", "/api/me", {}, JANE)).body.canEdit, false);
+});
+
+/* ---- forecast import is a stricter capability than editing ---- */
+
+test("by default only the primary planner (tim) may import a forecast", async () => {
+  // IMPORTER_UPNS unset -> defaults to tim@tqstarling.com
+  assert.equal((await importBatch(fresh(), TIM)).status, 200, "tim can import");
+  assert.equal((await importBatch(fresh(), SAM)).status, 403, "a second editor cannot import");
+  assert.equal((await importBatch(fresh(), JANE)).status, 403, "a viewer certainly cannot");
+});
+
+test("/api/me exposes canImport so the UI hides import for non-importers", async () => {
+  const db = fresh();
+  assert.equal((await call(db, "GET", "/api/me", {}, TIM)).body.canImport, true);
+  assert.equal((await call(db, "GET", "/api/me", {}, SAM)).body.canImport, false, "editor, but not an importer");
+  assert.equal((await call(db, "GET", "/api/me", {}, JANE)).body.canImport, false);
+});
+
+test("ordinary bulk allocate (no import mode) stays open to every editor", async () => {
+  const ok = await call(fresh(), "POST", "/api/allocations",
+    { items: [{ resourceKey: "emp:110", targetKey: "prj:119", month: "2026-08", hours: 10, version: 0 }] }, SAM);
+  assert.equal(ok.status, 200, "restricting import must not restrict normal bulk editing");
+});
+
+test("IMPORTER_UPNS overrides who may import", async () => {
+  process.env.IMPORTER_UPNS = "sam@tqstarling.com";
+  assert.equal((await importBatch(fresh(), SAM)).status, 200, "the configured importer can import");
+  assert.equal((await importBatch(fresh(), TIM)).status, 403, "tim is no longer an importer");
+});
+
+test("an empty importer allowlist denies everyone (fail closed)", async () => {
+  process.env.IMPORTER_UPNS = "";
+  assert.equal((await importBatch(fresh(), TIM)).status, 403);
 });
 
 test("allowlist is case-insensitive and tolerates spacing", async () => {

@@ -56,4 +56,20 @@ function rolesFor(upn, devRoles) {
 
 const canEdit = (user) => !!user && user.roles.includes(ROLE_EDITOR);
 
-module.exports = { getUser, canEdit, editorUpns, rolesFor, ROLE_EDITOR };
+/**
+ * Who may IMPORT a forecast — a stricter allowlist than editing, because an import
+ * rewrites the whole plan in one shot. It is an editor capability (an importer must
+ * also be an editor). IMPORTER_UPNS follows the EDITOR_UPNS idiom:
+ *   unset        -> defaults to the primary planner (tim@tqstarling.com)
+ *   empty string -> nobody can import (fail closed, like the editor allowlist)
+ */
+function importerUpns() {
+  const raw = process.env.IMPORTER_UPNS;
+  return (raw == null ? "tim@tqstarling.com" : raw)
+    .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+}
+
+const canImport = (user) =>
+  canEdit(user) && importerUpns().includes(String((user && user.upn) || "").toLowerCase());
+
+module.exports = { getUser, canEdit, canImport, editorUpns, importerUpns, rolesFor, ROLE_EDITOR };

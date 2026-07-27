@@ -4,7 +4,7 @@
  * Azure Functions and the local dev server are both thin adapters over these,
  * so what runs in CI is what runs in Azure.
  */
-const { getUser, canEdit } = require("./auth");
+const { getUser, canEdit, canImport } = require("./auth");
 const store = require("./store");
 
 const json = (status, body) => ({ status, body });
@@ -19,7 +19,7 @@ async function handle(db, req) {
   const scenario = q.scenario || body.scenario || "baseline";
 
   if (path === "/api/me") {
-    return user ? json(200, { upn: user.upn, roles: user.roles, canEdit: canEdit(user) }) : UNAUTH;
+    return user ? json(200, { upn: user.upn, roles: user.roles, canEdit: canEdit(user), canImport: canImport(user) }) : UNAUTH;
   }
   if (!user) return UNAUTH;
 
@@ -33,7 +33,7 @@ async function handle(db, req) {
   if (method === "GET" && path === "/api/bootstrap") {
     // One round-trip for page load: identity + reference + plan.
     const [reference, plan] = await Promise.all([store.getReference(db), store.getPlan(db, scenario)]);
-    return json(200, { me: { upn: user.upn, name: user.name, canEdit: canEdit(user) }, reference, plan });
+    return json(200, { me: { upn: user.upn, name: user.name, canEdit: canEdit(user), canImport: canImport(user) }, reference, plan });
   }
   if (method === "GET" && path === "/api/audit") {
     const rows = await db.all("SELECT at, actor, entity, entity_key, action, old_value, new_value FROM audit_log ORDER BY at DESC, id DESC LIMIT 200");
@@ -50,6 +50,10 @@ async function handle(db, req) {
       return json(200, await store.putAllocation(db, user, { ...body, scenario }));
     }
     if (method === "POST" && path === "/api/allocations") {
+      // A forecast import declares itself (mode:"import") and rewrites the plan
+      // wholesale — restricted to importers even among editors. Ordinary bulk
+      // allocate (no mode) stays open to every editor.
+      if (body.mode === "import" && !canImport(user)) return json(403, { error: "forecast import is restricted to the planning admin" });
       const items = Array.isArray(body.items) ? body.items : null;
       if (!items) return json(400, { error: "items[] required" });
       if (items.length > 2000) return json(413, { error: "too many items in one batch" });
