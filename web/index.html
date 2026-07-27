@@ -387,6 +387,7 @@ const CURRENT_KEY = "2026-07";  // current month (for KPI "this month")
    These start empty and are filled by bootstrap() before the first render. */
 let PEOPLE = [], PROJECTS = [], CRM_PROJECTS = [], ALL_PROJECTS = [];
 let ACTUALS = new Map();          // "empId|projId|YYYY-MM" -> hours (closed months, read-only)
+let ACT_PERSON_PROJ = new Map();  // "empId" -> Set of projId (strings) they logged actuals on
 let SYNC = [];                    // ref_* freshness, shown in the footer
 function rebuildProjects(){ ALL_PROJECTS = PROJECTS.concat(CRM_PROJECTS); }
 function projRank(p){ return p.src==="CRM" ? 1 : 0; }                       // PRJ first, CRM second
@@ -525,10 +526,19 @@ function setAlloc(pid,projid,mkey,val){
   if(!state.alloc[pid][projid]) state.alloc[pid][projid]={};
   if(val>0) state.alloc[pid][projid][mkey]=val; else delete state.alloc[pid][projid][mkey];
 }
-function personProjects(pid){ return state.alloc[pid]? Object.keys(state.alloc[pid]).filter(k=>Object.keys(state.alloc[pid][k]||{}).length||true) : []; }
+/* A person's projects = their forecast projects (state.alloc) UNION the projects
+   they logged actuals on in past months. Actuals live in an overlay, not in the
+   plan, so without this union the Person view showed blank past months even though
+   the Project view (which sums through alloc()) showed the hours. */
+function personProjects(pid){
+  const ids = new Set(state.alloc[pid] ? Object.keys(state.alloc[pid]) : []);
+  const ap = ACT_PERSON_PROJ.get(String(pid)); if(ap) ap.forEach(x=>ids.add(x));
+  return [...ids];
+}
 function personMonthTotal(pid,mkey){
-  let t=0; const a=state.alloc[pid]; if(!a) return 0;
-  for(const proj in a) t+=a[proj][mkey]||0; return t;
+  // alloc() returns actuals for past months and forecast for the rest, so this is
+  // correct in both — unlike reading state.alloc directly, which misses actuals.
+  return personProjects(pid).reduce((t,proj)=>t+alloc(pid,proj,mkey),0);
 }
 function utilClass(hours,cap){
   if(!cap) return hours>0? "u-greenx":"u-none";
@@ -655,7 +665,7 @@ function personRow(p){
   `</div>`;
 }
 function personBody(p){
-  const projs= state.alloc[p.id]? sortProjIds(Object.keys(state.alloc[p.id])) : [];   // PRJ first, then CRM
+  const projs= sortProjIds(personProjects(p.id));   // forecast + actual projects, PRJ first then CRM
   const capVal = state.capacity[p.id]!==undefined? state.capacity[p.id] : "";
   let rows= projs.length? projs.map(pid=>allocLine(p,pid)).join("")
     : `<div class="empty-body">No projects yet — add one below.</div>`;
@@ -1547,8 +1557,13 @@ async function bootstrap(){
   rebuildProjects();
   SYNC = reference.sync || [];
 
-  ACTUALS = new Map();
-  reference.actuals.forEach(a=>ACTUALS.set(`${a.employeeId}|${a.projectId}|${a.month}`, a.hours));
+  ACTUALS = new Map(); ACT_PERSON_PROJ = new Map();
+  reference.actuals.forEach(a=>{
+    ACTUALS.set(`${a.employeeId}|${a.projectId}|${a.month}`, a.hours);
+    const k=String(a.employeeId);
+    if(!ACT_PERSON_PROJ.has(k)) ACT_PERSON_PROJ.set(k, new Set());
+    ACT_PERSON_PROJ.get(k).add(String(a.projectId));
+  });
 
   // plan -> local mirror, remembering each row's version for optimistic concurrency
   state.alloc={}; VER={};
