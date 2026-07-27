@@ -21,7 +21,13 @@
  * silently returning blank roles.
  */
 
+const { bestProjectMatch } = require("./match");
+const { reassignAllocations } = require("./store");
+
 const DEFAULT_TIMEOUT = 20000;
+
+// Actor recorded in the audit log for changes the sync makes on its own.
+const SYSTEM_USER = { upn: "system@odoo-sync" };
 
 class OdooError extends Error {
   constructor(msg, code) { super(msg); this.name = "OdooError"; this.code = code; }
@@ -160,6 +166,25 @@ async function readOpportunities(odoo) {
     .filter((o) => !/^(won|lost)$/i.test(o.stage));
 }
 
+/**
+ * Fetch specific opportunities by id INCLUDING archived (Won/Lost) ones.
+ * readOpportunities() drops closed opps, so once an opp closes we can no longer
+ * see its name/client through the normal path — but a closed opp still carries
+ * forecast we need to reconcile, and matching needs its name. active_test:false
+ * lifts Odoo's default "active = true" filter.
+ */
+async function readOppsByIds(odoo, ids) {
+  if (!ids.length) return [];
+  const rows = await odoo.searchRead("crm.lead", [["id", "in", ids]],
+    ["name", "partner_id", "stage_id", "active"], { context: { active_test: false } });
+  return rows.map((r) => ({
+    id: r.id,
+    name: String(r.name || "").replace(/\s+/g, " ").trim(),
+    client: m2oName(r.partner_id),
+    stage: m2oName(r.stage_id) || "Closed",
+  }));
+}
+
 /** Actual timesheet hours per employee/project/month for a date range. */
 async function readActuals(odoo, from, to) {
   const rows = await odoo.searchRead("account.analytic.line",
@@ -202,6 +227,60 @@ async function replaceAll(db, table, rows, columns) {
   return rows.length;
 }
 
+/* --------------------------------------------------- closed-CRM reconcile -- */
+/**
+ * After the reference cache is refreshed, reconcile forecast that is still parked
+ * on a CRM opportunity which has since CLOSED in Odoo:
+ *
+ *   - matched to a delivery project  -> move the forecast crm:<id> -> prj:<pid>,
+ *     keeping every hour, and let the opp drop out of the reference (migrated).
+ *   - no confident match             -> keep the forecast on the CRM opp but write
+ *     it back with needs_project=1 so the UI flags it; the next sync retries the
+ *     match and migrates it the moment a project appears.
+ *
+ * "Closed" is inferred structurally: a crm target that still has allocations but
+ * is no longer in the freshly-synced OPEN opportunity set. Best-effort and
+ * idempotent — a failure on one opp doesn't block the others or the sync.
+ */
+async function reconcileClosedCrm(db, odoo, projects, openOppIds) {
+  const rows = await db.all("SELECT DISTINCT target_key FROM allocation WHERE target_key LIKE 'crm:%'");
+  const crmIds = rows.map((r) => parseInt(String(r.target_key).slice(4), 10)).filter(Number.isInteger);
+  const closedIds = crmIds.filter((id) => !openOppIds.has(id));
+  const result = { migrated: 0, flagged: 0, closed: closedIds.length };
+  if (!closedIds.length) return result;
+
+  let details = [];
+  try { details = await readOppsByIds(odoo, closedIds); } catch { details = []; }
+  const byId = new Map(details.map((o) => [o.id, o]));
+
+  for (const id of closedIds) {
+    const opp = byId.get(id) || { id, name: `Closed opportunity #${id}`, client: "", stage: "Closed" };
+    try {
+      const hit = bestProjectMatch({ name: opp.name, client: opp.client }, projects);
+      if (hit) {
+        await reassignAllocations(db, SYSTEM_USER, `crm:${id}`, `prj:${hit.project.id}`);
+        result.migrated++;
+      } else {
+        // Keep the forecast where it is; retain the opp (active=1) so the UI can
+        // render it, tagged needs_project. Upsert because replaceAll may have
+        // deleted it moments ago (open-opp refresh) or a prior flag may exist.
+        await db.run(
+          `INSERT INTO ref_opportunity (id, name, client, stage, active, needs_project)
+           VALUES (?,?,?,?,1,1)
+           ON CONFLICT (id) DO UPDATE SET
+             name=excluded.name, client=excluded.client, stage=excluded.stage,
+             active=1, needs_project=1`,
+          [id, opp.name, opp.client || "", opp.stage || "Closed"]
+        );
+        result.flagged++;
+      }
+    } catch (e) {
+      result.error = (result.error || 0) + 1;   // leave for the next sync to retry
+    }
+  }
+  return result;
+}
+
 /** Full reference refresh. Safe to run on a schedule; each set is independent. */
 async function syncAll(db, odoo, { actualsFrom, actualsTo } = {}) {
   const out = {};
@@ -223,11 +302,14 @@ async function syncAll(db, odoo, { actualsFrom, actualsTo } = {}) {
       .filter((a) => personIds.has(a.employee_id) && projectIds.has(a.project_id));
     out.ref_actual = await replaceAll(db, "ref_actual", actuals, ["employee_id", "project_id", "month", "hours"]);
   }
+  // Migrate/flag forecast stranded on opportunities that have since closed. Runs
+  // after the open-opp refresh so the "still open?" test uses fresh data.
+  out.reconcile = await reconcileClosedCrm(db, odoo, projects, new Set(opps.map((o) => o.id)));
   return out;
 }
 
 module.exports = {
-  Odoo, OdooError, syncAll,
-  readPeople, readProjects, readOpportunities, readActuals,
+  Odoo, OdooError, syncAll, reconcileClosedCrm,
+  readPeople, readProjects, readOpportunities, readOppsByIds, readActuals,
   shapePeople, m2oName, m2oId,
 };

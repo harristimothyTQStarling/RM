@@ -122,8 +122,15 @@ CREATE TABLE IF NOT EXISTS ref_opportunity (
   name      VARCHAR(256) NOT NULL,
   client    VARCHAR(256) NOT NULL DEFAULT '',
   stage     VARCHAR(64)  NOT NULL DEFAULT '',
-  active    SMALLINT     NOT NULL DEFAULT 1   -- false once Won/Lost
+  active    SMALLINT     NOT NULL DEFAULT 1,  -- false once Won/Lost
+  -- 1 == this opportunity has CLOSED in Odoo but still carries forecast that the
+  -- sync could not migrate to a delivery project (no confident match). The row is
+  -- retained (active=1) so the UI can show the forecast with a "needs project"
+  -- flag; each sync re-attempts the match and clears this once one is found.
+  needs_project SMALLINT NOT NULL DEFAULT 0
 );
+-- Additive migration for databases created before needs_project existed.
+ALTER TABLE ref_opportunity ADD COLUMN IF NOT EXISTS needs_project SMALLINT NOT NULL DEFAULT 0;
 
 -- Actual timesheet hours for closed months, by person/project/month.
 CREATE TABLE IF NOT EXISTS ref_actual (

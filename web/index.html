@@ -144,6 +144,7 @@
   .badge.tbh{background:var(--tbh-wash);color:var(--tbh);}
   .badge.prj{background:var(--accent-wash);color:var(--accent-ink);}
   .badge.crm{background:var(--tbh-wash);color:var(--tbh);}
+  .badge.np{background:var(--u-full-wash,#fbe9d0);color:var(--u-full-ink,#8a4b00);border:1px solid currentColor;cursor:help;}
   .avatar{width:28px;height:28px;border-radius:50%;flex:0 0 auto;display:grid;place-items:center;font-size:11px;font-weight:650;color:#fff;}
 
   .mgrid{display:grid;grid-template-columns:repeat(12,minmax(46px,1fr)) 62px;}
@@ -392,6 +393,9 @@ let SYNC = [];                    // ref_* freshness, shown in the footer
 function rebuildProjects(){ ALL_PROJECTS = PROJECTS.concat(CRM_PROJECTS); }
 function projRank(p){ return p.src==="CRM" ? 1 : 0; }                       // PRJ first, CRM second
 function projLabel(p){ return (p.src==="CRM" ? "CRM - " : "PRJ - ") + p.name; }
+/* Badge for a closed CRM opp whose forecast could not be matched to a project yet.
+   The forecast stays put and re-matches on the next Odoo sync. */
+function npBadge(p){ return p && p.needsProject ? ` <span class="badge np" title="This opportunity has closed in Odoo, but the sync found no matching delivery project. Its forecast stays here and will move to the project automatically on the next sync once a match is found.">needs project</span>` : ""; }
 function sortedProjects(){ return ALL_PROJECTS.slice().sort((a,b)=>projRank(a)-projRank(b)||a.name.localeCompare(b.name)); }
 function sortProjIds(ids){ return ids.slice().sort((a,b)=>{ const x=projById(a), y=projById(b);
   if(!x||!y) return 0; return projRank(x)-projRank(y)||x.name.localeCompare(y.name); }); }
@@ -686,7 +690,7 @@ function allocLine(p,projid){
   }).join("");
   const rt=MKEYS.reduce((s,k)=>s+alloc(p.id,projid,k),0);
   return `<div class="a-line" data-line="${p.id}:${projid}">`+
-    `<div class="a-proj"><div style="min-width:0"><div class="pn">${esc(projLabel(pr))}</div>`+
+    `<div class="a-proj"><div style="min-width:0"><div class="pn">${esc(projLabel(pr))}${npBadge(pr)}</div>`+
       `<div class="cl">${esc(pr.client||"")}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""}</div></div>`+
       `<button class="rm" data-rmproj="${p.id}|${projid}" title="Remove project" aria-label="Remove">×</button></div>`+
     `<div class="a-inputs">${inputs}<div class="rowtot" data-rt="${p.id}:${projid}">${rt?fmt0(rt):""}</div></div>`+
@@ -868,7 +872,7 @@ function projectRow(pr){
     `<div class="p-head">`+
       `<div class="p-ident" data-ptoggle="${id}">`+
         `<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>`+
-        `<div style="min-width:0"><div class="p-name">${badge} ${esc(pr.name)}</div>`+
+        `<div style="min-width:0"><div class="p-name">${badge} ${esc(pr.name)}${npBadge(pr)}</div>`+
         `<div class="p-role">${esc(pr.client||"—")}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""} · ${people.length} resource${people.length===1?"":"s"}</div></div>`+
       `</div>`+
       `<div class="mgrid p-meta">${cells}<div class="mcell tot" data-pyr="${id}">${yr?fmt0(yr):"·"}</div></div>`+
@@ -934,7 +938,7 @@ function renderByCust(){
       const per=MKEYS.map(k=>projMonthTotal(pr.id,k)), t=per.reduce((a,b)=>a+b,0);
       const badge=pr.src==="CRM"?`<span class="badge crm">CRM</span>`:`<span class="badge prj">PRJ</span>`;
       const ptds=per.map(h=>`<td class="mcelln">${h?fmt(h):""}</td>`).join("");
-      body+=`<tr class="lvl2"><td class="lbl lvl2i">${badge} ${esc(pr.name)}`+
+      body+=`<tr class="lvl2"><td class="lbl lvl2i">${badge} ${esc(pr.name)}${npBadge(pr)}`+
         `${pr.src==="CRM"&&pr.stage?` <span class="muted">· ${esc(pr.stage)}</span>`:""}</td>`+
         `${ptds}<td class="mcelln col-tot">${t?fmt0(t):""}</td></tr>`;
     });
@@ -1553,7 +1557,7 @@ async function bootstrap(){
   ME = me;
   PEOPLE = reference.people.map(p=>({ ...p, id:p.id }));
   PROJECTS = reference.projects.map(p=>({ ...p, src:"PRJ" }));
-  CRM_PROJECTS = reference.opportunities.map(o=>({ id:"crm-"+o.id, name:o.name, client:o.client, stage:o.stage, src:"CRM", billable:true }));
+  CRM_PROJECTS = reference.opportunities.map(o=>({ id:"crm-"+o.id, name:o.name, client:o.client, stage:o.stage, src:"CRM", billable:true, needsProject:!!o.needsProject }));
   rebuildProjects();
   SYNC = reference.sync || [];
 

@@ -93,7 +93,9 @@ CREATE TABLE IF NOT EXISTS ref_opportunity (
   name   TEXT NOT NULL,
   client TEXT NOT NULL DEFAULT '',
   stage  TEXT NOT NULL DEFAULT '',
-  active INTEGER NOT NULL DEFAULT 1
+  active INTEGER NOT NULL DEFAULT 1,
+  -- see db/schema.postgres.sql: closed opp whose forecast has no matching project yet
+  needs_project INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS ref_actual (

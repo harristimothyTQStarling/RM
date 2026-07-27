@@ -58,14 +58,14 @@ async function getReference(db) {
   const [people, projects, opportunities, actuals, sync] = await Promise.all([
     db.all("SELECT id, name, role, dept, type FROM ref_person WHERE active = 1 ORDER BY name"),
     db.all("SELECT id, name, client, billable FROM ref_project WHERE active = 1 ORDER BY name"),
-    db.all("SELECT id, name, client, stage FROM ref_opportunity WHERE active = 1 ORDER BY name"),
+    db.all("SELECT id, name, client, stage, needs_project FROM ref_opportunity WHERE active = 1 ORDER BY name"),
     db.all("SELECT employee_id, project_id, month, hours FROM ref_actual"),
     db.all("SELECT source, synced_at, row_count, ok, message FROM sync_state"),
   ]);
   return {
     people: people.map(p => ({ id: p.id, name: p.name, role: p.role || "", dept: p.dept || "", type: p.type })),
     projects: projects.map(p => ({ id: p.id, name: p.name, client: p.client || "", billable: !!p.billable })),
-    opportunities: opportunities.map(o => ({ id: o.id, name: o.name, client: o.client || "", stage: o.stage || "" })),
+    opportunities: opportunities.map(o => ({ id: o.id, name: o.name, client: o.client || "", stage: o.stage || "", needsProject: !!o.needs_project })),
     actuals: actuals.map(a => ({
       employeeId: a.employee_id, projectId: a.project_id,
       month: String(a.month).slice(0, 7), hours: Number(a.hours),
@@ -127,6 +127,50 @@ async function putAllocations(db, user, items) {
     const out = [];
     for (const it of items) out.push(await putAllocation(db, user, it));
     return out;
+  });
+}
+
+/* --------------------------------------------------- move a target's plan -- */
+/**
+ * Move every allocation from one target_key to another, keeping the forecast.
+ * Used when a closed CRM opportunity is matched to its delivery project
+ * (crm:222 -> prj:119); also the primitive a manual "map to project" would call.
+ *
+ * If the destination already has a row for the same (scenario, resource, month) —
+ * someone forecast against the real project too — the hours are SUMMED into it and
+ * the source row deleted, rather than dropped: losing forecast is worse than a
+ * rare double-count, and every move is audited so it can be traced. Runs in one
+ * transaction so a mid-move failure leaves the plan wholly on the old key.
+ */
+async function reassignAllocations(db, user, fromKey, toKey) {
+  if (fromKey === toKey) return { moved: 0, merged: 0 };
+  return db.tx(async () => {
+    const rows = await db.all(
+      "SELECT id, scenario, resource_key, month, hours FROM allocation WHERE target_key = ?",
+      [fromKey]
+    );
+    let moved = 0, merged = 0;
+    for (const r of rows) {
+      const dst = await db.get(
+        "SELECT id, hours FROM allocation WHERE scenario=? AND resource_key=? AND target_key=? AND month=?",
+        [r.scenario, r.resource_key, toKey, r.month]
+      );
+      const key = `${r.scenario}|${r.resource_key}|${toKey}|${String(r.month).slice(0, 7)}`;
+      if (dst) {
+        const sum = Number(dst.hours) + Number(r.hours);
+        await db.run("UPDATE allocation SET hours=?, updated_by=?, updated_at=?, version=version+1 WHERE id=?",
+          [sum, user.upn, nowIso(), dst.id]);
+        await db.run("DELETE FROM allocation WHERE id=?", [r.id]);
+        await audit(db, user.upn, "allocation", key, "merge", r.hours, sum);
+        merged++;
+      } else {
+        await db.run("UPDATE allocation SET target_key=?, updated_by=?, updated_at=?, version=version+1 WHERE id=?",
+          [toKey, user.upn, nowIso(), r.id]);
+        await audit(db, user.upn, "allocation", key, "reassign", fromKey, toKey);
+      }
+      moved++;
+    }
+    return { moved, merged };
   });
 }
 
@@ -203,4 +247,4 @@ async function putImportMap(db, user, m) {
   return { ok: true };
 }
 
-module.exports = { getPlan, getReference, putAllocation, putAllocations, putCapacity, putTbh, deleteTbh, putImportMap, Conflict, monthKey };
+module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, putCapacity, putTbh, deleteTbh, putImportMap, Conflict, monthKey };
