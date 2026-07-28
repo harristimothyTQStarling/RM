@@ -1734,7 +1734,11 @@ async function bootstrap(){
   });
   state.capacity={}; plan.capacity.forEach(c=>{ state.capacity[fromResKey(c.resourceKey)]=c.hoursPerMonth; });
   state.tbh = plan.tbh.map(t=>({ id:"tbh-"+t.tbhKey, name:t.name, role:t.role, dept:t.dept, type:"tbh", start:t.start, cap:t.cap }));
-  state.importMap = { ...plan.importMap, v:MATCH_V };
+  // The API returns remembered import mappings keyed by import_map.kind — 'person'
+  // and 'project' (singular). The UI works in 'people'/'projects' (plural), so map
+  // them here; without this state.importMap.people is undefined and the import
+  // modal throws "Cannot use 'in' operator … in undefined" on the first row.
+  state.importMap = { people:(plan.importMap&&plan.importMap.person)||{}, projects:(plan.importMap&&plan.importMap.project)||{}, v:MATCH_V };
 
   document.body.classList.toggle("viewer", !ME.canEdit);
   document.body.classList.toggle("noimport", !ME.canImport);   // forecast import is importer-only
