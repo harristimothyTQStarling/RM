@@ -249,7 +249,11 @@
   .tbh-item .info{min-width:0;flex:1;}
   .tbh-item .info .r{font-weight:600;font-size:13px;}
   .tbh-item .info .d{font-size:11.5px;color:var(--muted);}
-  .field{display:flex;flex-direction:column;gap:4px;}
+  .field{display:flex;flex-direction:column;gap:4px;min-width:0;}
+  /* Fill the column and truncate long option text instead of letting a wide
+     <select> (e.g. "PRJ - Long Project Name · Client") stretch the grid track
+     past the modal edge. */
+  .field select,.field input{width:100%;min-width:0;box-sizing:border-box;}
   .field label{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600;}
   .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
   .sugg{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px dashed var(--line-strong);border-radius:9px;}
