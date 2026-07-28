@@ -209,6 +209,12 @@
   table.pivot td.mcelln .pct{display:block;font-size:9.5px;font-weight:500;opacity:.72;letter-spacing:.01em;white-space:nowrap;}
   /* month-over-month change in utilization (percentage points) */
   table.pivot td.mcelln .dlt{font-style:normal;font-size:8.5px;font-weight:700;margin-left:2px;opacity:.85;}
+  /* forecast-vs-actual variance shading: on-plan (green), over (amber), under (blue) */
+  table.pivot td.v-on{background:var(--u-good);} table.pivot td.v-on .h{color:var(--u-good-ink);}
+  table.pivot td.v-over{background:var(--u-orange);} table.pivot td.v-over .h{color:var(--u-orange-ink);}
+  table.pivot td.v-under{background:var(--u-under);} table.pivot td.v-under .h{color:var(--u-under-ink);}
+  table.pivot td.v-zero .h{color:var(--muted);}
+  .legend .box.v-on{background:var(--u-good);} .legend .box.v-over{background:var(--u-orange);} .legend .box.v-under{background:var(--u-under);}
   .kpi .val .kdlt{font-size:11.5px;font-weight:650;margin-left:7px;letter-spacing:0;vertical-align:middle;}
   .kdlt.up{color:var(--u-good-ink);}
   .kdlt.down{color:var(--u-over-ink);}
@@ -371,6 +377,7 @@
       <button class="tab" role="tab" data-view="byEmp" aria-selected="false">By Employee × Month</button>
       <button class="tab" role="tab" data-view="byRole" aria-selected="false">By Role × Month</button>
       <button class="tab" role="tab" data-view="byCust" aria-selected="false">By Customer × Month</button>
+      <button class="tab" role="tab" data-view="variance" aria-selected="false">Forecast vs Actual</button>
       <button class="tab" role="tab" data-view="hiring" aria-selected="false">Hiring / TBH</button>
     </div>
     <div class="filters" id="filters">
@@ -1034,6 +1041,103 @@ function renderHiring(){
     `</div></div>`;
 }
 
+/* ==================== PIVOT: FORECAST vs ACTUAL VARIANCE ==================== */
+/* Closed months only — a month you can compare needs BOTH a forecast (retained in
+   the plan) and actuals (synced from Odoo). The current month is still open, so it
+   is excluded until it closes. */
+const CLOSED_MONTHS = MONTHS.filter(m=>isPastMi(m.mi));
+/* Read forecast and actual RAW, not through alloc(): alloc() hides the plan behind
+   actuals for past months, but variance needs the plan value that was forecast for
+   that month (retained even after the month closed) alongside the actual. */
+function personForecastMonth(pid,mkey){
+  const a=state.alloc[pid]; if(!a) return 0;
+  let t=0; for(const proj in a){ const v=a[proj][mkey]; if(v) t+=v; } return t;
+}
+function personActualMonth(pid,mkey){
+  const set=ACT_PERSON_PROJ.get(String(pid)); if(!set) return 0;
+  let t=0; set.forEach(proj=>{ t+=ACTUALS.get(`${pid}|${proj}|${mkey}`)||0; }); return t;
+}
+/* Variance cell: actual on top, (actual − forecast) beneath. Green when the forecast
+   was accurate (within 10% or 4h), amber when actual overran the plan, blue when it
+   fell short, muted when neither number exists. */
+function varClass(f,a){
+  if(!f && !a) return "v-zero";
+  const d=a-f;
+  if(f && Math.abs(d) <= Math.max(4, f*0.10)) return "v-on";
+  return d>0 ? "v-over" : "v-under";
+}
+function varCell(f,a,extra){
+  const d=a-f, cls=varClass(f,a);
+  const pct = f ? Math.round(d/f*100) : null;
+  const sub = (f||a)
+    ? `<span class="pct">${d>0?"+":""}${fmt(d)}h${pct!=null?` · ${d>0?"+":""}${pct}%`:""}</span>`
+    : "";
+  const tip = `Forecast ${fmt0(f)}h · Actual ${fmt0(a)}h · Variance ${d>0?"+":""}${fmt0(d)}h`;
+  const main = (f||a) ? fmt(a) : "·";
+  return `<td class="mcelln ${cls}${extra?" "+extra:""}" title="${tip}"><span class="h">${main}</span>${sub}</td>`;
+}
+function varTotCell(f,a,extra){
+  const d=a-f;
+  return `<td class="mcelln ${varClass(f,a)}${extra?" "+extra:""}"><span class="h">${d>0?"+":""}${fmt(d)}</span></td>`;
+}
+function renderVariance(){
+  if(!CLOSED_MONTHS.length){
+    document.getElementById("viewRoot").innerHTML=
+      `<div class="panel"><div class="panel-hd"><h2>Forecast vs actual</h2></div>`+
+      `<div class="empty-body" style="padding:28px">No closed months yet. Variance appears once a month completes and its Odoo actuals are synced.</div></div>`;
+    return;
+  }
+  // Real people only (to-be-hired seats have no actuals to compare against), and
+  // only those with something to show in the closed period.
+  const ppl=filteredPeople().filter(p=>p.type!=="tbh").filter(p=>
+    CLOSED_MONTHS.some(m=> personForecastMonth(p.id,m.key) || personActualMonth(p.id,m.key)));
+  const head=`<thead><tr><th class="lbl">Person</th>`+
+    CLOSED_MONTHS.map(m=>`<th class="actual">${m.label}</th>`).join("")+
+    `<th class="col-tot">Forecast</th><th class="col-tot">Actual</th><th class="col-tot">Variance</th><th class="col-tot">Var %</th></tr></thead>`;
+  const byDept={}; ppl.forEach(p=>{ const d=p.dept||""; (byDept[d]=byDept[d]||[]).push(p); });
+  const acc={employee:{f:0,a:0,n:0}, contractor:{f:0,a:0,n:0}};
+  const colF=CLOSED_MONTHS.map(()=>0), colA=CLOSED_MONTHS.map(()=>0);
+  let body="";
+  deptsInOrder(ppl).forEach(d=>{ if(!byDept[d]) return;
+    body+=`<tr class="grp"><td class="lbl">${deptLabel(d)}</td>`+CLOSED_MONTHS.map(()=>`<td></td>`).join("")+`<td class="col-tot"></td><td class="col-tot"></td><td class="col-tot"></td><td class="col-tot"></td></tr>`;
+    byDept[d].forEach(p=>{
+      let rf=0, ra=0;
+      const tds=CLOSED_MONTHS.map((m,i)=>{ const f=personForecastMonth(p.id,m.key), a=personActualMonth(p.id,m.key);
+        rf+=f; ra+=a; colF[i]+=f; colA[i]+=a; return varCell(f,a); }).join("");
+      const A=acc[p.type]||acc.employee; A.f+=rf; A.a+=ra; A.n++;
+      const badge=p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
+      const vpct = rf? `${ra-rf>0?"+":""}${Math.round((ra-rf)/rf*100)}%` : (ra?"—":"");
+      body+=`<tr><td class="lbl">${esc(p.name)}${badge}<div class="muted" style="font-size:11px">${esc(p.role||"—")}</div></td>${tds}`+
+        `<td class="mcelln col-tot"><span class="h">${fmt(rf)}</span></td>`+
+        `<td class="mcelln col-tot"><span class="h">${fmt(ra)}</span></td>`+
+        varTotCell(rf,ra,"col-tot")+
+        `<td class="mcelln col-tot ${varClass(rf,ra)}"><span class="h">${vpct}</span></td></tr>`;
+    });
+  });
+  const footRow=(label,f,a,cls)=>{
+    const vpct = f? `${a-f>0?"+":""}${Math.round((a-f)/f*100)}%` : (a?"—":"");
+    return `<tr class="${cls||""}"><td class="lbl">${label}</td>`+CLOSED_MONTHS.map(()=>`<td></td>`).join("")+
+      `<td class="mcelln col-tot"><span class="h">${fmt(f)}</span></td>`+
+      `<td class="mcelln col-tot"><span class="h">${fmt(a)}</span></td>`+
+      varTotCell(f,a,"col-tot")+
+      `<td class="mcelln col-tot ${varClass(f,a)}"><span class="h">${vpct}</span></td></tr>`;
+  };
+  const totF=colF.reduce((s,x)=>s+x,0), totA=colA.reduce((s,x)=>s+x,0);
+  const foot=`<tfoot>`+
+    (acc.employee.n? footRow(`Employees <span class="muted">· ${acc.employee.n}</span>`,acc.employee.f,acc.employee.a):"")+
+    (acc.contractor.n? footRow(`Contractors <span class="muted">· ${acc.contractor.n}</span>`,acc.contractor.f,acc.contractor.a):"")+
+    footRow("All shown",totF,totA,"grand")+`</tfoot>`;
+  const range=CLOSED_MONTHS[0].label+"–"+CLOSED_MONTHS[CLOSED_MONTHS.length-1].label;
+  document.getElementById("viewRoot").innerHTML=
+    `<div class="panel"><div class="panel-hd"><h2>Forecast vs actual variance</h2>`+
+    `<span class="hint">closed months (${range}) · cell = actual hours; beneath = actual − forecast · ${ppl.length} people</span></div>`+
+    `<div class="scroll"><table class="pivot">${head}<tbody>${body}</tbody>${foot}</table></div>`+
+    `<div class="legend"><span>Variance = Actual − Forecast</span>`+
+    `<span class="sw"><span class="box v-on"></span>on plan (±10%)</span>`+
+    `<span class="sw"><span class="box v-over"></span>over plan (actual &gt; forecast)</span>`+
+    `<span class="sw"><span class="box v-under"></span>under plan (actual &lt; forecast)</span></div></div>`;
+}
+
 /* ============================ ROUTER ============================ */
 function render(){
   renderBanner();
@@ -1050,6 +1154,7 @@ function render(){
   else if(VIEW==="byRole") renderByRole();
   else if(VIEW==="byProj") renderByProj();
   else if(VIEW==="byCust") renderByCust();
+  else if(VIEW==="variance") renderVariance();
   else if(VIEW==="hiring") renderHiring();
 }
 function setView(v){ VIEW=v;
