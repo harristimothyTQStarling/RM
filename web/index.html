@@ -1472,10 +1472,30 @@ function guessProject(name){
 }
 const HIRE_RX=/resource|to.?be.?hired|\btbh\b|\btbd\b|new hire|open role|vacan|placeholder|unfilled|\bhire\b/i;
 function looksLikeHire(name){ return HIRE_RX.test(name||""); }
-/* What the matcher would pick on its own ("skip" when it finds nothing).
-   A remembered mapping is stored ONLY when it differs from this — so auto-matches always
-   re-run with the current logic instead of replaying a stale choice. */
-function autoPerson(n){ const a=guessPerson(n) || (looksLikeHire(n)?"__tbh__":""); return a? String(a) : "skip"; }
+/* Standard delivery roles = the distinct job titles Odoo already shows for the
+   roster (which is limited to delivery departments). The import snaps each sheet
+   role to the closest of these so To-Be-Hired seats group under real, comparable
+   roles rather than free-text like "Technical Consultant / Developer". */
+function deliveryRoles(){ return [...new Set(PEOPLE.map(p=>(p.role||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b)); }
+const SENIOR_RX=/\b(senior|snr|sr|lead|principal|staff)\b/i;
+function roleTokens(s){ return normName(s).replace(/\bsnr\b/g,"senior").replace(/\bsr\b/g,"senior").split(" ").filter(w=>w && !STOPW.has(w) && w.length>=2); }
+/* Best standard role for a free-text sheet role: token overlap, nudged so seniority
+   lines up ("Senior …" prefers a "Senior …" title). "" when the match is too weak. */
+function matchRole(sheetRole){
+  const roles=deliveryRoles(); const st=roleTokens(sheetRole||""); if(!roles.length||!st.length) return "";
+  const sSenior=SENIOR_RX.test(sheetRole||""); let best="", bestScore=0;
+  for(const r of roles){ const rt=new Set(roleTokens(r)); let sc=0;
+    st.forEach(t=>{ if(rt.has(t)) sc+=2; else if(t.length>=4 && [...rt].some(x=>x.includes(t)||t.includes(x))) sc+=1; });
+    if(sc<=0) continue; if(SENIOR_RX.test(r)===sSenior) sc+=1;
+    if(sc>bestScore){ bestScore=sc; best=r; } }
+  return bestScore>=2 ? best : "";
+}
+function roleOptions(sel){ return `<option value="">— choose role —</option>`+
+  deliveryRoles().map(r=>`<option value="${esc(r)}"${r===sel?" selected":""}>${esc(r)}</option>`).join(""); }
+/* What the matcher would pick on its own. Unmatched people now default to a
+   To-Be-Hired seat (not "skip") so their forecast is never silently dropped; a
+   remembered mapping is stored ONLY when the user overrides this default. */
+function autoPerson(n){ const g=guessPerson(n); return g? String(g) : "__tbh__"; }
 function autoProject(n){ const a=guessProject(n); return a? String(a) : "skip"; }
 
 function personOptions(sel){ return `<option value="skip"${sel==="skip"?" selected":""}>— skip —</option>`+
@@ -1512,6 +1532,9 @@ function openImportModal(records, sheetName){
   records.forEach(r=>{ const t=Object.values(r.months).reduce((s,x)=>s+x,0); totalHrs+=t; personHrs[r.person]=(personHrs[r.person]||0)+t; projHrs[r.project]=(projHrs[r.project]||0)+t; });
   const selP=n=> (n in state.importMap.people)? String(state.importMap.people[n]) : autoPerson(n);
   const selPr=n=> (n in state.importMap.projects)? String(state.importMap.projects[n]) : autoProject(n);
+  // the person's role as written in the sheet, and the standard Odoo role it maps to
+  const personSheetRole={}; records.forEach(r=>{ if(r.role && !(r.person in personSheetRole)) personSheetRole[r.person]=r.role; });
+  const roleFor=n=> matchRole(personSheetRole[n]||"");
   const overrides=persons.filter(n=>n in state.importMap.people).length + projects.filter(n=>n in state.importMap.projects).length;
   const matchedP=persons.filter(n=>{const v=selP(n);return v&&v!=="skip";}).length;
   const matchedPr=projects.filter(n=>{const v=selPr(n);return v&&v!=="skip";}).length;
@@ -1526,9 +1549,9 @@ function openImportModal(records, sheetName){
         <div class="stat"><div class="n tnum">${projects.length}</div><div class="l">Projects in sheet</div></div>
         <div class="stat"><div class="n tnum">${fmt0(totalHrs)}</div><div class="l">Forecast hours</div></div>
       </div>
-      <div class="mapsec"><h3>People ${tag(matchedP,persons.length)} <span class="cnt">matched by first name</span></h3>
-        <div class="scrollbox"><table class="maptbl"><thead><tr><th>In spreadsheet</th><th>Hours</th><th>Maps to (Odoo person)</th></tr></thead><tbody>
-        ${persons.map(n=>`<tr><td class="src">${esc(n)}</td><td class="hrs">${fmt0(personHrs[n])}h</td><td><select data-mapp="${esc(n)}">${personOptions(selP(n))}</select></td></tr>`).join("")}
+      <div class="mapsec"><h3>People ${tag(matchedP,persons.length)} <span class="cnt">unmatched → To-Be-Hired · role snapped to Odoo</span></h3>
+        <div class="scrollbox"><table class="maptbl"><thead><tr><th>In spreadsheet</th><th>Hours</th><th>Maps to (Odoo person)</th><th>Role (if To-Be-Hired)</th></tr></thead><tbody>
+        ${persons.map(n=>{ const sp=selP(n); return `<tr><td class="src">${esc(n)}${personSheetRole[n]?`<div class="muted" style="font-size:11px">${esc(personSheetRole[n])}</div>`:""}</td><td class="hrs">${fmt0(personHrs[n])}h</td><td><select data-mapp="${esc(n)}">${personOptions(sp)}</select></td><td><select data-maprole="${esc(n)}"${sp==="__tbh__"?"":" disabled"}>${roleOptions(roleFor(n))}</select></td></tr>`; }).join("")}
         </tbody></table></div></div>
       <div class="mapsec"><h3>Projects ${tag(matchedPr,projects.length)} <span class="cnt">matched by client / name</span></h3>
         <div class="scrollbox"><table class="maptbl"><thead><tr><th>In spreadsheet</th><th>Hours</th><th>Maps to (Odoo project)</th></tr></thead><tbody>
@@ -1547,15 +1570,23 @@ function openImportModal(records, sheetName){
     /*saved via API*/ openImportModal(records, sheetName); toast("Re-matched against PRJ + CRM");
   });
   document.getElementById("impBackdrop").addEventListener("click",e=>{ if(e.target.id==="impBackdrop") closeModal(); });
+  // the role picker only applies when the person becomes a To-Be-Hired seat
+  document.getElementById("impBackdrop").addEventListener("change",e=>{
+    const s=e.target; if(!s.matches||!s.matches("[data-mapp]")) return;
+    const rn=s.getAttribute("data-mapp");
+    const rs=document.querySelector(`[data-maprole="${(window.CSS&&CSS.escape)?CSS.escape(rn):rn}"]`);
+    if(rs) rs.disabled = s.value!=="__tbh__";
+  });
   document.getElementById("impApply").addEventListener("click",()=>{
-    const pmap={}, prmap={};
+    const pmap={}, prmap={}, rolemap={};
     document.querySelectorAll("[data-mapp]").forEach(s=>pmap[s.getAttribute("data-mapp")]=s.value);
     document.querySelectorAll("[data-mappr]").forEach(s=>prmap[s.getAttribute("data-mappr")]=s.value);
-    applyImport(records,pmap,prmap,sheetName);
+    document.querySelectorAll("[data-maprole]").forEach(s=>rolemap[s.getAttribute("data-maprole")]=s.value);
+    applyImport(records,pmap,prmap,sheetName,rolemap);
   });
 }
 function closeModal(){ document.getElementById("modalRoot").innerHTML=""; }
-function applyImport(records,pmap,prmap,sheetName){
+function applyImport(records,pmap,prmap,sheetName,rolemap){
   // Remember ONLY what the user changed. Anything matching the auto-guess is left unstored so the
   // next import re-runs the matcher (and picks up any improvement) rather than replaying a stale pick.
   Object.keys(pmap).forEach(n=>{
@@ -1570,21 +1601,30 @@ function applyImport(records,pmap,prmap,sheetName){
   });
   state.importMap.v=MATCH_V;
   state.alloc={}; state.capacity=state.capacity||{};
-  // create/reuse to-be-hired resources for people mapped to "Create as To-Be-Hired"
-  const tbhIds={};
-  function ensureTbh(name){
-    if(tbhIds[name]) return tbhIds[name];
-    let ex=state.tbh.find(t=>t.name===name);
-    if(ex){ tbhIds[name]=ex.id; return ex.id; }
+  // Unmatched sheet people -> To-Be-Hired seats, numbered within their matched Odoo
+  // role: "To Hire - Technical Consultant #1, #2". One seat per person; its role is
+  // snapped to a standard delivery role (editable in the modal). Seats are persisted
+  // via /api/tbh so they survive a reload rather than living only in memory.
+  rolemap=rolemap||{};
+  const tbhByPerson={}, roleCount={};
+  [...new Set(records.map(r=>r.person))].filter(n=>pmap[n]==="__tbh__").forEach(name=>{
     const rec=records.find(r=>r.person===name)||{};
+    const role=(rolemap[name]||matchRole(rec.role||"")||"").trim();
     const dept=DEPTS.includes(rec.dept)?rec.dept:"";
+    const bucket=role||"Unassigned"; roleCount[bucket]=(roleCount[bucket]||0)+1;
+    const label=role?`To Hire - ${role} #${roleCount[bucket]}`:`To Hire #${roleCount[bucket]}`;
     const id="tbh-imp-"+name.replace(/[^a-z0-9]+/gi,"-").toLowerCase();
-    state.tbh.push({id,name,role:rec.role||"To be hired",dept,type:"tbh",start:CURRENT_KEY,cap:160});
-    tbhIds[name]=id; return id;
-  }
+    tbhByPerson[name]={id,name:label,role,dept};
+  });
+  Object.values(tbhByPerson).forEach(s=>{
+    const ex=state.tbh.find(t=>String(t.id)===String(s.id));
+    if(ex){ ex.name=s.name; ex.role=s.role; ex.dept=s.dept; }
+    else state.tbh.push({id:s.id,name:s.name,role:s.role,dept:s.dept,type:"tbh",start:CURRENT_KEY,cap:160});
+    api("PUT","/api/tbh",{tbhKey:String(s.id).replace(/^tbh-?/,""),name:s.name,role:s.role,dept:s.dept,start:CURRENT_KEY,cap:160}).catch(()=>{});
+  });
   let applied=0;
   records.forEach(r=>{ let pid=pmap[r.person]; const prj=prmap[r.project];
-    if(pid==="__tbh__") pid=ensureTbh(r.person);
+    if(pid==="__tbh__") pid=tbhByPerson[r.person] && tbhByPerson[r.person].id;
     if(!pid||pid==="skip"||!prj||prj==="skip") return;
     Object.keys(r.months).forEach(mi=>{ mi=+mi; if(isPastMi(mi)) return;   // past months come from actuals, not forecast
       const M=MONTHS[mi]; if(!M) return;
