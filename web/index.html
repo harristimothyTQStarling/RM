@@ -1541,7 +1541,7 @@ function bulkPreview(){
 function openBulkModal(){
   const futures=MONTHS.filter(m=>!isPastMi(m.mi));
   const startDef=futures[0].key, endDef=(futures[2]||futures[futures.length-1]).key;
-  document.getElementById("modalRoot").innerHTML=`<div class="backdrop" id="bulkBackdrop"><div class="modal" style="width:min(540px,100%)" role="dialog" aria-modal="true">
+  document.getElementById("modalRoot").innerHTML=`<div class="backdrop" id="bulkBackdrop"><div class="modal" style="width:min(760px,100%)" role="dialog" aria-modal="true">
     <div class="modal-hd"><h2>Bulk allocate hours</h2><p>Spread hours across a month range for one person on one project. Past months (actuals) are excluded.</p></div>
     <div class="modal-bd">
       <div class="form-grid">
