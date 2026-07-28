@@ -1058,12 +1058,12 @@ function personActualMonth(pid,mkey){
   let t=0; set.forEach(proj=>{ t+=ACTUALS.get(`${pid}|${proj}|${mkey}`)||0; }); return t;
 }
 /* Variance cell: actual on top, (actual − forecast) beneath. Green when the forecast
-   was accurate (within 10% or 4h), amber when actual overran the plan, blue when it
-   fell short, muted when neither number exists. */
+   was accurate (within 5%, or 8h — 5% of a full 160h month), amber when actual
+   overran the plan, blue when it fell short, muted when neither number exists. */
 function varClass(f,a){
   if(!f && !a) return "v-zero";
   const d=a-f;
-  if(f && Math.abs(d) <= Math.max(4, f*0.10)) return "v-on";
+  if(f && Math.abs(d) <= Math.max(8, f*0.05)) return "v-on";
   return d>0 ? "v-over" : "v-under";
 }
 function varCell(f,a,extra){
@@ -1133,7 +1133,7 @@ function renderVariance(){
     `<span class="hint">closed months (${range}) · cell = actual hours; beneath = actual − forecast · ${ppl.length} people</span></div>`+
     `<div class="scroll"><table class="pivot">${head}<tbody>${body}</tbody>${foot}</table></div>`+
     `<div class="legend"><span>Variance = Actual − Forecast</span>`+
-    `<span class="sw"><span class="box v-on"></span>on plan (±10%)</span>`+
+    `<span class="sw"><span class="box v-on"></span>on plan (±5%)</span>`+
     `<span class="sw"><span class="box v-over"></span>over plan (actual &gt; forecast)</span>`+
     `<span class="sw"><span class="box v-under"></span>under plan (actual &lt; forecast)</span></div></div>`;
 }
