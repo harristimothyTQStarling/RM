@@ -89,7 +89,11 @@ async function handle(db, req) {
       return json(200, await store.putImportMap(db, user, { ...body, scenario }));
     }
     if (method === "POST" && path === "/api/sync") {
-      // Refresh the Odoo reference cache on demand. Read-only against Odoo.
+      // Refresh the Odoo reference cache on demand. Read-only against Odoo, but a
+      // sync rewrites the shared reference cache (and reconciles closed CRM opps),
+      // so it is held to the same planning-admin capability as forecast import
+      // (IMPORTER_UPNS — unset means tim@tqstarling.com only).
+      if (!canImport(user)) return json(403, { error: "Odoo sync is restricted to the planning admin" });
       const { Odoo, syncAll } = require("./odoo");
       const odoo = new Odoo();
       if (!odoo.configured) return json(503, { error: "Odoo is not configured (ODOO_URL / ODOO_DB / ODOO_USER / ODOO_PASSWORD)" });

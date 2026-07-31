@@ -280,7 +280,6 @@
   /* viewer mode: read-only for anyone not in EDITOR_UPNS. The server enforces this
      regardless — hiding the controls just avoids offering actions that would 403. */
   body.viewer #btnBulk,
-  body.viewer #btnSync,
   body.viewer #btnImportXlsx,
   body.viewer .rm,
   body.viewer .addproj,
@@ -289,6 +288,7 @@
   /* forecast import is restricted to importers (IMPORTER_UPNS); the server enforces
      it too — this just hides controls that would 403. */
   body.noimport #btnImportXlsx,
+  body.noimport #btnSync,
   body.noimport #bannerImport{display:none!important;}
   body.viewer .a-inputs input,
   body.viewer .prate input,
@@ -1408,6 +1408,7 @@ const exportMenu=document.getElementById("exportMenu");
    realized bill rates (older caches predate the bill_rate column). */
 document.getElementById("btnSync").addEventListener("click",async e=>{
   const b=e.currentTarget; if(b.disabled) return;
+  if(!canImport()){ toast("Odoo sync is restricted to the planning admin."); return; }
   b.disabled=true; const old=b.innerHTML; b.textContent="Syncing…"; status("Syncing from Odoo…");
   try{
     const r=await api("POST","/api/sync");

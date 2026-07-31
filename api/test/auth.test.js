@@ -62,6 +62,14 @@ test("ordinary bulk allocate (no import mode) stays open to every editor", async
   assert.equal(ok.status, 200, "restricting import must not restrict normal bulk editing");
 });
 
+test("Odoo sync is planning-admin only (same capability as import)", async () => {
+  // TIM is the default importer; SAM is an editor but not an importer.
+  assert.equal((await call(fresh(), "POST", "/api/sync", {}, SAM)).status, 403, "editor without import rights cannot sync");
+  assert.equal((await call(fresh(), "POST", "/api/sync", {}, JANE)).status, 403, "viewer cannot sync");
+  // TIM passes the capability gate; with no Odoo configured the next check answers 503.
+  assert.equal((await call(fresh(), "POST", "/api/sync", {}, TIM)).status, 503, "tim reaches the Odoo-config check");
+});
+
 test("IMPORTER_UPNS overrides who may import", async () => {
   process.env.IMPORTER_UPNS = "sam@tqstarling.com";
   assert.equal((await importBatch(fresh(), SAM)).status, 200, "the configured importer can import");
