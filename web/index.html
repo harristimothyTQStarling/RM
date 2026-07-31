@@ -186,6 +186,14 @@
   .a-inputs input:hover{background:var(--surface-3);}
   .a-inputs input.past{background:var(--surface-3);color:var(--muted);cursor:not-allowed;font-style:italic;}
   .a-inputs input.past:hover{background:var(--surface-3);}
+  /* $ view: closed-month cells show actual dollars (hours × realized Odoo rate) as
+     read-only text — same look as a locked past input, but text not an input. */
+  .a-inputs .dcell{border-left:1px solid var(--line);background:var(--surface-3);color:var(--muted);font-style:italic;
+    display:flex;align-items:center;justify-content:center;font-size:11.5px;font-variant-numeric:tabular-nums;padding:6px 2px;overflow:hidden;white-space:nowrap;}
+  /* latest actual realized rate, shown beside the (forecast) rate input */
+  .actrate{font-size:10px;color:var(--muted);white-space:nowrap;}
+  .a-proj .actrate{margin-left:auto;}
+  .a-proj .actrate~.prate{margin-left:8px;}
   .mgrid.head .mcell.actual{color:var(--accent-ink);}
   .mgrid.head .mcell .actflag{font-size:7.5px;letter-spacing:.02em;opacity:.75;font-weight:600;text-transform:uppercase;line-height:1;}
   table.pivot thead th.actual{color:var(--accent-ink);}
@@ -784,16 +792,36 @@ function personBody(p){
     rows+
     `<div class="addproj"><select data-addproj="${p.id}"><option value="">+ Add project…</option>${opts}</select></div>`;
 }
+/* One month cell on a person×project line. Hours mode: always the hour input.
+   $ mode: closed months become read-only dollar text (hours × actual Odoo rate) —
+   they're locked anyway, and it gives the per-project monthly $ breakdown; open
+   months stay hour inputs (the $ totals derive from the forecast rate). */
+function lineCell(pid,projid,m,label){
+  const v=alloc(pid,projid,m.key), past=isPastMi(m.mi);
+  if(past && isD()){
+    const r=ACT_RATES.get(`${pid}|${projid}|${m.key}`)||0, d=v*r;
+    return `<div class="dcell" title="${v?`${fmt(v)}h actual × $${fmt(r)}/hr${r?"":" (nothing billed)"}`:"no actual hours"}">${v?money(d):""}</div>`;
+  }
+  return `<input type="number" inputmode="numeric" min="0" step="1" value="${v||""}"${past?' readonly class="past" title="Actual timesheet hours"':''} data-a="${pid}|${projid}|${m.key}" aria-label="${label} ${m.label}${past?" (actual)":""}">`;
+}
+/* Latest closed-month actual rate for a pair, for the "act $X/hr" hint. */
+function lastActRate(pid,projid){
+  for(let i=CURRENT_MI-1;i>=0;i--){ const r=ACT_RATES.get(`${pid}|${projid}|${MKEYS[i]}`); if(r) return {rate:r,mon:MONTHS[i].name}; }
+  return null;
+}
+function actRateHint(pid,projid){
+  const a=lastActRate(pid,projid);
+  return a? `<span class="actrate" title="Actual realized rate from Odoo (latest closed month with billed hours)">act $${fmt(a.rate)}/hr · ${a.mon}</span>` : "";
+}
 function allocLine(p,projid){
   const pr=projById(projid); if(!pr) return "";
-  const inputs=MONTHS.map(m=>{ const v=alloc(p.id,projid,m.key); const past=isPastMi(m.mi);
-    return `<input type="number" inputmode="numeric" min="0" step="1" value="${v||""}"${past?' readonly class="past" title="Actual timesheet hours"':''} data-a="${p.id}|${projid}|${m.key}" aria-label="${pr.name} ${m.label}${past?" (actual)":""}">`;
-  }).join("");
+  const inputs=MONTHS.map(m=>lineCell(p.id,projid,m,pr.name)).join("");
   const rt=MKEYS.reduce((s,k)=>s+alloc(p.id,projid,k),0);
   const pr8=pairRate(p.id,projid);
   return `<div class="a-line" data-line="${p.id}:${projid}">`+
     `<div class="a-proj"><div style="min-width:0"><div class="pn">${esc(projLabel(pr))}${npBadge(pr)}</div>`+
       `<div class="cl">${esc(pr.client||"")}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""}</div></div>`+
+      actRateHint(p.id,projid)+
       `<span class="prate" title="Forecast bill rate for ${esc(p.name)} on this project ($/hr) — closed months use the actual rate from Odoo">$<input type="number" min="0" step="1" placeholder="0" value="${pr8||""}" data-prate="${p.id}|${projid}">/hr</span>`+
       `<button class="rm" data-rmproj="${p.id}|${projid}" title="Remove project" aria-label="Remove">×</button></div>`+
     `<div class="a-inputs">${inputs}<div class="rowtot" data-rt="${p.id}:${projid}">${rt?fmtHD0(rt,lineDollars(p.id,projid)):""}</div></div>`+
@@ -1031,15 +1059,14 @@ function npMapBanner(pr){
     `<button class="btn primary" data-mapopp="${esc(oppId)}">Map &amp; move forecast</button></div>`;
 }
 function resLine(p,pr){
-  const inputs=MONTHS.map(m=>{ const v=alloc(p.id,pr.id,m.key), past=isPastMi(m.mi);
-    return `<input type="number" inputmode="numeric" min="0" step="1" value="${v||""}"${past?' readonly class="past" title="Actual timesheet hours"':''} data-a="${p.id}|${pr.id}|${m.key}" aria-label="${esc(p.name)} ${m.label}">`;
-  }).join("");
+  const inputs=MONTHS.map(m=>lineCell(p.id,pr.id,m,esc(p.name))).join("");
   const rt=MKEYS.reduce((s,k)=>s+alloc(p.id,pr.id,k),0);
   const pr8=pairRate(p.id,pr.id);
   const badge=p.type==="tbh"?" <span class='badge tbh'>TBH</span>":p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
   return `<div class="a-line">`+
     `<div class="a-proj"><div style="min-width:0"><div class="pn">${esc(p.name)}${badge}</div>`+
       `<div class="cl">${esc(p.role||deptLabel(p.dept))}</div></div>`+
+      actRateHint(p.id,pr.id)+
       `<span class="prate" title="Forecast bill rate for ${esc(p.name)} on ${esc(pr.name)} ($/hr) — closed months use the actual rate from Odoo">$<input type="number" min="0" step="1" placeholder="0" value="${pr8||""}" data-prate="${p.id}|${pr.id}">/hr</span>`+
       `<button class="rm" data-rmres="${p.id}|${pr.id}" title="Remove resource" aria-label="Remove">×</button></div>`+
     `<div class="a-inputs">${inputs}<div class="rowtot" data-rt="${p.id}:${pr.id}">${rt?fmtHD0(rt,lineDollars(p.id,pr.id)):""}</div></div>`+
