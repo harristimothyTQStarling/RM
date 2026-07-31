@@ -958,7 +958,17 @@ function projMonthDollars(projid,mkey){ let t=0; allPeople().forEach(p=>{ t+=all
 // project-scope display value for the current mode
 function projV(projid,mkey){ return isD()? projMonthDollars(projid,mkey) : projMonthTotal(projid,mkey); }
 function fmtProj(projid,mkey){ const h=projMonthTotal(projid,mkey); if(!h) return ""; return isD()? money(projMonthDollars(projid,mkey)) : fmt(h); }
-function projPeople(projid){ return allPeople().filter(p=> state.alloc[p.id] && state.alloc[p.id][projid]!==undefined ); }
+/* A project's resources = people with forecast rows (state.alloc) UNION people who
+   logged actuals on it. Mirrors personProjects(): actuals live in an overlay, not in
+   the plan, so without the union a project whose hours are all actuals showed
+   "0 resources" while its month totals (which sum through alloc()) showed the hours. */
+function projPeople(projid){
+  const pj=String(projid);
+  return allPeople().filter(p=>{
+    if(state.alloc[p.id] && state.alloc[p.id][projid]!==undefined) return true;
+    const ap=ACT_PERSON_PROJ.get(String(p.id)); return !!(ap && ap.has(pj));
+  });
+}
 function byPersonOrder(a,b){ return deptRank(a.dept||"")-deptRank(b.dept||"")||a.name.localeCompare(b.name); }
 
 function renderByProj(){
