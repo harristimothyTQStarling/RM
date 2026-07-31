@@ -280,6 +280,7 @@
   /* viewer mode: read-only for anyone not in EDITOR_UPNS. The server enforces this
      regardless — hiding the controls just avoids offering actions that would 403. */
   body.viewer #btnBulk,
+  body.viewer #btnSync,
   body.viewer #btnImportXlsx,
   body.viewer .rm,
   body.viewer .addproj,
@@ -367,6 +368,7 @@
       <span class="save-pill"><span class="dot"></span><span id="saveState">Loading…</span></span>
       <span class="whoami" id="whoami"></span>
       <button class="btn primary" id="btnImportXlsx"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h10l6 6v10a0 0 0 0 1 0 0H4a0 0 0 0 1 0 0V4Z"/><path d="M14 4v6h6"/><path d="M8 15h8M8 18h5"/></svg>Import forecast</button>
+      <button class="btn" id="btnSync" title="Refresh people, projects, opportunities and actuals from Odoo (read-only)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>Sync Odoo</button>
       <button class="btn" id="btnTheme" title="Toggle theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>Theme</button>
       <div class="menu-wrap">
         <button class="btn" id="btnExport"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21V9m0 0 4 4m-4-4-4 4M4 7V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2"/></svg>Export</button>
@@ -1401,6 +1403,20 @@ document.getElementById("btnTheme").addEventListener("click",()=>{
 
 /* ============================ IMPORT / EXPORT ============================ */
 const exportMenu=document.getElementById("exportMenu");
+/* Sync from Odoo on demand (read-only against Odoo). Editor-only server-side;
+   needed after month close so the actuals cache picks up new hours AND the
+   realized bill rates (older caches predate the bill_rate column). */
+document.getElementById("btnSync").addEventListener("click",async e=>{
+  const b=e.currentTarget; if(b.disabled) return;
+  b.disabled=true; const old=b.innerHTML; b.textContent="Syncing…"; status("Syncing from Odoo…");
+  try{
+    const r=await api("POST","/api/sync");
+    const c=r.counts||{};
+    toast(`Odoo synced — ${c.ref_person??"?"} people · ${c.ref_project??"?"} projects · ${c.ref_opportunity??"?"} opportunities · ${c.ref_actual??"?"} actuals.`);
+    await bootstrap();
+  }catch(err){ status("Sync failed"); toast("Sync failed: "+(err&&err.message?err.message:err)); }
+  finally{ b.disabled=false; b.innerHTML=old; }
+});
 document.getElementById("btnExport").addEventListener("click",e=>{ e.stopPropagation(); exportMenu.classList.toggle("open"); });
 document.addEventListener("click",e=>{ if(!e.target.closest(".menu-wrap")) exportMenu.classList.remove("open"); });
 exportMenu.addEventListener("click",e=>{ const b=e.target.closest("[data-exp]"); if(!b) return;
