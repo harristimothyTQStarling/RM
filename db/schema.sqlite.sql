@@ -28,6 +28,18 @@ CREATE TABLE IF NOT EXISTS capacity_override (
   UNIQUE (scenario, resource_key)
 );
 
+CREATE TABLE IF NOT EXISTS bill_rate (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  scenario      TEXT NOT NULL DEFAULT 'baseline',
+  resource_key  TEXT NOT NULL,
+  target_key    TEXT NOT NULL,
+  rate          REAL NOT NULL CHECK (rate > 0),
+  updated_by    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL,
+  version       INTEGER NOT NULL DEFAULT 1,
+  UNIQUE (scenario, resource_key, target_key)
+);
+
 CREATE TABLE IF NOT EXISTS tbh (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   scenario    TEXT NOT NULL DEFAULT 'baseline',

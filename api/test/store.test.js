@@ -194,3 +194,36 @@ test("audit log records who changed what, and the previous value", async () => {
   assert.equal(upd.old_value, "100");
   assert.equal(upd.new_value, "120");
 });
+
+/* ----------------------------------------------------------------- bill rate -- */
+const putRate = (db, rate, version, headers = EDITOR) =>
+  call(db, "PUT", "/api/rate", { resourceKey: "emp:110", targetKey: "prj:119", rate, version }, headers);
+
+test("bill rate round-trips per resource x target and shows in the plan", async () => {
+  const db = fresh();
+  const r = await putRate(db, 185, 0);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.version, 1);
+  // the same resource carries a different rate on a different target
+  await call(db, "PUT", "/api/rate", { resourceKey: "emp:110", targetKey: "prj:120", rate: 95, version: 0 });
+  const plan = await call(db, "GET", "/api/plan");
+  const rates = Object.fromEntries(plan.body.rates.map(x => [x.targetKey, x.rate]));
+  assert.deepEqual(rates, { "prj:119": 185, "prj:120": 95 });
+});
+
+test("rate: second writer is rejected with the winning value; rate 0 deletes", async () => {
+  const db = fresh();
+  await putRate(db, 185, 0);
+  const stale = await putRate(db, 200, 0, OTHER);   // OTHER wrote against a stale version
+  assert.equal(stale.status, 409);
+  assert.equal(stale.body.current.rate, 185);
+  const del = await putRate(db, 0, 1);
+  assert.ok(del.body.deleted);
+  assert.equal((await call(db, "GET", "/api/plan")).body.rates.length, 0);
+});
+
+test("viewer cannot set a rate", async () => {
+  const db = fresh();
+  const r = await putRate(db, 100, 0, VIEWER);
+  assert.equal(r.status, 403);
+});

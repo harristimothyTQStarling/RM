@@ -47,6 +47,21 @@ CREATE TABLE IF NOT EXISTS capacity_override (
   UNIQUE (scenario, resource_key)
 );
 
+-- Bill rate for a resource on a specific target (person x project/opportunity).
+-- One rate per pair, not per month: the $ view multiplies planned hours by it.
+-- rate = 0 never stored; clearing a rate deletes the row.
+CREATE TABLE IF NOT EXISTS bill_rate (
+  id            SERIAL PRIMARY KEY,
+  scenario      VARCHAR(64)  NOT NULL DEFAULT 'baseline',
+  resource_key  VARCHAR(64)  NOT NULL,
+  target_key    VARCHAR(64)  NOT NULL,
+  rate          NUMERIC(8,2) NOT NULL CHECK (rate > 0),
+  updated_by    VARCHAR(128) NOT NULL,
+  updated_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  version       INT          NOT NULL DEFAULT 1,
+  UNIQUE (scenario, resource_key, target_key)
+);
+
 -- To-be-hired seats. These have no Odoo record — this table IS their system of
 -- record. dept may be empty (an open role need not have a practice).
 CREATE TABLE IF NOT EXISTS tbh (

@@ -63,6 +63,11 @@ async function handle(db, req) {
       if (!body.resourceKey) return json(400, { error: "resourceKey required" });
       return json(200, await store.putCapacity(db, user, { ...body, scenario }));
     }
+    if (method === "PUT" && path === "/api/rate") {
+      if (!body.resourceKey || !body.targetKey) return json(400, { error: "resourceKey and targetKey required" });
+      if (body.rate != null && (!Number.isFinite(Number(body.rate)) || Number(body.rate) < 0)) return json(400, { error: "rate must be a non-negative number" });
+      return json(200, await store.putRate(db, user, { ...body, scenario }));
+    }
     if (method === "PUT" && path === "/api/tbh") {
       if (!body.tbhKey || !body.name) return json(400, { error: "tbhKey and name required" });
       return json(200, await store.putTbh(db, user, { ...body, scenario }));

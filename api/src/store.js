@@ -22,11 +22,12 @@ const monthKey = (m) => String(m).length === 7 ? `${m}-01` : String(m).slice(0, 
 
 /* ---------------------------------------------------------------- read plan -- */
 async function getPlan(db, scenario = "baseline") {
-  const [allocations, capacity, tbh, importMap] = await Promise.all([
+  const [allocations, capacity, tbh, importMap, rates] = await Promise.all([
     db.all("SELECT resource_key, target_key, month, hours, version, updated_by, updated_at FROM allocation WHERE scenario = ?", [scenario]),
     db.all("SELECT resource_key, hours_per_month, version FROM capacity_override WHERE scenario = ?", [scenario]),
     db.all("SELECT tbh_key, name, role, dept, start_month, capacity, version FROM tbh WHERE scenario = ?", [scenario]),
     db.all("SELECT kind, source_name, target_key FROM import_map WHERE scenario = ?", [scenario]),
+    db.all("SELECT resource_key, target_key, rate, version FROM bill_rate WHERE scenario = ?", [scenario]),
   ]);
   return {
     scenario,
@@ -36,6 +37,7 @@ async function getPlan(db, scenario = "baseline") {
       version: r.version, updatedBy: r.updated_by, updatedAt: String(r.updated_at),
     })),
     capacity: capacity.map(r => ({ resourceKey: r.resource_key, hoursPerMonth: Number(r.hours_per_month), version: r.version })),
+    rates: rates.map(r => ({ resourceKey: r.resource_key, targetKey: r.target_key, rate: Number(r.rate), version: r.version })),
     tbh: tbh.map(r => ({
       tbhKey: r.tbh_key, name: r.name, role: r.role, dept: r.dept,
       start: r.start_month ? String(r.start_month).slice(0, 7) : null,
@@ -216,6 +218,38 @@ async function putCapacity(db, user, c) {
   return { version: next };
 }
 
+/* --------------------------------------------------------------- bill rate -- */
+/** One $/hr rate per (resource, target) pair — not per month. rate null/0
+ *  deletes the row: an unpriced line and a $0 line are the same thing. */
+async function putRate(db, user, b) {
+  const scenario = b.scenario || "baseline";
+  const rate = Number(b.rate) || 0;
+  const expected = Number.isFinite(b.version) ? Number(b.version) : 0;
+  const cur = await db.get("SELECT id, rate, version FROM bill_rate WHERE scenario=? AND resource_key=? AND target_key=?",
+    [scenario, b.resourceKey, b.targetKey]);
+  const key = `${scenario}|${b.resourceKey}|${b.targetKey}`;
+  if (!cur) {
+    if (expected !== 0) throw new Conflict(null);
+    if (rate === 0) return { deleted: true, version: 0 };
+    await db.run("INSERT INTO bill_rate (scenario, resource_key, target_key, rate, updated_by, updated_at, version) VALUES (?,?,?,?,?,?,1)",
+      [scenario, b.resourceKey, b.targetKey, rate, user.upn, nowIso()]);
+    await audit(db, user.upn, "rate", key, "insert", null, rate);
+    return { version: 1, rate };
+  }
+  if (cur.version !== expected) throw new Conflict({ rate: Number(cur.rate), version: cur.version });
+  if (rate === 0) {
+    await db.run("DELETE FROM bill_rate WHERE id=?", [cur.id]);
+    await audit(db, user.upn, "rate", key, "delete", cur.rate, null);
+    return { deleted: true, version: 0 };
+  }
+  const next = cur.version + 1;
+  const r = await db.run("UPDATE bill_rate SET rate=?, updated_by=?, updated_at=?, version=? WHERE id=? AND version=?",
+    [rate, user.upn, nowIso(), next, cur.id, expected]);
+  if (!r.changes) throw new Conflict(null);
+  await audit(db, user.upn, "rate", key, "update", cur.rate, rate);
+  return { version: next, rate };
+}
+
 /* --------------------------------------------------------------------- tbh -- */
 async function putTbh(db, user, t) {
   const scenario = t.scenario || "baseline";
@@ -263,4 +297,4 @@ async function putImportMap(db, user, m) {
   return { ok: true };
 }
 
-module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, mapOpportunityToProject, putCapacity, putTbh, deleteTbh, putImportMap, Conflict, monthKey };
+module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, mapOpportunityToProject, putCapacity, putRate, putTbh, deleteTbh, putImportMap, Conflict, monthKey };

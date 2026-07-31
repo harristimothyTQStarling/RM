@@ -290,7 +290,18 @@
   body.noimport #btnImportXlsx,
   body.noimport #bannerImport{display:none!important;}
   body.viewer .a-inputs input,
+  body.viewer .prate input,
   body.viewer .cap-row input{pointer-events:none;background:var(--surface-3);color:var(--muted);}
+  /* ---------- Hours / Dollars mode toggle ---------- */
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--surface-2);flex:none}
+  .seg button{border:0;background:transparent;color:var(--muted);font:inherit;font-size:12.5px;font-weight:600;padding:6px 12px;cursor:pointer}
+  .seg button[aria-pressed="true"]{background:var(--accent);color:#fff}
+  .seg button:not([aria-pressed="true"]):hover{color:var(--ink)}
+  /* per-line (person × project) bill rate */
+  .prate{display:flex;align-items:center;gap:2px;font-size:10.5px;color:var(--muted);margin-left:auto;flex:none}
+  .prate input{width:46px;border:1px solid var(--line);border-radius:5px;background:var(--surface);color:var(--ink);font:inherit;font-size:11px;padding:2px 4px;text-align:right}
+  .prate input:focus{outline:none;border-color:var(--accent)}
+  .a-proj .prate~.rm{margin-left:6px}
   /* export menu + toast + arm */
   .menu-wrap{position:relative;}
   .menu{position:absolute;right:0;top:calc(100% + 6px);background:var(--surface);border:1px solid var(--line-strong);
@@ -381,6 +392,10 @@
       <button class="tab" role="tab" data-view="hiring" aria-selected="false">Hiring / TBH</button>
     </div>
     <div class="filters" id="filters">
+      <div class="seg" id="modeSeg" role="group" aria-label="Show hours or dollars">
+        <button type="button" data-mode="hours" aria-pressed="true">Hours</button>
+        <button type="button" data-mode="dollars" aria-pressed="false">$</button>
+      </div>
       <input type="text" class="search" id="fSearch" placeholder="Search name / role…" aria-label="Search">
       <select id="fDept" aria-label="Department"></select>
       <select id="fType" aria-label="Type">
@@ -451,8 +466,11 @@ const isPastMi = mi => mi < CURRENT_MI;
    write is rejected rather than silently overwriting a colleague. */
 const MATCH_V=2;   // bump when the auto-matcher changes — invalidates remembered mappings
 let ME = { upn:"", name:"", canEdit:false, canImport:false };
-let state = { alloc:{}, capacity:{}, tbh:[], theme:null, importMap:{people:{},projects:{},v:MATCH_V}, lastImport:null };
+let state = { alloc:{}, capacity:{}, rates:{}, tbh:[], theme:null, viewMode:"hours", importMap:{people:{},projects:{},v:MATCH_V}, lastImport:null };
 let VER = {};                      // "resourceKey|targetKey|YYYY-MM" -> version last seen from the server
+let RATE_VER = {};                 // "resourceKey|targetKey" -> bill-rate version last seen from the server
+// Hours vs dollars is a personal display preference, not plan data — kept per browser.
+try{ if(localStorage.getItem("tqs-rm-viewmode")==="dollars") state.viewMode="dollars"; }catch(e){}
 const canEdit = () => !!ME.canEdit;
 const canImport = () => !!ME.canImport;
 
@@ -536,6 +554,31 @@ async function pushAllocation(pid, jid, mk, hours){
   }
 }
 
+/* Persist one pair's bill rate. Mirrors pushAllocation's concurrency contract. */
+async function pushRate(pid, jid, rate){
+  const k = `${resKey(pid)}|${tgtKey(jid)}`;
+  try{
+    status("Saving…");
+    const r = await api("PUT","/api/rate",{ resourceKey:resKey(pid), targetKey:tgtKey(jid), rate, version:RATE_VER[k]||0 });
+    if (r.deleted) delete RATE_VER[k]; else RATE_VER[k]=r.version;
+    status("Saved");
+    return true;
+  }catch(e){
+    if (e.status === 409){
+      const cur = e.data && e.data.current;
+      if (cur){ setPairRateLocal(pid,jid,cur.rate); RATE_VER[k]=cur.version; }
+      else { setPairRateLocal(pid,jid,0); delete RATE_VER[k]; }
+      status("Conflict");
+      toast(`Someone else changed that bill rate — it is now $${cur?cur.rate:0}/hr. Your value was not saved.`);
+      render();
+    } else {
+      status("Save failed");
+      toast(e.message);
+    }
+    return false;
+  }
+}
+
 /* ============================ HELPERS ============================ */
 function allPeople(){ return PEOPLE.concat(state.tbh); }
 function personById(id){ return allPeople().find(p=>String(p.id)===String(id)); }
@@ -591,6 +634,22 @@ function deptsInOrder(people){                                     // every dept
 function fmt(n){ return n? (Math.round(n*10)/10).toLocaleString():""; }
 function fmt0(n){ return n? Math.round(n).toLocaleString():"0"; }
 
+/* ---------- Bill rates (per person × project) & hours/dollars display mode ---------- */
+function pairRate(pid,projid){ const r=state.rates[pid]; const v=r&&r[projid]; return (v===undefined||v===null||v==="")?0:Number(v)||0; }
+function setPairRateLocal(pid,projid,rate){
+  if(!state.rates[pid]) state.rates[pid]={};
+  if(rate>0) state.rates[pid][projid]=rate;
+  else { delete state.rates[pid][projid]; if(!Object.keys(state.rates[pid]).length) delete state.rates[pid]; }
+}
+function personMonthDollars(pid,mkey){ let t=0; const a=state.alloc[pid]; if(!a) return 0;
+  for(const proj in a) t+=(a[proj][mkey]||0)*pairRate(pid,proj); return t; }
+function personDollars(pid){ return MKEYS.reduce((s,k)=>s+personMonthDollars(pid,k),0); }
+function isD(){ return state.viewMode==="dollars"; }
+function money(n){ return "$"+Math.round(n||0).toLocaleString(); }
+// Format an hours/dollars pair; the "has data" signal is the underlying hours.
+function fmtHD(h,d){ if(!h) return ""; return isD()? money(d) : fmt(h); }
+function fmtHD0(h,d){ return isD()? money(d) : fmt0(h); }
+
 /* ============================ FILTERS ============================ */
 const F={search:"",dept:"all",type:"all"};
 function passFilter(p){
@@ -617,9 +676,9 @@ function renderKpis(){
   const tbh=state.tbh.length;
   const cur=CURRENT_KEY; const curM=MONTHS.find(m=>m.key===cur)||MONTHS[0];
   // allocated vs capacity, kept separate for employees and contractors (blending them distorts both)
-  const sumFor=(type,mk)=>{ let a=0,c=0;
-    ppl.filter(p=>p.type===type).forEach(p=>{ a+=personMonthTotal(p.id,mk); c+=capOf(p,mk); });
-    return {a,c,u:c?Math.round(a/c*100):0,cls:utilClass(a,c).replace("u-","uv-")}; };
+  const sumFor=(type,mk)=>{ let a=0,c=0,ad=0;
+    ppl.filter(p=>p.type===type).forEach(p=>{ a+=personMonthTotal(p.id,mk); c+=capOf(p,mk); ad+=personMonthDollars(p.id,mk); });
+    return {a,c,ad,u:c?Math.round(a/c*100):0,cls:utilClass(a,c).replace("u-","uv-")}; };
   const prevM = CURRENT_MI>0 ? MONTHS[CURRENT_MI-1] : null;
   const E=sumFor("employee",cur), C=sumFor("contractor",cur);
   const Ep=prevM? sumFor("employee",prevM.key):null, Cp=prevM? sumFor("contractor",prevM.key):null;
@@ -632,8 +691,8 @@ function renderKpis(){
   const kpi=[
     {label:"People",val:emp+con+tbh,meta:emp+" emp · "+con+" contractor"+(tbh?" · "+tbh+" TBH":"")},
     {label:"Projects",val:ALL_PROJECTS.length,meta:PROJECTS.length+" PRJ · "+CRM_PROJECTS.length+" CRM pipeline"},
-    {label:curM.label+" · employees",val:E.u+"%"+mom(E,Ep),cls:E.cls,meta:fmt0(E.a)+"h of "+fmt0(E.c)+"h capacity"+vsPrev},
-    {label:curM.label+" · contractors",val:C.u+"%"+mom(C,Cp),cls:C.cls,meta:fmt0(C.a)+"h of "+fmt0(C.c)+"h capacity"+vsPrev},
+    {label:curM.label+" · employees",val:E.u+"%"+mom(E,Ep),cls:E.cls,meta:(isD()? money(E.ad)+" forecast · "+fmt0(E.a)+"h of "+fmt0(E.c)+"h" : fmt0(E.a)+"h of "+fmt0(E.c)+"h capacity")+vsPrev},
+    {label:curM.label+" · contractors",val:C.u+"%"+mom(C,Cp),cls:C.cls,meta:(isD()? money(C.ad)+" forecast · "+fmt0(C.a)+"h of "+fmt0(C.c)+"h" : fmt0(C.a)+"h of "+fmt0(C.c)+"h capacity")+vsPrev},
     {label:"Attention",val:over,meta:over===1?"person over-allocated":"people over-allocated"},
   ];
   document.getElementById("kpis").innerHTML=kpi.map(k=>
@@ -660,7 +719,7 @@ function renderAllocate(){
   let html=`<div class="panel"><div class="panel-hd">`+
     `<div style="display:flex;align-items:center;gap:12px"><h2>Allocate hours</h2>`+
     `<button class="btn" id="btnBulk" style="padding:5px 11px"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> Bulk allocate</button></div>`+
-    `<span class="hint">Click a person to expand · Jan–Jun are actual hours (locked) · Jul–Dec are editable forecast · saved automatically</span></div>`+
+    `<span class="hint">Click a person to expand · Jan–Jun are actual hours (locked) · Jul–Dec are editable forecast · saved automatically${isD()?" · <b>$ view</b>: totals are hours × per-project bill rate; inputs stay hours":""}</span></div>`+
     `<div class="scroll"><div style="min-width:900px">`;
   // sticky month header aligned to grid (offset by name column)
   html+=`<div style="display:grid;grid-template-columns:var(--namecol) 1fr;position:sticky;top:0;z-index:5">`+
@@ -677,10 +736,12 @@ function personRow(p){
   const isOpen=openSet.has(String(p.id));
   const cells=MONTHS.map(m=>{
     const h=personMonthTotal(p.id,m.key), c=capOf(p,m.key);
-    return `<div class="mcell ${utilClass(h,c)}" data-sum="${p.id}:${m.key}"><span class="h">${h?fmt(h):"·"}</span><span class="u">${c?Math.round(h/c*100)+"%":""}</span></div>`;
+    return `<div class="mcell ${utilClass(h,c)}" data-sum="${p.id}:${m.key}"><span class="h">${h?fmtHD(h,personMonthDollars(p.id,m.key)):"·"}</span><span class="u">${c?Math.round(h/c*100)+"%":""}</span></div>`;
   }).join("");
   const yr=MKEYS.reduce((s,k)=>s+personMonthTotal(p.id,k),0);
+  const yrD=personDollars(p.id);
   const badge=p.type==="tbh"?`<span class="badge tbh">TBH</span>`:p.type==="contractor"?`<span class="badge contractor">Contractor</span>`:`<span class="badge emp">Employee</span>`;
+  const rateBadge = isD()&&yr&&!yrD? ` <span class="badge tbh" title="No bill rates set on this person's project lines — dollars show $0">no rate</span>`:"";
   let body="";
   if(isOpen) body=personBody(p);
   return `<div class="p-row ${isOpen?"open":""}" data-person="${p.id}">`+
@@ -688,9 +749,9 @@ function personRow(p){
       `<div class="p-ident" data-toggle="${p.id}">`+
         `<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>`+
         `<div class="avatar" style="background:${deptColor(p.dept)}">${initials(p.name)}</div>`+
-        `<div style="min-width:0"><div class="p-name">${p.name} ${badge}</div><div class="p-role">${p.role||"—"} · ${p.dept}</div></div>`+
+        `<div style="min-width:0"><div class="p-name">${p.name} ${badge}${rateBadge}</div><div class="p-role">${p.role||"—"} · ${p.dept}</div></div>`+
       `</div>`+
-      `<div class="mgrid p-meta">${cells}<div class="mcell tot" data-yr="${p.id}">${yr?fmt0(yr):"·"}</div></div>`+
+      `<div class="mgrid p-meta">${cells}<div class="mcell tot" data-yr="${p.id}">${yr?fmtHD0(yr,yrD):"·"}</div></div>`+
     `</div>`+
     `<div class="p-body">${body}</div>`+
   `</div>`;
@@ -716,11 +777,13 @@ function allocLine(p,projid){
     return `<input type="number" inputmode="numeric" min="0" step="1" value="${v||""}"${past?' readonly class="past" title="Actual timesheet hours"':''} data-a="${p.id}|${projid}|${m.key}" aria-label="${pr.name} ${m.label}${past?" (actual)":""}">`;
   }).join("");
   const rt=MKEYS.reduce((s,k)=>s+alloc(p.id,projid,k),0);
+  const pr8=pairRate(p.id,projid);
   return `<div class="a-line" data-line="${p.id}:${projid}">`+
     `<div class="a-proj"><div style="min-width:0"><div class="pn">${esc(projLabel(pr))}${npBadge(pr)}</div>`+
       `<div class="cl">${esc(pr.client||"")}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""}</div></div>`+
+      `<span class="prate" title="Bill rate for ${esc(p.name)} on this project ($/hr)">$<input type="number" min="0" step="1" placeholder="0" value="${pr8||""}" data-prate="${p.id}|${projid}">/hr</span>`+
       `<button class="rm" data-rmproj="${p.id}|${projid}" title="Remove project" aria-label="Remove">×</button></div>`+
-    `<div class="a-inputs">${inputs}<div class="rowtot" data-rt="${p.id}:${projid}">${rt?fmt0(rt):""}</div></div>`+
+    `<div class="a-inputs">${inputs}<div class="rowtot" data-rt="${p.id}:${projid}">${rt?fmtHD0(rt,rt*pr8):""}</div></div>`+
   `</div>`;
 }
 function legend(){
@@ -739,26 +802,36 @@ function refreshPersonSummary(pid){
     const h=personMonthTotal(pid,m.key), c=capOf(p,m.key);
     const cell=document.querySelector(`[data-sum="${pid}:${m.key}"]`);
     if(cell){ cell.className="mcell "+utilClass(h,c);
-      cell.querySelector(".h").textContent=h?fmt(h):"·";
+      cell.querySelector(".h").textContent=h?fmtHD(h,personMonthDollars(pid,m.key)):"·";
       cell.querySelector(".u").textContent=c?Math.round(h/c*100)+"%":""; }
   });
   const yr=MKEYS.reduce((s,k)=>s+personMonthTotal(pid,k),0);
-  const yc=document.querySelector(`[data-yr="${pid}"]`); if(yc) yc.textContent=yr?fmt0(yr):"·";
+  const yc=document.querySelector(`[data-yr="${pid}"]`); if(yc) yc.textContent=yr?fmtHD0(yr,personDollars(pid)):"·";
 }
 function refreshRowTotal(pid,projid){
   const rt=MKEYS.reduce((s,k)=>s+alloc(pid,projid,k),0);
-  const el=document.querySelector(`[data-rt="${pid}:${projid}"]`); if(el) el.textContent=rt?fmt0(rt):"";
+  const el=document.querySelector(`[data-rt="${pid}:${projid}"]`); if(el) el.textContent=rt?fmtHD0(rt,rt*pairRate(pid,projid)):"";
+}
+// After a rate edit: refresh every visible number that depends on that pair's rate.
+function refreshPairRate(pid,projid){
+  refreshPersonSummary(pid);
+  refreshRowTotal(pid,projid);
+  refreshProjSummary(projid);
+  renderKpis();
 }
 
 /* ============================ PIVOT: BY EMPLOYEE ============================ */
 /* pivot cell: hours on top, utilization % beneath, with the month-over-month change in
    percentage points embedded next to it (pu = previous month's utilization %, or null). */
-function hpCell(h,c,cls,extra,pu){
+/* dh: pre-summed dollar equivalent for the group (display only, from per-project rates).
+   Utilization % and shading always come from hours vs capacity, whichever mode is shown. */
+function hpCell(h,c,cls,extra,pu,dh){
   const u = c ? Math.round(h/c*100) : null;
   const d = (h && u!==null && pu!==null && pu!==undefined) ? u-Math.round(pu) : 0;
   const dlt = d ? `<em class="dlt">${d>0?"▲":"▼"}${Math.abs(d)}</em>` : "";
-  const inner = h ? `<span class="h">${fmt(h)}</span><span class="pct">${u!==null?u+"%":""}${dlt}</span>` : "";
-  const tip = `${fmt0(h)}h of ${fmt0(c)}h capacity` + (d? ` · ${d>0?"+":""}${d} pts vs previous month` : "");
+  const shown = isD()? money(dh||0) : fmt(h);
+  const inner = h ? `<span class="h">${shown}</span><span class="pct">${u!==null?u+"%":""}${dlt}</span>` : "";
+  const tip = (isD()? `${money(dh||0)} · ${fmt0(h)}h of ${fmt0(c)}h capacity` : `${fmt0(h)}h of ${fmt0(c)}h capacity`) + (d? ` · ${d>0?"+":""}${d} pts vs previous month` : "");
   return `<td class="mcelln ${cls||""}${extra?" "+extra:""}" title="${tip}">${inner}</td>`;
 }
 const utilPct=(h,c)=> c ? Math.round(h/c*100) : null;
@@ -768,9 +841,10 @@ function pivotHead(firstLabel){
 }
 function renderByEmp(){
   const ppl=filteredPeople();
-  const colTot=MKEYS.map(()=>0), colCap=MKEYS.map(()=>0); let grand=0, grandCap=0;
-  // allocated-vs-capacity kept separate per person type
-  const mkAcc=()=>({t:MKEYS.map(()=>0), c:MKEYS.map(()=>0), g:0, gc:0, n:0});
+  const colTot=MKEYS.map(()=>0), colCap=MKEYS.map(()=>0), colD=MKEYS.map(()=>0);
+  let grand=0, grandCap=0, grandD=0;
+  // allocated-vs-capacity kept separate per person type (d = dollar equivalents from per-project rates)
+  const mkAcc=()=>({t:MKEYS.map(()=>0), c:MKEYS.map(()=>0), d:MKEYS.map(()=>0), g:0, gc:0, gd:0, n:0});
   const acc={employee:mkAcc(), contractor:mkAcc(), tbh:mkAcc()};
   const byDept={};
   ppl.forEach(p=>{ const d=p.dept||""; (byDept[d]=byDept[d]||[]).push(p); });
@@ -778,29 +852,29 @@ function renderByEmp(){
   deptsInOrder(ppl).forEach(d=>{ if(!byDept[d]) return;
     body+=`<tr class="grp"><td class="lbl">${deptLabel(d)}</td>`+MONTHS.map(()=>`<td></td>`).join("")+`<td class="col-tot"></td></tr>`;
     byDept[d].forEach(p=>{
-      let rt=0, rcap=0, pu=null;
+      let rt=0, rcap=0, rd=0, pu=null;
       const a=acc[p.type]||acc.employee; a.n++;
-      const tds=MONTHS.map((m,i)=>{ const h=personMonthTotal(p.id,m.key), c=capOf(p,m.key);
-        rt+=h; rcap+=c; colTot[i]+=h; colCap[i]+=c; a.t[i]+=h; a.c[i]+=c;
-        const cell=hpCell(h,c,utilClass(h,c),"",pu); pu=utilPct(h,c);   // carry this month's % into the next
+      const tds=MONTHS.map((m,i)=>{ const h=personMonthTotal(p.id,m.key), c=capOf(p,m.key), dol=personMonthDollars(p.id,m.key);
+        rt+=h; rcap+=c; rd+=dol; colTot[i]+=h; colCap[i]+=c; colD[i]+=dol; a.t[i]+=h; a.c[i]+=c; a.d[i]+=dol;
+        const cell=hpCell(h,c,utilClass(h,c),"",pu,dol); pu=utilPct(h,c);   // carry this month's % into the next
         return cell;
       }).join("");
-      grand+=rt; grandCap+=rcap; a.g+=rt; a.gc+=rcap;
+      grand+=rt; grandCap+=rcap; grandD+=rd; a.g+=rt; a.gc+=rcap; a.gd+=rd;
       const badge=p.type==="tbh"?" <span class='badge tbh'>TBH</span>":p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
-      body+=`<tr><td class="lbl">${p.name}${badge}<div class="muted" style="font-size:11px">${p.role||"—"}</div></td>${tds}${hpCell(rt,rcap,"","col-tot")}</tr>`;
+      body+=`<tr><td class="lbl">${p.name}${badge}<div class="muted" style="font-size:11px">${p.role||"—"}</div></td>${tds}${hpCell(rt,rcap,"","col-tot",null,rd)}</tr>`;
     });
   });
   const footRow=(label,a,cls)=>{ let pu=null;
-    const tds=a.t.map((t,i)=>{ const cell=hpCell(t,a.c[i],"","",pu); pu=utilPct(t,a.c[i]); return cell; }).join("");
-    return `<tr class="${cls||""}"><td class="lbl">${label}</td>${tds}${hpCell(a.g,a.gc,"","col-tot")}</tr>`; };
+    const tds=a.t.map((t,i)=>{ const cell=hpCell(t,a.c[i],"","",pu,a.d[i]); pu=utilPct(t,a.c[i]); return cell; }).join("");
+    return `<tr class="${cls||""}"><td class="lbl">${label}</td>${tds}${hpCell(a.g,a.gc,"","col-tot",null,a.gd)}</tr>`; };
   const foot=`<tfoot>`+
     (acc.employee.n? footRow(`Employees <span class="muted">· ${acc.employee.n}</span>`,acc.employee):"")+
     (acc.contractor.n? footRow(`Contractors <span class="muted">· ${acc.contractor.n}</span>`,acc.contractor):"")+
     (acc.tbh.n? footRow(`To be hired <span class="muted">· ${acc.tbh.n}</span>`,acc.tbh):"")+
-    footRow("All shown",{t:colTot,c:colCap,g:grand,gc:grandCap},"grand")+
+    footRow("All shown",{t:colTot,c:colCap,d:colD,g:grand,gc:grandCap,gd:grandD},"grand")+
     `</tfoot>`;
   document.getElementById("viewRoot").innerHTML=
-    `<div class="panel"><div class="panel-hd"><h2>Allocated hours by employee × month</h2><span class="hint">hours + utilization % · shaded vs. capacity · ${ppl.length} people</span></div>`+
+    `<div class="panel"><div class="panel-hd"><h2>Allocated ${isD()?"dollars":"hours"} by employee × month</h2><span class="hint">${isD()?"dollars (hours × per-project bill rate)":"hours"} + utilization % · shaded vs. capacity · ${ppl.length} people</span></div>`+
     `<div class="scroll"><table class="pivot">${pivotHead("Employee")}<tbody>${body}</tbody>${foot}</table></div>${legend()}</div>`;
 }
 
@@ -812,55 +886,56 @@ function renderByRole(){
   const roles={};
   ppl.forEach(p=>{ const r=p.role||"(no title)", d=p.dept||"";
     roles[r]=roles[r]||{}; (roles[r][d]=roles[r][d]||[]).push(p); });
-  const colTot=MKEYS.map(()=>0), colCap=MKEYS.map(()=>0); let grand=0, grandCap=0;
+  const colTot=MKEYS.map(()=>0), colCap=MKEYS.map(()=>0), colD=MKEYS.map(()=>0);
+  let grand=0, grandCap=0, grandD=0;
 
-  // sum demand+capacity for a set of people in a month
-  const sumM=(group,mk)=>{ let dem=0,cap=0; group.forEach(p=>{ dem+=personMonthTotal(p.id,mk); cap+=capOf(p,mk); }); return [dem,cap]; };
+  // sum demand+capacity (and demand's $ equivalent) for a set of people in a month
+  const sumM=(group,mk)=>{ let dem=0,cap=0,dd=0; group.forEach(p=>{ dem+=personMonthTotal(p.id,mk); cap+=capOf(p,mk); dd+=personMonthDollars(p.id,mk); }); return [dem,cap,dd]; };
   // build a row's month cells + row totals for a group of people
-  const rowFor=(group,tally)=>{ let rt=0,rcap=0,pu=null;
-    const tds=MONTHS.map((m,i)=>{ const [dem,cap]=sumM(group,m.key); rt+=dem; rcap+=cap;
-      if(tally){ colTot[i]+=dem; colCap[i]+=cap; }
-      const cell=hpCell(dem,cap,utilClass(dem,cap),"",pu); pu=utilPct(dem,cap);
+  const rowFor=(group,tally)=>{ let rt=0,rcap=0,rd=0,pu=null;
+    const tds=MONTHS.map((m,i)=>{ const [dem,cap,dd]=sumM(group,m.key); rt+=dem; rcap+=cap; rd+=dd;
+      if(tally){ colTot[i]+=dem; colCap[i]+=cap; colD[i]+=dd; }
+      const cell=hpCell(dem,cap,utilClass(dem,cap),"",pu,dd); pu=utilPct(dem,cap);
       return cell; }).join("");
-    return {tds,rt,rcap};
+    return {tds,rt,rcap,rd};
   };
 
   let body="";
   Object.keys(roles).sort().forEach(r=>{
     const practices=roles[r];
     const rolePeople=Object.values(practices).flat();
-    const {tds,rt,rcap}=rowFor(rolePeople,true);   // only level 1 tallies into the footer
-    grand+=rt; grandCap+=rcap;
+    const {tds,rt,rcap,rd}=rowFor(rolePeople,true);   // only level 1 tallies into the footer
+    grand+=rt; grandCap+=rcap; grandD+=rd;
     const rOpen=roleOpen.has(r);
     const pracNames=Object.keys(practices).sort((a,b)=>deptRank(a)-deptRank(b)||a.localeCompare(b));
     body+=`<tr class="lvl1${rOpen?" open":""}" data-role="${esc(r)}"><td class="lbl">`+
       `<span class="tw">${chev()}</span><b>${esc(r)}</b>`+
       `<div class="muted" style="font-size:11px;padding-left:18px">${rolePeople.length} ${rolePeople.length===1?"person":"people"} · ${pracNames.length} practice${pracNames.length===1?"":"s"}</div></td>`+
-      `${tds}${hpCell(rt,rcap,"","col-tot")}</tr>`;
+      `${tds}${hpCell(rt,rcap,"","col-tot",null,rd)}</tr>`;
     if(!rOpen) return;
 
     pracNames.forEach(d=>{
       const grp=practices[d];
-      const {tds:dtds,rt:dt,rcap:dcap}=rowFor(grp,false);
+      const {tds:dtds,rt:dt,rcap:dcap,rd:ddol}=rowFor(grp,false);
       const key=r+"||"+d, dOpen=rpOpen.has(key);
       body+=`<tr class="lvl2${dOpen?" open":""}" data-rp="${esc(key)}"><td class="lbl lvl2i">`+
         `<span class="tw">${chev()}</span>${esc(deptLabel(d))} <span class="muted">· ${grp.length}</span></td>`+
-        `${dtds}${hpCell(dt,dcap,"","col-tot")}</tr>`;
+        `${dtds}${hpCell(dt,dcap,"","col-tot",null,ddol)}</tr>`;
       if(!dOpen) return;
 
       grp.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(p=>{
-        const {tds:ptds,rt:pt,rcap:pcap}=rowFor([p],false);
+        const {tds:ptds,rt:pt,rcap:pcap,rd:pd}=rowFor([p],false);
         const badge=p.type==="tbh"?" <span class='badge tbh'>TBH</span>":p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
-        body+=`<tr class="lvl3"><td class="lbl lvl3i">${esc(p.name)}${badge}</td>${ptds}${hpCell(pt,pcap,"","col-tot")}</tr>`;
+        body+=`<tr class="lvl3"><td class="lbl lvl3i">${esc(p.name)}${badge}</td>${ptds}${hpCell(pt,pcap,"","col-tot",null,pd)}</tr>`;
       });
     });
   });
   let fpu=null;
   const foot=`<tfoot><tr class="grand"><td class="lbl">All roles</td>`+
-    colTot.map((t,i)=>{ const cell=hpCell(t,colCap[i],"","",fpu); fpu=utilPct(t,colCap[i]); return cell; }).join("")+
-    hpCell(grand,grandCap,"","col-tot")+`</tr></tfoot>`;
+    colTot.map((t,i)=>{ const cell=hpCell(t,colCap[i],"","",fpu,colD[i]); fpu=utilPct(t,colCap[i]); return cell; }).join("")+
+    hpCell(grand,grandCap,"","col-tot",null,grandD)+`</tr></tfoot>`;
   document.getElementById("viewRoot").innerHTML=
-    `<div class="panel"><div class="panel-hd"><h2>Allocated hours by role × month</h2>`+
+    `<div class="panel"><div class="panel-hd"><h2>Allocated ${isD()?"dollars":"hours"} by role × month</h2>`+
     `<span class="hint">roles rolled up across all practices · click a role to drill into practices, then into people</span></div>`+
     `<div class="scroll"><table class="pivot">${pivotHead("Role")}<tbody>${body}</tbody>${foot}</table></div>${legend()}</div>`;
 }
@@ -868,6 +943,10 @@ function renderByRole(){
 /* ============================ PIVOT: BY PROJECT ============================ */
 /* ---- Allocate by project: project → resources → monthly hours (PRJ first, then CRM) ---- */
 function projMonthTotal(projid,mkey){ let t=0; allPeople().forEach(p=>{ t+=alloc(p.id,projid,mkey); }); return t; }
+function projMonthDollars(projid,mkey){ let t=0; allPeople().forEach(p=>{ t+=alloc(p.id,projid,mkey)*pairRate(p.id,projid); }); return t; }
+// project-scope display value for the current mode
+function projV(projid,mkey){ return isD()? projMonthDollars(projid,mkey) : projMonthTotal(projid,mkey); }
+function fmtProj(projid,mkey){ const h=projMonthTotal(projid,mkey); if(!h) return ""; return isD()? money(projMonthDollars(projid,mkey)) : fmt(h); }
 function projPeople(projid){ return allPeople().filter(p=> state.alloc[p.id] && state.alloc[p.id][projid]!==undefined ); }
 function byPersonOrder(a,b){ return deptRank(a.dept||"")-deptRank(b.dept||"")||a.name.localeCompare(b.name); }
 
@@ -891,9 +970,10 @@ function renderByProj(){
 function projectRow(pr){
   const id=String(pr.id), isOpen=projOpen.has(id), people=projPeople(pr.id);
   const cells=MONTHS.map(m=>{ const h=projMonthTotal(pr.id,m.key);
-    return `<div class="mcell" data-psum="${id}:${m.key}"><span class="h">${h?fmt(h):"·"}</span></div>`;
+    return `<div class="mcell" data-psum="${id}:${m.key}"><span class="h">${h?fmtProj(pr.id,m.key):"·"}</span></div>`;
   }).join("");
   const yr=MKEYS.reduce((s,k)=>s+projMonthTotal(pr.id,k),0);
+  const yrD=MKEYS.reduce((s,k)=>s+projMonthDollars(pr.id,k),0);
   const badge=pr.src==="CRM"?`<span class="badge crm">CRM</span>`:`<span class="badge prj">PRJ</span>`;
   return `<div class="p-row ${isOpen?"open":""}">`+
     `<div class="p-head">`+
@@ -902,7 +982,7 @@ function projectRow(pr){
         `<div style="min-width:0"><div class="p-name">${badge} ${esc(pr.name)}${npBadge(pr)}</div>`+
         `<div class="p-role">${esc(pr.client||"—")}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""} · ${people.length} resource${people.length===1?"":"s"}</div></div>`+
       `</div>`+
-      `<div class="mgrid p-meta">${cells}<div class="mcell tot" data-pyr="${id}">${yr?fmt0(yr):"·"}</div></div>`+
+      `<div class="mgrid p-meta">${cells}<div class="mcell tot" data-pyr="${id}">${yr?(isD()?money(yrD):fmt0(yr)):"·"}</div></div>`+
     `</div>`+
     `<div class="p-body">${isOpen?projectBody(pr):""}</div>`+
   `</div>`;
@@ -932,19 +1012,22 @@ function resLine(p,pr){
     return `<input type="number" inputmode="numeric" min="0" step="1" value="${v||""}"${past?' readonly class="past" title="Actual timesheet hours"':''} data-a="${p.id}|${pr.id}|${m.key}" aria-label="${esc(p.name)} ${m.label}">`;
   }).join("");
   const rt=MKEYS.reduce((s,k)=>s+alloc(p.id,pr.id,k),0);
+  const pr8=pairRate(p.id,pr.id);
   const badge=p.type==="tbh"?" <span class='badge tbh'>TBH</span>":p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
   return `<div class="a-line">`+
     `<div class="a-proj"><div style="min-width:0"><div class="pn">${esc(p.name)}${badge}</div>`+
       `<div class="cl">${esc(p.role||deptLabel(p.dept))}</div></div>`+
+      `<span class="prate" title="Bill rate for ${esc(p.name)} on ${esc(pr.name)} ($/hr)">$<input type="number" min="0" step="1" placeholder="0" value="${pr8||""}" data-prate="${p.id}|${pr.id}">/hr</span>`+
       `<button class="rm" data-rmres="${p.id}|${pr.id}" title="Remove resource" aria-label="Remove">×</button></div>`+
-    `<div class="a-inputs">${inputs}<div class="rowtot" data-rt="${p.id}:${pr.id}">${rt?fmt0(rt):""}</div></div>`+
+    `<div class="a-inputs">${inputs}<div class="rowtot" data-rt="${p.id}:${pr.id}">${rt?fmtHD0(rt,rt*pr8):""}</div></div>`+
   `</div>`;
 }
 function refreshProjSummary(projid){
   MONTHS.forEach(m=>{ const cell=document.querySelector(`[data-psum="${projid}:${m.key}"]`);
-    if(cell){ const h=projMonthTotal(projid,m.key); const s=cell.querySelector(".h"); if(s) s.textContent=h?fmt(h):"·"; } });
+    if(cell){ const h=projMonthTotal(projid,m.key); const s=cell.querySelector(".h"); if(s) s.textContent=h?fmtProj(projid,m.key):"·"; } });
   const yr=MKEYS.reduce((s,k)=>s+projMonthTotal(projid,k),0);
-  const y=document.querySelector(`[data-pyr="${projid}"]`); if(y) y.textContent=yr?fmt0(yr):"·";
+  const yrD=MKEYS.reduce((s,k)=>s+projMonthDollars(projid,k),0);
+  const y=document.querySelector(`[data-pyr="${projid}"]`); if(y) y.textContent=yr?(isD()?money(yrD):fmt0(yr)):"·";
 }
 
 /* ============================ PIVOT: BY CUSTOMER ============================ */
@@ -953,9 +1036,11 @@ function renderByCust(){
   const q=(F.search||"").toLowerCase();
   const custs={};
   ALL_PROJECTS.forEach(pr=>{ const c=customerOf(pr); (custs[c]=custs[c]||[]).push(pr); });
+  const fV=v=> v? (isD()? money(v):fmt(v)) : "";
+  const fV0=v=> v? (isD()? money(v):fmt0(v)) : "";
   let rows=Object.keys(custs).map(c=>{
     const projs=custs[c];
-    const per=MKEYS.map(k=> projs.reduce((s,pr)=>s+projMonthTotal(pr.id,k),0));
+    const per=MKEYS.map(k=> projs.reduce((s,pr)=>s+projV(pr.id,k),0));
     return {c, projs, per, tot:per.reduce((a,b)=>a+b,0)};
   });
   if(q) rows=rows.filter(r=> r.c.toLowerCase().includes(q) || r.projs.some(pr=>projLabel(pr).toLowerCase().includes(q)));
@@ -966,26 +1051,26 @@ function renderByCust(){
     r.per.forEach((h,i)=>colTot[i]+=h); grand+=r.tot;
     const isOpen=custOpen.has(r.c);
     const nPrj=r.projs.filter(p=>p.src==="PRJ").length, nCrm=r.projs.length-nPrj;
-    const tds=r.per.map(h=>`<td class="mcelln">${h?fmt(h):""}</td>`).join("");
+    const tds=r.per.map(h=>`<td class="mcelln">${fV(h)}</td>`).join("");
     body+=`<tr class="lvl1${isOpen?" open":""}" data-cust="${esc(r.c)}"><td class="lbl">`+
       `<span class="tw">${chev()}</span><b>${esc(r.c)}</b>`+
       `<div class="muted" style="font-size:11px;padding-left:18px">${nPrj} PRJ · ${nCrm} CRM</div></td>`+
-      `${tds}<td class="mcelln col-tot">${r.tot?fmt0(r.tot):""}</td></tr>`;
+      `${tds}<td class="mcelln col-tot">${fV0(r.tot)}</td></tr>`;
     if(!isOpen) return;
     r.projs.slice().sort((a,b)=>projRank(a)-projRank(b)||a.name.localeCompare(b.name)).forEach(pr=>{
-      const per=MKEYS.map(k=>projMonthTotal(pr.id,k)), t=per.reduce((a,b)=>a+b,0);
+      const per=MKEYS.map(k=>projV(pr.id,k)), t=per.reduce((a,b)=>a+b,0);
       const badge=pr.src==="CRM"?`<span class="badge crm">CRM</span>`:`<span class="badge prj">PRJ</span>`;
-      const ptds=per.map(h=>`<td class="mcelln">${h?fmt(h):""}</td>`).join("");
+      const ptds=per.map(h=>`<td class="mcelln">${fV(h)}</td>`).join("");
       body+=`<tr class="lvl2"><td class="lbl lvl2i">${badge} ${esc(pr.name)}${npBadge(pr)}`+
         `${pr.src==="CRM"&&pr.stage?` <span class="muted">· ${esc(pr.stage)}</span>`:""}</td>`+
-        `${ptds}<td class="mcelln col-tot">${t?fmt0(t):""}</td></tr>`;
+        `${ptds}<td class="mcelln col-tot">${fV0(t)}</td></tr>`;
     });
   });
   const foot=`<tfoot><tr><td class="lbl">All customers</td>`+
-    colTot.map(t=>`<td class="mcelln">${t?fmt0(t):""}</td>`).join("")+
-    `<td class="mcelln col-tot">${fmt0(grand)}</td></tr></tfoot>`;
+    colTot.map(t=>`<td class="mcelln">${fV0(t)}</td>`).join("")+
+    `<td class="mcelln col-tot">${isD()?money(grand):fmt0(grand)}</td></tr></tfoot>`;
   document.getElementById("viewRoot").innerHTML=
-    `<div class="panel"><div class="panel-hd"><h2>Allocated hours by customer × month</h2>`+
+    `<div class="panel"><div class="panel-hd"><h2>Allocated ${isD()?"dollars":"hours"} by customer × month</h2>`+
     `<span class="hint">${rows.length} customers · click one to drill into its PRJ projects and CRM opportunities</span></div>`+
     `<div class="scroll"><table class="pivot">${pivotHead("Customer")}<tbody>${body}</tbody>${foot}</table></div></div>`;
 }
@@ -1011,7 +1096,7 @@ function renderHiring(){
   let tbhHtml = tbhList.length? tbhList.map(t=>{
     const yr=MKEYS.reduce((s,k)=>s+personMonthTotal(t.id,k),0);
     return `<div class="tbh-item"><div class="avatar" style="background:${deptColor(t.dept)}">${initials(t.role||"TB")}</div>`+
-      `<div class="info"><div class="r">${t.name}</div><div class="d">${t.role} · ${deptLabel(t.dept)} · starts ${MONTHS.find(m=>m.key===t.start)?.label||t.start} · ${fmt0(capOf(t,t.start))}h/mo · ${fmt0(yr)}h planned</div></div>`+
+      `<div class="info"><div class="r">${t.name}</div><div class="d">${t.role} · ${deptLabel(t.dept)} · starts ${MONTHS.find(m=>m.key===t.start)?.label||t.start} · ${fmt0(capOf(t,t.start))}h/mo · ${isD()? money(personDollars(t.id))+" planned" : fmt0(yr)+"h planned"}</div></div>`+
       `<button class="btn" data-deltbh="${t.id}" style="padding:5px 9px">Remove</button></div>`;
   }).join("") : `<div class="muted" style="font-size:12.5px">No to-be-hired roles yet. Add one to model a future hire and allocate them to projects like any employee.</div>`;
 
@@ -1196,6 +1281,13 @@ document.getElementById("viewRoot").addEventListener("change",e=>{
       .then(r=>{ if(r.deleted) delete capVer[pid]; else capVer[pid]=r.version; status("Saved"); })
       .catch(e=>{ toast("Capacity not saved: "+e.message); });
   }
+  if(el.dataset.prate!==undefined){ const [pid,projid]=el.dataset.prate.split("|");
+    if(!canEdit()){ el.value = pairRate(pid,projid) || ""; return; }
+    const r = (el.value===""||el.value===null) ? 0 : Math.max(0,Number(el.value)||0);
+    setPairRateLocal(pid,projid,r);
+    refreshPairRate(pid,projid);
+    pushRate(pid,projid,r);
+  }
   if(el.dataset.addproj!==undefined && el.value){ const pid=el.dataset.addproj, projid=el.value;
     if(!state.alloc[pid]) state.alloc[pid]={}; if(!state.alloc[pid][projid]) state.alloc[pid][projid]={};
     /*saved via API*/ renderAllocate(); // keep this person open
@@ -1216,7 +1308,9 @@ document.getElementById("viewRoot").addEventListener("click",e=>{
   const ptog=e.target.closest("[data-ptoggle]");   // By Project: expand a project
   if(ptog){ const id=ptog.dataset.ptoggle; if(projOpen.has(id)) projOpen.delete(id); else projOpen.add(id); renderByProj(); return; }
   const rmr=e.target.closest("[data-rmres]");      // By Project: remove a resource from a project
-  if(rmr){ const [pid,projid]=rmr.dataset.rmres.split("|"); if(state.alloc[pid]) delete state.alloc[pid][projid]; /*saved via API*/ renderByProj(); renderKpis(); return; }
+  if(rmr){ const [pid,projid]=rmr.dataset.rmres.split("|"); if(state.alloc[pid]) delete state.alloc[pid][projid];
+    if(pairRate(pid,projid)){ setPairRateLocal(pid,projid,0); pushRate(pid,projid,0); }
+    /*saved via API*/ renderByProj(); renderKpis(); return; }
   const mo=e.target.closest("[data-mapopp]");      // By Project: map a closed CRM opp's forecast onto a project
   if(mo){ const oppId=mo.dataset.mapopp; const sel=document.querySelector(`[data-mapsel="${oppId}"]`);
     const projectId=sel&&sel.value; if(!projectId){ toast("Choose a project to map to."); return; }
@@ -1224,7 +1318,9 @@ document.getElementById("viewRoot").addEventListener("click",e=>{
   const tog=e.target.closest("[data-toggle]");
   if(tog){ const id=tog.dataset.toggle; if(openSet.has(id)) openSet.delete(id); else openSet.add(id); renderAllocate(); return; }
   const rm=e.target.closest("[data-rmproj]");
-  if(rm){ const [pid,projid]=rm.dataset.rmproj.split("|"); if(state.alloc[pid]) delete state.alloc[pid][projid]; /*saved via API*/ renderAllocate(); renderKpis(); return; }
+  if(rm){ const [pid,projid]=rm.dataset.rmproj.split("|"); if(state.alloc[pid]) delete state.alloc[pid][projid];
+    if(pairRate(pid,projid)){ setPairRateLocal(pid,projid,0); pushRate(pid,projid,0); }
+    /*saved via API*/ renderAllocate(); renderKpis(); return; }
   const del=e.target.closest("[data-deltbh]");
   if(del){ const id=del.dataset.deltbh;
     state.tbh=state.tbh.filter(t=>String(t.id)!==String(id)); delete state.alloc[id]; delete state.capacity[id]; openSet.delete(String(id)); render();
@@ -1263,6 +1359,16 @@ function addTbh(){
     .then(()=>status("Saved")).catch(e=>toast("Open role not saved: "+e.message));
 }
 
+/* ---------------------- Hours / Dollars toggle ---------------------- */
+document.getElementById("modeSeg").addEventListener("click",e=>{
+  const b=e.target.closest("[data-mode]"); if(!b) return;
+  state.viewMode=b.dataset.mode==="dollars"?"dollars":"hours";
+  document.querySelectorAll("#modeSeg [data-mode]").forEach(x=>x.setAttribute("aria-pressed",x.dataset.mode===state.viewMode));
+  try{ localStorage.setItem("tqs-rm-viewmode",state.viewMode); }catch(e2){}
+  render();
+});
+document.querySelectorAll("#modeSeg [data-mode]").forEach(x=>x.setAttribute("aria-pressed",x.dataset.mode===state.viewMode));
+
 /* ============================ THEME ============================ */
 function applyTheme(t){ if(t) document.documentElement.setAttribute("data-theme",t); else document.documentElement.removeAttribute("data-theme"); }
 applyTheme(state.theme);
@@ -1285,11 +1391,28 @@ function download(name,text,mime){ const b=new Blob([text],{type:mime||"text/pla
   const a=document.createElement("a"); a.href=u; a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(u),1000); }
 function csvEsc(v){ v=String(v==null?"":v); return /[",\n]/.test(v)? '"'+v.replace(/"/g,'""')+'"':v; }
 function exportEmpCSV(){
-  const head=["Department","Employee","Type","Role",...MONTHS.map(m=>m.label),"Total"];
+  const head=["Department","Employee","Type","Role","Blended rate ($/hr)",...MONTHS.map(m=>m.label),"Total",...MONTHS.map(m=>m.label+" $"),"Total $"];
   const lines=[head.map(csvEsc).join(",")];
   filteredPeople().forEach(p=>{ const cells=MKEYS.map(k=>personMonthTotal(p.id,k)); const tot=cells.reduce((s,x)=>s+x,0);
-    lines.push([p.dept,p.name,p.type,p.role||"",...cells,tot].map(csvEsc).join(",")); });
+    const dcells=MKEYS.map(k=>Math.round(personMonthDollars(p.id,k))); const dtot=dcells.reduce((s,x)=>s+x,0);
+    const blended = tot&&dtot? Math.round(dtot/tot) : "";   // rates vary per project — this is the weighted average
+    lines.push([p.dept,p.name,p.type,p.role||"",blended,...cells,tot,...dcells,dtot].map(csvEsc).join(",")); });
   download("tqs-by-employee-month.csv",lines.join("\n"),"text/csv");
+}
+/* Was referenced by the export menu but never defined — clicking it threw.
+   One row per person × project with the pair's bill rate and monthly $ columns. */
+function exportDetailCSV(){
+  const head=["Person","Type","Role","Department","Bill rate ($/hr)","Project","Source","Client",...MONTHS.map(m=>m.label),"Total",...MONTHS.map(m=>m.label+" $"),"Total $"];
+  const lines=[head.map(csvEsc).join(",")];
+  allPeople().forEach(p=>{ const a=state.alloc[p.id]; if(!a) return;
+    sortProjIds(Object.keys(a)).forEach(projid=>{ const pr=projById(projid); if(!pr) return;
+      const r=pairRate(p.id,projid);
+      const cells=MKEYS.map(k=>alloc(p.id,projid,k)); const tot=cells.reduce((s,x)=>s+x,0); if(tot===0) return;
+      const dcells=cells.map(h=>Math.round(h*r)); const dtot=dcells.reduce((s,x)=>s+x,0);
+      lines.push([p.name,p.type,p.role||"",p.dept,r||"",projLabel(pr),pr.src,pr.client||"",...cells,tot,...dcells,dtot].map(csvEsc).join(","));
+    });
+  });
+  download("tqs-allocations-detail.csv",lines.join("\n"),"text/csv");
 }
 
 /* ============================ IMPORT FORECAST (.xlsx, parsed in-browser) ============================ */
@@ -1397,17 +1520,27 @@ function interpretBacklog(bk){
   const metaEnd = firstDollars===Infinity? 8 : firstDollars-1;
   let projCol=5, bestDash=-1;
   for(let c=1;c<metaEnd;c++){ let dash=0; for(let r=hdRow+1;r<rows.length;r++){ if((rows[r]&&rows[r][c]||"").toString().includes(" - ")) dash++; } if(dash>bestDash){bestDash=dash;projCol=c;} }
+  // explicit bill-rate column, if the workbook has one in the metadata block (header contains "rate")
+  let rateCol=-1;
+  for(let c=0;c<metaEnd;c++){ if(/rate/i.test((hd[c]||"").toString())) { rateCol=c; break; } }
+  // dollars column paired with each weekly hours column (hours at c → dollars at c+1)
+  const dollarCols=hourCols.map(({c})=> (hd[c+1]||"").toString().toLowerCase()==="dollars"? c+1 : null);
   const records=[]; let skipped=0;
   for(let r=hdRow+1;r<rows.length;r++){ const row=rows[r]||{}; const person=(row[0]||"").toString().trim(); const project=(row[projCol]||"").toString().trim();
     if(!person||!project) continue;
-    const months={}; let any=false;
-    hourCols.forEach(({c,mi})=>{ const v=parseFloat(row[c]); if(!isNaN(v)&&v!==0){ months[mi]=(months[mi]||0)+v; any=true; } });
+    const months={}; let any=false, rowHrs=0, rowDol=0;
+    hourCols.forEach(({c,mi},k)=>{ const v=parseFloat(row[c]); if(!isNaN(v)&&v!==0){ months[mi]=(months[mi]||0)+v; rowHrs+=v; any=true;
+      const dc=dollarCols[k]; if(dc!==null){ const d=parseFloat(row[dc]); if(!isNaN(d)) rowDol+=d; } } });
     if(!any) continue;
     // A real project cell contains letters. A purely numeric value (e.g. a bill rate
     // typed into the wrong column) is not a project — skip it rather than invent a
     // phantom "150" project. Counted and surfaced in the preview, never silent.
     if(!/[a-z]/i.test(project)){ skipped++; continue; }
-    records.push({person,project,months,
+    // bill rate: explicit Rate column wins; otherwise derive from the row's dollars ÷ hours
+    let rate=0;
+    if(rateCol>=0){ const rv=parseFloat(row[rateCol]); if(!isNaN(rv)&&rv>0) rate=rv; }
+    if(!rate && rowDol>0 && rowHrs>0) rate=rowDol/rowHrs;
+    records.push({person,project,months,rate,
       role:(row[projCol-1]||"").toString().trim(), dept:(row[projCol-2]||"").toString().trim()});
   }
   records.skipped=skipped;
@@ -1528,8 +1661,12 @@ async function handleXlsxFile(file){
 function openImportModal(records, sheetName){
   const persons=[...new Set(records.map(r=>r.person))];
   const projects=[...new Set(records.map(r=>r.project))];
-  const personHrs={}, projHrs={}; let totalHrs=0;
-  records.forEach(r=>{ const t=Object.values(r.months).reduce((s,x)=>s+x,0); totalHrs+=t; personHrs[r.person]=(personHrs[r.person]||0)+t; projHrs[r.project]=(projHrs[r.project]||0)+t; });
+  const personHrs={}, projHrs={}, personDol={}; let totalHrs=0;
+  records.forEach(r=>{ const t=Object.values(r.months).reduce((s,x)=>s+x,0); totalHrs+=t; personHrs[r.person]=(personHrs[r.person]||0)+t; projHrs[r.project]=(projHrs[r.project]||0)+t;
+    if(r.rate) personDol[r.person]=(personDol[r.person]||0)+t*r.rate; });
+  // weighted average bill rate per sheet-person (only rows that carried a rate); rates apply per person × project on import
+  const personRate=n=>{ const d=personDol[n], h=personHrs[n]; return d&&h? Math.round(d/h) : 0; };
+  const ratedCount=persons.filter(n=>personRate(n)>0).length;
   const selP=n=> (n in state.importMap.people)? String(state.importMap.people[n]) : autoPerson(n);
   const selPr=n=> (n in state.importMap.projects)? String(state.importMap.projects[n]) : autoProject(n);
   // the person's role as written in the sheet, and the standard Odoo role it maps to
@@ -1549,9 +1686,9 @@ function openImportModal(records, sheetName){
         <div class="stat"><div class="n tnum">${projects.length}</div><div class="l">Projects in sheet</div></div>
         <div class="stat"><div class="n tnum">${fmt0(totalHrs)}</div><div class="l">Forecast hours</div></div>
       </div>
-      <div class="mapsec"><h3>People ${tag(matchedP,persons.length)} <span class="cnt">unmatched → To-Be-Hired · role snapped to Odoo</span></h3>
-        <div class="scrollbox"><table class="maptbl"><thead><tr><th>In spreadsheet</th><th>Hours</th><th>Maps to (Odoo person)</th><th>Role (if To-Be-Hired)</th></tr></thead><tbody>
-        ${persons.map(n=>{ const sp=selP(n); return `<tr><td class="src">${esc(n)}${personSheetRole[n]?`<div class="muted" style="font-size:11px">${esc(personSheetRole[n])}</div>`:""}</td><td class="hrs">${fmt0(personHrs[n])}h</td><td><select data-mapp="${esc(n)}">${personOptions(sp)}</select></td><td><select data-maprole="${esc(n)}"${sp==="__tbh__"?"":" disabled"}>${roleOptions(roleFor(n))}</select></td></tr>`; }).join("")}
+      <div class="mapsec"><h3>People ${tag(matchedP,persons.length)} <span class="cnt">unmatched → To-Be-Hired · role snapped to Odoo${ratedCount?` · ${ratedCount} with bill rates from the sheet`:""}</span></h3>
+        <div class="scrollbox"><table class="maptbl"><thead><tr><th>In spreadsheet</th><th>Hours</th><th>Rate</th><th>Maps to (Odoo person)</th><th>Role (if To-Be-Hired)</th></tr></thead><tbody>
+        ${persons.map(n=>{ const sp=selP(n); return `<tr><td class="src">${esc(n)}${personSheetRole[n]?`<div class="muted" style="font-size:11px">${esc(personSheetRole[n])}</div>`:""}</td><td class="hrs">${fmt0(personHrs[n])}h</td><td class="hrs">${personRate(n)?"$"+personRate(n):"—"}</td><td><select data-mapp="${esc(n)}">${personOptions(sp)}</select></td><td><select data-maprole="${esc(n)}"${sp==="__tbh__"?"":" disabled"}>${roleOptions(roleFor(n))}</select></td></tr>`; }).join("")}
         </tbody></table></div></div>
       <div class="mapsec"><h3>Projects ${tag(matchedPr,projects.length)} <span class="cnt">matched by client / name</span></h3>
         <div class="scrollbox"><table class="maptbl"><thead><tr><th>In spreadsheet</th><th>Hours</th><th>Maps to (Odoo project)</th></tr></thead><tbody>
@@ -1623,13 +1760,20 @@ function applyImport(records,pmap,prmap,sheetName,rolemap){
     api("PUT","/api/tbh",{tbhKey:String(s.id).replace(/^tbh-?/,""),name:s.name,role:s.role,dept:s.dept,start:CURRENT_KEY,cap:160}).catch(()=>{});
   });
   let applied=0;
+  const rateHrs={}, rateDol={};   // per mapped person|project pair: hours & dollars from rated rows → weighted avg bill rate
   records.forEach(r=>{ let pid=pmap[r.person]; const prj=prmap[r.project];
     if(pid==="__tbh__") pid=tbhByPerson[r.person] && tbhByPerson[r.person].id;
     if(!pid||pid==="skip"||!prj||prj==="skip") return;
+    if(r.rate){ const t=Object.values(r.months).reduce((s,x)=>s+x,0), k=pid+"||"+prj;
+      rateHrs[k]=(rateHrs[k]||0)+t; rateDol[k]=(rateDol[k]||0)+t*r.rate; }
     Object.keys(r.months).forEach(mi=>{ mi=+mi; if(isPastMi(mi)) return;   // past months come from actuals, not forecast
       const M=MONTHS[mi]; if(!M) return;
       setAlloc(pid,prj,M.key, alloc(pid,prj,M.key)+r.months[mi]); applied++; });
   });
+  // bill rates from the workbook (dollars ÷ hours, weighted across a pair's SO lines) — per person × project
+  let rated=0;
+  Object.keys(rateHrs).forEach(k=>{ if(rateHrs[k]>0 && rateDol[k]>0){ const i=k.indexOf("||"), pid=k.slice(0,i), prj=k.slice(i+2);
+    setPairRateLocal(pid,prj,Math.round(rateDol[k]/rateHrs[k])); rated++; } });
   state.lastImport={sheet:sheetName,date:today(),count:applied}; bannerDismissed=false;
   closeModal(); render();
   const batch=[];
@@ -1638,7 +1782,18 @@ function applyImport(records,pmap,prmap,sheetName,rolemap){
       const mi=MONTHS.findIndex(m=>m.key===mk); if(mi<0||isPastMi(mi)) return;
       batch.push({resourceKey:resKey(pid),targetKey:tgtKey(jid),month:mk,hours:state.alloc[pid][jid][mk],version:VER[verKey(pid,jid,mk)]||0});
     })));
-  pushBatch(batch, "Imported "+applied+" allocations from "+sheetName, {mode:"import"}); toast("Imported "+applied+" allocations from "+sheetName);
+  pushBatch(batch, "Imported "+applied+" allocations from "+sheetName, {mode:"import"})
+    .then(async ok=>{
+      if(!ok) return;
+      // persist the imported pair rates after the allocations land
+      for(const pid of Object.keys(state.rates)){
+        for(const jid of Object.keys(state.rates[pid])){
+          await pushRate(pid,jid,state.rates[pid][jid]);
+        }
+      }
+      if(rated) toast("Imported "+rated+" bill rates from "+sheetName);
+    });
+  toast("Imported "+applied+" allocations from "+sheetName);
 }
 function renderBanner(){
   const el=document.getElementById("bannerRoot"); if(!el) return;
@@ -1687,7 +1842,9 @@ function bulkPreview(){
   const months=bulkRange(), vals=bulkValues(months);
   if(!months.length){ el.textContent="Select a valid future month range (Jul–Dec)."; return; }
   const total=vals.reduce((s,x)=>s+x,0), label=MONTHS[months[0]].label+"–"+MONTHS[months[months.length-1]].label;
-  el.innerHTML=`→ <b>${vals.join(" · ")}</b>h across <b>${months.length}</b> month${months.length>1?"s":""} (${label}) — <b>${total}h</b> total, ~${Math.round(total/months.length*10)/10}h/mo`;
+  const rate=Math.max(0,parseFloat(document.getElementById("bkRate")?.value)||0);
+  const dollars = rate? ` · <b>${money(total*rate)}</b> at $${rate}/hr` : "";
+  el.innerHTML=`→ <b>${vals.join(" · ")}</b>h across <b>${months.length}</b> month${months.length>1?"s":""} (${label}) — <b>${total}h</b> total, ~${Math.round(total/months.length*10)/10}h/mo${dollars}`;
 }
 function openBulkModal(){
   const futures=MONTHS.filter(m=>!isPastMi(m.mi));
@@ -1707,12 +1864,21 @@ function openBulkModal(){
         <div class="field"><label>Hours</label><input type="number" id="bkHours" min="0" step="1" value="300"></div>
         <div class="field"><label>Interpret hours as</label><select id="bkMode"><option value="total">Total across range (split evenly)</option><option value="permonth">Per month (same each month)</option></select></div>
       </div>
+      <div class="form-grid">
+        <div class="field"><label>Bill rate ($/hr)</label><input type="number" id="bkRate" min="0" step="1" placeholder="0"></div>
+        <div class="field"><label>&nbsp;</label><span class="muted" style="font-size:12px;display:block;padding-top:8px">Saved for this person on this project — drives the $ view.</span></div>
+      </div>
       <div class="sugg" style="border-style:solid"><div class="txt" id="bkPreview"></div></div>
     </div>
     <div class="modal-ft"><span class="muted" style="font-size:12px">Overwrites those months for the chosen person + project.</span>
       <span style="display:flex;gap:8px"><button class="btn" id="bkCancel">Cancel</button><button class="btn primary" id="bkApply">Apply</button></span></div>
   </div></div>`;
-  ["bkPerson","bkProject","bkStart","bkEnd","bkHours","bkMode"].forEach(id=>document.getElementById(id).addEventListener("input",bulkPreview));
+  const syncBkRate=()=>{ const pid=document.getElementById("bkPerson").value, prj=document.getElementById("bkProject").value;
+    const r=pairRate(pid,prj); document.getElementById("bkRate").value = r? r : ""; };
+  syncBkRate();
+  document.getElementById("bkPerson").addEventListener("change",()=>{ syncBkRate(); bulkPreview(); });
+  document.getElementById("bkProject").addEventListener("change",()=>{ syncBkRate(); bulkPreview(); });
+  ["bkPerson","bkProject","bkStart","bkEnd","bkHours","bkMode","bkRate"].forEach(id=>document.getElementById(id).addEventListener("input",bulkPreview));
   document.getElementById("bkCancel").addEventListener("click",closeBulk);
   document.getElementById("bulkBackdrop").addEventListener("click",e=>{ if(e.target.id==="bulkBackdrop") closeBulk(); });
   document.getElementById("bkApply").addEventListener("click",applyBulk);
@@ -1725,6 +1891,9 @@ function applyBulk(){
   if(!months.length){ toast("That range is entirely in the past — actuals are locked."); return; }
   const vals=bulkValues(months);
   months.forEach((mi,k)=> setAlloc(pid,prj,MONTHS[mi].key, vals[k]) );
+  const rateRaw=document.getElementById("bkRate").value;
+  if(rateRaw!==""&&rateRaw!==null){ const r=Math.max(0,Number(rateRaw)||0);
+    if(r!==pairRate(pid,prj)){ setPairRateLocal(pid,prj,r); pushRate(pid,prj,r); } }
   openSet.add(String(pid)); closeBulk(); render();
   pushBatch(months.map((mi,k)=>({ resourceKey:resKey(pid), targetKey:tgtKey(prj), month:MONTHS[mi].key, hours:vals[k],
     version:VER[verKey(pid,prj,MONTHS[mi].key)]||0 })));
@@ -1773,6 +1942,11 @@ async function bootstrap(){
     VER[`${a.resourceKey}|${a.targetKey}|${a.month}`]=a.version;
   });
   state.capacity={}; plan.capacity.forEach(c=>{ state.capacity[fromResKey(c.resourceKey)]=c.hoursPerMonth; });
+  state.rates={}; RATE_VER={};
+  (plan.rates||[]).forEach(r=>{
+    setPairRateLocal(fromResKey(r.resourceKey), fromTgtKey(r.targetKey), r.rate);
+    RATE_VER[`${r.resourceKey}|${r.targetKey}`]=r.version;
+  });
   state.tbh = plan.tbh.map(t=>({ id:"tbh-"+t.tbhKey, name:t.name, role:t.role, dept:t.dept, type:"tbh", start:t.start, cap:t.cap }));
   // The API returns remembered import mappings keyed by import_map.kind — 'person'
   // and 'project' (singular). The UI works in 'people'/'projects' (plural), so map
