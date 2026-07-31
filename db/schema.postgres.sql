@@ -148,13 +148,20 @@ CREATE TABLE IF NOT EXISTS ref_opportunity (
 ALTER TABLE ref_opportunity ADD COLUMN IF NOT EXISTS needs_project SMALLINT NOT NULL DEFAULT 0;
 
 -- Actual timesheet hours for closed months, by person/project/month.
+-- bill_rate is the ACTUAL realized rate from Odoo: billable revenue (hours x the
+-- linked sale_order_line.price_unit) / billable hours. Hours with no SO line are
+-- non-billable: they count in `hours` but not in the rate.
 CREATE TABLE IF NOT EXISTS ref_actual (
   employee_id INT          NOT NULL,
   project_id  INT          NOT NULL,
   month       DATE         NOT NULL,
   hours       NUMERIC(7,2) NOT NULL,
+  bill_rate   NUMERIC(8,2) NOT NULL DEFAULT 0,   -- $/hr on billed work; 0 = nothing billable
+  revenue     NUMERIC(12,2) NOT NULL DEFAULT 0,  -- billable Σ(hours × price_unit)
   PRIMARY KEY (employee_id, project_id, month)
 );
+ALTER TABLE ref_actual ADD COLUMN IF NOT EXISTS bill_rate NUMERIC(8,2) NOT NULL DEFAULT 0;
+ALTER TABLE ref_actual ADD COLUMN IF NOT EXISTS revenue NUMERIC(12,2) NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS sync_state (
   source     VARCHAR(32) PRIMARY KEY,            -- people | projects | opportunities | actuals

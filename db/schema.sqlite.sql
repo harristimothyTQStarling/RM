@@ -115,6 +115,8 @@ CREATE TABLE IF NOT EXISTS ref_actual (
   project_id  INTEGER NOT NULL,
   month       TEXT NOT NULL,
   hours       REAL NOT NULL,
+  bill_rate   REAL NOT NULL DEFAULT 0,   -- see db/schema.postgres.sql
+  revenue     REAL NOT NULL DEFAULT 0,
   PRIMARY KEY (employee_id, project_id, month)
 );
 

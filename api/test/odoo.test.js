@@ -5,8 +5,32 @@
  */
 const test = require("node:test");
 const assert = require("node:assert");
-const { shapePeople, m2oName, m2oId, Odoo, syncAll } = require("../src/odoo");
+const { shapePeople, m2oName, m2oId, Odoo, syncAll, readActuals } = require("../src/odoo");
 const { open } = require("../src/db");
+
+/* readActuals derives the ACTUAL bill rate per person×project×month from the
+   timesheet's linked sale.order.line: rate = billable revenue / billable hours.
+   Non-billable hours (no so_line) count in hours but not in the rate. */
+test("readActuals computes realized bill rates from the linked SO lines", async () => {
+  const fakeOdoo = {
+    searchRead: async (model) => {
+      if (model === "account.analytic.line") return [
+        { employee_id: [110, "Ken"], project_id: [119, "Bain"], date: "2026-05-10", unit_amount: 100, so_line: [7, "S00043 Bain"] },
+        { employee_id: [110, "Ken"], project_id: [119, "Bain"], date: "2026-05-20", unit_amount: 20, so_line: false },   // non-billable
+        { employee_id: [110, "Ken"], project_id: [119, "Bain"], date: "2026-06-02", unit_amount: 10, so_line: [8, "S00099"] },
+      ];
+      if (model === "sale.order.line") return [ { id: 7, price_unit: 145 }, { id: 8, price_unit: 200 } ];
+      return [];
+    },
+  };
+  const out = await readActuals(fakeOdoo, "2026-01-01", "2026-12-31");
+  const may = out.find((a) => a.month === "2026-05-01");
+  assert.equal(may.hours, 120, "all hours counted, billable or not");
+  assert.equal(may.revenue, 14500, "revenue only from the 100 billable hours × $145");
+  assert.equal(may.bill_rate, 145, "rate = revenue / billable hours (not total hours)");
+  const jun = out.find((a) => a.month === "2026-06-01");
+  assert.deepEqual({ h: jun.hours, r: jun.bill_rate }, { h: 10, r: 200 }, "months keep their own rate");
+});
 
 test("many2one fields decode to id + display name", () => {
   assert.equal(m2oName([12, "Delivery"]), "Delivery");

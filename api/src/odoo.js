@@ -185,21 +185,50 @@ async function readOppsByIds(odoo, ids) {
   }));
 }
 
-/** Actual timesheet hours per employee/project/month for a date range. */
+/**
+ * Actual timesheet hours AND realized bill rates per employee/project/month.
+ *
+ * The rate comes from the timesheet's linked Sales Order Item
+ * (account.analytic.line.so_line -> sale.order.line.price_unit): that is the
+ * price each logged hour was actually billed at. Per cell we accumulate total
+ * hours, billable hours (those carrying an SO line) and billable revenue
+ * Σ(hours × price_unit), then bill_rate = revenue / billable hours — the true
+ * rate on billed work. Hours without an SO line are non-billable: they count in
+ * `hours` but neither in revenue nor in the rate.
+ */
 async function readActuals(odoo, from, to) {
   const rows = await odoo.searchRead("account.analytic.line",
     [["date", ">=", from], ["date", "<", to], ["project_id", "!=", false], ["employee_id", "!=", false]],
-    ["employee_id", "project_id", "date", "unit_amount"]);
-  const agg = new Map();
+    ["employee_id", "project_id", "date", "unit_amount", "so_line"]);
+
+  // one batched fetch of every referenced SO line's unit price
+  const solIds = [...new Set(rows.map((r) => m2oId(r.so_line)).filter(Boolean))];
+  const priceBySol = new Map();
+  if (solIds.length) {
+    const sols = await odoo.searchRead("sale.order.line", [["id", "in", solIds]], ["price_unit"]);
+    sols.forEach((s) => priceBySol.set(s.id, Number(s.price_unit) || 0));
+  }
+
+  const agg = new Map();   // key -> {hours, billable, revenue}
   for (const r of rows) {
     const h = Number(r.unit_amount) || 0;
     if (h <= 0) continue;
     const key = `${m2oId(r.employee_id)}|${m2oId(r.project_id)}|${String(r.date).slice(0, 7)}-01`;
-    agg.set(key, (agg.get(key) || 0) + h);
+    const a = agg.get(key) || { hours: 0, billable: 0, revenue: 0 };
+    a.hours += h;
+    const sol = m2oId(r.so_line);
+    if (sol && priceBySol.has(sol)) { a.billable += h; a.revenue += h * priceBySol.get(sol); }
+    agg.set(key, a);
   }
-  return [...agg].map(([k, hours]) => {
+  const r2 = (n) => Math.round(n * 100) / 100;
+  return [...agg].map(([k, a]) => {
     const [employee_id, project_id, month] = k.split("|");
-    return { employee_id: +employee_id, project_id: +project_id, month, hours: Math.round(hours * 100) / 100 };
+    return {
+      employee_id: +employee_id, project_id: +project_id, month,
+      hours: r2(a.hours),
+      bill_rate: a.billable > 0 ? r2(a.revenue / a.billable) : 0,
+      revenue: r2(a.revenue),
+    };
   });
 }
 
@@ -300,7 +329,7 @@ async function syncAll(db, odoo, { actualsFrom, actualsTo } = {}) {
     const projectIds = new Set(projects.map((p) => p.id));
     const actuals = (await readActuals(odoo, actualsFrom, actualsTo))
       .filter((a) => personIds.has(a.employee_id) && projectIds.has(a.project_id));
-    out.ref_actual = await replaceAll(db, "ref_actual", actuals, ["employee_id", "project_id", "month", "hours"]);
+    out.ref_actual = await replaceAll(db, "ref_actual", actuals, ["employee_id", "project_id", "month", "hours", "bill_rate", "revenue"]);
   }
   // Migrate/flag forecast stranded on opportunities that have since closed. Runs
   // after the open-opp refresh so the "still open?" test uses fresh data.

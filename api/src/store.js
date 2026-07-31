@@ -61,7 +61,7 @@ async function getReference(db) {
     db.all("SELECT id, name, role, dept, type FROM ref_person WHERE active = 1 ORDER BY name"),
     db.all("SELECT id, name, client, billable FROM ref_project WHERE active = 1 ORDER BY name"),
     db.all("SELECT id, name, client, stage, needs_project FROM ref_opportunity WHERE active = 1 ORDER BY name"),
-    db.all("SELECT employee_id, project_id, month, hours FROM ref_actual"),
+    db.all("SELECT employee_id, project_id, month, hours, bill_rate, revenue FROM ref_actual"),
     db.all("SELECT source, synced_at, row_count, ok, message FROM sync_state"),
   ]);
   return {
@@ -71,6 +71,7 @@ async function getReference(db) {
     actuals: actuals.map(a => ({
       employeeId: a.employee_id, projectId: a.project_id,
       month: String(a.month).slice(0, 7), hours: Number(a.hours),
+      billRate: Number(a.bill_rate) || 0, revenue: Number(a.revenue) || 0,
     })),
     sync: sync.map(s => ({ source: s.source, at: String(s.synced_at), rows: s.row_count, ok: !!s.ok, message: s.message })),
   };

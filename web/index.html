@@ -430,6 +430,7 @@ const CURRENT_KEY = "2026-07";  // current month (for KPI "this month")
 let PEOPLE = [], PROJECTS = [], CRM_PROJECTS = [], ALL_PROJECTS = [];
 let ACTUALS = new Map();          // "empId|projId|YYYY-MM" -> hours (closed months, read-only)
 let ACT_PERSON_PROJ = new Map();  // "empId" -> Set of projId (strings) they logged actuals on
+let ACT_RATES = new Map();        // "empId|projId|YYYY-MM" -> actual realized $/hr from Odoo (billable rev / billable hrs)
 let SYNC = [];                    // ref_* freshness, shown in the footer
 function rebuildProjects(){ ALL_PROJECTS = PROJECTS.concat(CRM_PROJECTS); }
 function projRank(p){ return p.src==="CRM" ? 1 : 0; }                       // PRJ first, CRM second
@@ -641,9 +642,19 @@ function setPairRateLocal(pid,projid,rate){
   if(rate>0) state.rates[pid][projid]=rate;
   else { delete state.rates[pid][projid]; if(!Object.keys(state.rates[pid]).length) delete state.rates[pid]; }
 }
-function personMonthDollars(pid,mkey){ let t=0; const a=state.alloc[pid]; if(!a) return 0;
-  for(const proj in a) t+=(a[proj][mkey]||0)*pairRate(pid,proj); return t; }
+/* Month-aware rate: closed months use the ACTUAL realized rate synced from Odoo
+   (billable revenue / billable hours on that person × project × month); open
+   months use the manually-entered forecast rate. */
+function rateAt(pid,projid,mkey){
+  const mi=MONTHS.findIndex(m=>m.key===mkey);
+  if(mi>=0 && isPastMi(mi)){ const r=ACT_RATES.get(`${pid}|${projid}|${mkey}`); return r||0; }
+  return pairRate(pid,projid);
+}
+function personMonthDollars(pid,mkey){
+  return personProjects(pid).reduce((t,proj)=>t+alloc(pid,proj,mkey)*rateAt(pid,proj,mkey),0);
+}
 function personDollars(pid){ return MKEYS.reduce((s,k)=>s+personMonthDollars(pid,k),0); }
+function lineDollars(pid,projid){ return MKEYS.reduce((s,k)=>s+alloc(pid,projid,k)*rateAt(pid,projid,k),0); }
 function isD(){ return state.viewMode==="dollars"; }
 function money(n){ return "$"+Math.round(n||0).toLocaleString(); }
 // Format an hours/dollars pair; the "has data" signal is the underlying hours.
@@ -781,9 +792,9 @@ function allocLine(p,projid){
   return `<div class="a-line" data-line="${p.id}:${projid}">`+
     `<div class="a-proj"><div style="min-width:0"><div class="pn">${esc(projLabel(pr))}${npBadge(pr)}</div>`+
       `<div class="cl">${esc(pr.client||"")}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""}</div></div>`+
-      `<span class="prate" title="Bill rate for ${esc(p.name)} on this project ($/hr)">$<input type="number" min="0" step="1" placeholder="0" value="${pr8||""}" data-prate="${p.id}|${projid}">/hr</span>`+
+      `<span class="prate" title="Forecast bill rate for ${esc(p.name)} on this project ($/hr) — closed months use the actual rate from Odoo">$<input type="number" min="0" step="1" placeholder="0" value="${pr8||""}" data-prate="${p.id}|${projid}">/hr</span>`+
       `<button class="rm" data-rmproj="${p.id}|${projid}" title="Remove project" aria-label="Remove">×</button></div>`+
-    `<div class="a-inputs">${inputs}<div class="rowtot" data-rt="${p.id}:${projid}">${rt?fmtHD0(rt,rt*pr8):""}</div></div>`+
+    `<div class="a-inputs">${inputs}<div class="rowtot" data-rt="${p.id}:${projid}">${rt?fmtHD0(rt,lineDollars(p.id,projid)):""}</div></div>`+
   `</div>`;
 }
 function legend(){
@@ -810,7 +821,7 @@ function refreshPersonSummary(pid){
 }
 function refreshRowTotal(pid,projid){
   const rt=MKEYS.reduce((s,k)=>s+alloc(pid,projid,k),0);
-  const el=document.querySelector(`[data-rt="${pid}:${projid}"]`); if(el) el.textContent=rt?fmtHD0(rt,rt*pairRate(pid,projid)):"";
+  const el=document.querySelector(`[data-rt="${pid}:${projid}"]`); if(el) el.textContent=rt?fmtHD0(rt,lineDollars(pid,projid)):"";
 }
 // After a rate edit: refresh every visible number that depends on that pair's rate.
 function refreshPairRate(pid,projid){
@@ -943,7 +954,7 @@ function renderByRole(){
 /* ============================ PIVOT: BY PROJECT ============================ */
 /* ---- Allocate by project: project → resources → monthly hours (PRJ first, then CRM) ---- */
 function projMonthTotal(projid,mkey){ let t=0; allPeople().forEach(p=>{ t+=alloc(p.id,projid,mkey); }); return t; }
-function projMonthDollars(projid,mkey){ let t=0; allPeople().forEach(p=>{ t+=alloc(p.id,projid,mkey)*pairRate(p.id,projid); }); return t; }
+function projMonthDollars(projid,mkey){ let t=0; allPeople().forEach(p=>{ t+=alloc(p.id,projid,mkey)*rateAt(p.id,projid,mkey); }); return t; }
 // project-scope display value for the current mode
 function projV(projid,mkey){ return isD()? projMonthDollars(projid,mkey) : projMonthTotal(projid,mkey); }
 function fmtProj(projid,mkey){ const h=projMonthTotal(projid,mkey); if(!h) return ""; return isD()? money(projMonthDollars(projid,mkey)) : fmt(h); }
@@ -1017,9 +1028,9 @@ function resLine(p,pr){
   return `<div class="a-line">`+
     `<div class="a-proj"><div style="min-width:0"><div class="pn">${esc(p.name)}${badge}</div>`+
       `<div class="cl">${esc(p.role||deptLabel(p.dept))}</div></div>`+
-      `<span class="prate" title="Bill rate for ${esc(p.name)} on ${esc(pr.name)} ($/hr)">$<input type="number" min="0" step="1" placeholder="0" value="${pr8||""}" data-prate="${p.id}|${pr.id}">/hr</span>`+
+      `<span class="prate" title="Forecast bill rate for ${esc(p.name)} on ${esc(pr.name)} ($/hr) — closed months use the actual rate from Odoo">$<input type="number" min="0" step="1" placeholder="0" value="${pr8||""}" data-prate="${p.id}|${pr.id}">/hr</span>`+
       `<button class="rm" data-rmres="${p.id}|${pr.id}" title="Remove resource" aria-label="Remove">×</button></div>`+
-    `<div class="a-inputs">${inputs}<div class="rowtot" data-rt="${p.id}:${pr.id}">${rt?fmtHD0(rt,rt*pr8):""}</div></div>`+
+    `<div class="a-inputs">${inputs}<div class="rowtot" data-rt="${p.id}:${pr.id}">${rt?fmtHD0(rt,lineDollars(p.id,pr.id)):""}</div></div>`+
   `</div>`;
 }
 function refreshProjSummary(projid){
@@ -1926,9 +1937,10 @@ async function bootstrap(){
   rebuildProjects();
   SYNC = reference.sync || [];
 
-  ACTUALS = new Map(); ACT_PERSON_PROJ = new Map();
+  ACTUALS = new Map(); ACT_PERSON_PROJ = new Map(); ACT_RATES = new Map();
   reference.actuals.forEach(a=>{
     ACTUALS.set(`${a.employeeId}|${a.projectId}|${a.month}`, a.hours);
+    if(a.billRate) ACT_RATES.set(`${a.employeeId}|${a.projectId}|${a.month}`, a.billRate);
     const k=String(a.employeeId);
     if(!ACT_PERSON_PROJ.has(k)) ACT_PERSON_PROJ.set(k, new Set());
     ACT_PERSON_PROJ.get(k).add(String(a.projectId));
