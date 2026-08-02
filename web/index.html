@@ -464,27 +464,40 @@ function crmForecastMonths(projid){
   return [...set].sort();
 }
 const monLabel=k=>{ const m=MONTHS.find(x=>x.key===k); return m?m.label:k; };
+/* Stages close enough to winning that the pipeline should already be staffed. */
+const LATE_STAGE_RX=/^(propose|negotiate)$/i;
 function crmMismatch(pr){
   if(pr.src!=="CRM") return null;
   const fm=crmForecastMonths(pr.id);
-  if(!fm.length) return null;                                // nothing forecast — nothing to check
-  if(!pr.expectedStart || !(pr.expectedMonths>0)) return null; // Odoo data missing — skip
-  const [ey,em]=pr.expectedStart.split("-").map(Number);
-  const s=ey*12+(em-1), e=s+pr.expectedMonths-1;             // absolute month window from CRM
-  const y0=YEAR*12, y1=YEAR*12+11;                           // planner's visible year
-  const cs=Math.max(s,y0), ce=Math.min(e,y1);
-  const out={expStart:pr.expectedStart, expMonths:pr.expectedMonths, fStart:fm[0], fLen:fm.length, fHours:0};
+  // Clip the CRM window to the planner's year (when the CRM has one at all).
+  const hasWindow = !!pr.expectedStart && pr.expectedMonths>0;
+  let visStart=null, visLen=null, outside=false;
+  if(hasWindow){
+    const [ey,em]=pr.expectedStart.split("-").map(Number);
+    const s=ey*12+(em-1), e=s+pr.expectedMonths-1;           // absolute month window from CRM
+    const y0=YEAR*12, y1=YEAR*12+11;                         // planner's visible year
+    const cs=Math.max(s,y0), ce=Math.min(e,y1);
+    if(cs>ce) outside=true;
+    else { visStart=`${Math.floor(cs/12)}-${String(cs%12+1).padStart(2,"0")}`; visLen=ce-cs+1; }
+  }
+  const out={expStart:pr.expectedStart||null, expMonths:pr.expectedMonths||0, visStart, visLen,
+             fStart:fm[0]||null, fLen:fm.length, fHours:0};
   for(const pid in state.alloc){ const a=state.alloc[pid][pr.id]; if(a) for(const mk in a) out.fHours+=a[mk]||0; }
-  if(cs>ce){ out.startFlag=true; out.lenFlag=false; out.visStart=null; out.visLen=0; return out; }
-  out.visStart=`${Math.floor(cs/12)}-${String(cs%12+1).padStart(2,"0")}`;
-  out.visLen=ce-cs+1;
-  out.startFlag = fm[0]!==out.visStart;
-  out.lenFlag = fm.length!==out.visLen;
+  if(!fm.length){
+    // No forecast at all: fine for early pipeline, a gap for Propose/Negotiate.
+    if(LATE_STAGE_RX.test((pr.stage||"").trim())){ out.missingFlag=true; return out; }
+    return null;
+  }
+  if(!hasWindow) return null;                                // window checks need CRM data — skip
+  if(outside){ out.startFlag=true; return out; }             // window entirely outside this year
+  out.startFlag = fm[0]!==visStart;
+  out.lenFlag = fm.length!==visLen;
   return (out.startFlag||out.lenFlag)? out : null;
 }
 function mmBadge(pr){
   const m=pr.src==="CRM"? crmMismatch(pr) : null; if(!m) return "";
   let b="";
+  if(m.missingFlag) b+=` <span class="badge np" title="This opportunity is in ${esc(pr.stage)} but has no forecast in the planner — late-stage pipeline should be staffed">missing forecast</span>`;
   if(m.startFlag) b+=` <span class="badge np" title="Forecast starts ${monLabel(m.fStart)}, but the CRM expects ${m.visStart?monLabel(m.visStart):"no start this year (CRM start "+esc(m.expStart)+")"}">start ≠ CRM</span>`;
   if(m.lenFlag) b+=` <span class="badge np" title="Forecast has hours in ${m.fLen} month${m.fLen===1?"":"s"}, but the CRM projects ${m.visLen} this year (${m.expMonths} total)">length ≠ CRM</span>`;
   return b;
@@ -1324,6 +1337,7 @@ function renderCrmCheck(){
     .sort((a,b)=> a.pr.name.localeCompare(b.pr.name));
   const flagCell=m=>{
     let b="";
+    if(m.missingFlag) b+=`<span class="badge np" style="margin-right:4px">missing forecast</span>`;
     if(m.startFlag) b+=`<span class="badge np" style="margin-right:4px">start</span>`;
     if(m.lenFlag) b+=`<span class="badge np">length</span>`;
     return b;
@@ -1331,24 +1345,24 @@ function renderCrmCheck(){
   const body=rows.map(({pr,m})=>`<tr>`+
     `<td class="lbl"><span class="badge crm">CRM</span> ${esc(pr.name)}<div class="muted" style="font-size:11px">${esc(pr.client||"—")}${pr.stage?" · "+esc(pr.stage):""}</div></td>`+
     `<td style="text-align:left">${flagCell(m)}</td>`+
-    `<td class="mcelln">${esc(m.expStart)}</td>`+
+    `<td class="mcelln">${m.expStart?esc(m.expStart):"—"}</td>`+
     `<td class="mcelln">${m.visStart?monLabel(m.visStart):"—"}</td>`+
-    `<td class="mcelln ${m.startFlag?"v-over":""}">${monLabel(m.fStart)}</td>`+
-    `<td class="mcelln">${m.expMonths}</td>`+
-    `<td class="mcelln">${m.visLen}</td>`+
-    `<td class="mcelln ${m.lenFlag?"v-over":""}">${m.fLen}</td>`+
-    `<td class="mcelln col-tot">${fmt0(m.fHours)}</td>`+
+    `<td class="mcelln ${m.startFlag||m.missingFlag?"v-over":""}">${m.fStart?monLabel(m.fStart):"—"}</td>`+
+    `<td class="mcelln">${m.expMonths||"—"}</td>`+
+    `<td class="mcelln">${m.visLen==null?"—":m.visLen}</td>`+
+    `<td class="mcelln ${m.lenFlag||m.missingFlag?"v-over":""}">${m.fLen||"—"}</td>`+
+    `<td class="mcelln col-tot">${m.fHours?fmt0(m.fHours):"—"}</td>`+
   `</tr>`).join("");
   document.getElementById("viewRoot").innerHTML=
     `<div class="panel"><div class="panel-hd"><h2>CRM mismatches — forecast vs opportunity window</h2>`+
-    `<span class="hint">${rows.length} flagged · start = forecast begins in a different month than the CRM expected start · length = months with forecast hours ≠ CRM projected months (both clipped to CY${String(YEAR).slice(2)})</span></div>`+
+    `<span class="hint">${rows.length} flagged · start = forecast begins in a different month than the CRM expected start · length = months with forecast hours ≠ CRM projected months (both clipped to CY${String(YEAR).slice(2)}) · missing forecast = Propose/Negotiate with nothing staffed</span></div>`+
     (rows.length?
       `<div class="scroll"><table class="pivot"><thead><tr><th class="lbl">Opportunity</th><th style="text-align:left">Flags</th>`+
       `<th>CRM start</th><th>Expected start (CY${String(YEAR).slice(2)})</th><th>Forecast start</th>`+
       `<th>CRM months</th><th>Expected (CY${String(YEAR).slice(2)})</th><th>Forecast months</th><th class="col-tot">Forecast hrs</th></tr></thead>`+
       `<tbody>${body}</tbody></table></div>`+
-      `<div class="legend"><span>Opportunities with no forecast, or with no CRM start date / projected months, are not checked.</span></div>`
-      :`<div class="empty-body" style="padding:28px">No mismatches — every forecast on a CRM opportunity agrees with its expected start date and projected length${CRM_PROJECTS.some(p=>p.expectedStart)?"":" (CRM planning fields not synced yet — run Sync Odoo)"}.</div>`)+
+      `<div class="legend"><span>Window checks skip opportunities with no CRM start date / projected months. Unstaffed opportunities are only flagged from Propose/Negotiate onward.</span></div>`
+      :`<div class="empty-body" style="padding:28px">No mismatches — every forecast on a CRM opportunity agrees with its expected start date and projected length, and every Propose/Negotiate opportunity has a forecast${CRM_PROJECTS.some(p=>p.expectedStart)?"":" (CRM planning fields not synced yet — run Sync Odoo)"}.</div>`)+
     `</div>`;
 }
 
