@@ -150,11 +150,15 @@ async function readProjects(odoo) {
     }));
 }
 
-/** Open pipeline: opportunities that are neither Won nor Lost. */
+/** Open pipeline: opportunities that are neither Won nor Lost. Also carries the
+ *  CRM planning window (expected start / projected months — Studio fields, so
+ *  their presence is verified rather than assumed) for forecast cross-checks. */
 async function readOpportunities(odoo) {
+  const PLAN_FIELDS = ["x_studio_expected_start_date", "x_studio_projected_number_of_months"];
+  const avail = await odoo.hasFields("crm.lead", PLAN_FIELDS);
+  const fields = ["name", "partner_id", "stage_id", "probability", ...PLAN_FIELDS.filter((f) => avail[f])];
   const rows = await odoo.searchRead("crm.lead",
-    [["active", "=", true], ["type", "=", "opportunity"]],
-    ["name", "partner_id", "stage_id", "probability"]);
+    [["active", "=", true], ["type", "=", "opportunity"]], fields);
   return rows
     .map((r) => ({
       id: r.id,
@@ -162,6 +166,9 @@ async function readOpportunities(odoo) {
       client: m2oName(r.partner_id),
       stage: m2oName(r.stage_id),
       active: true,
+      // Odoo returns false for unset fields; store null / 0 instead.
+      expected_start: r.x_studio_expected_start_date || null,
+      expected_months: Number(r.x_studio_projected_number_of_months) || 0,
     }))
     .filter((o) => !/^(won|lost)$/i.test(o.stage));
 }
@@ -319,7 +326,7 @@ async function syncAll(db, odoo, { actualsFrom, actualsTo } = {}) {
   const opps = await readOpportunities(odoo);
   out.ref_person = await replaceAll(db, "ref_person", people, ["id", "name", "role", "dept", "type", "active"]);
   out.ref_project = await replaceAll(db, "ref_project", projects, ["id", "name", "client", "billable", "active"]);
-  out.ref_opportunity = await replaceAll(db, "ref_opportunity", opps, ["id", "name", "client", "stage", "active"]);
+  out.ref_opportunity = await replaceAll(db, "ref_opportunity", opps, ["id", "name", "client", "stage", "active", "expected_start", "expected_months"]);
   if (actualsFrom && actualsTo) {
     // Keep only actuals for people/projects we actually show. Odoo returns
     // timesheet lines for everyone (incl. "Internal" admin time and non-delivery

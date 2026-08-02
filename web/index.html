@@ -399,6 +399,7 @@
       <button class="tab" role="tab" data-view="byRole" aria-selected="false">By Role × Month</button>
       <button class="tab" role="tab" data-view="byCust" aria-selected="false">By Customer × Month</button>
       <button class="tab" role="tab" data-view="variance" aria-selected="false">Forecast vs Actual</button>
+      <button class="tab" role="tab" data-view="crmCheck" aria-selected="false">CRM Mismatches</button>
       <button class="tab" role="tab" data-view="hiring" aria-selected="false">Hiring / TBH</button>
     </div>
     <div class="filters" id="filters">
@@ -448,6 +449,46 @@ function projLabel(p){ return (p.src==="CRM" ? "CRM - " : "PRJ - ") + p.name; }
 /* Badge for a closed CRM opp whose forecast could not be matched to a project yet.
    The forecast stays put and re-matches on the next Odoo sync. */
 function npBadge(p){ return p && p.needsProject ? ` <span class="badge np" title="This opportunity has closed in Odoo, but the sync found no matching delivery project. Its forecast stays here and will move to the project automatically on the next sync once a match is found.">needs project</span>` : ""; }
+
+/* ---- CRM window cross-check: does the planner forecast agree with the CRM's
+   expected start date and projected number of months? -------------------------
+   Rules (confirmed): forecast length counts DISTINCT months with hours (gaps
+   don't count); opportunities with no expected start or 0 projected months are
+   skipped; the Odoo window is clipped to the planner's calendar year before
+   comparing, and a window entirely outside the year treats ANY forecast as a
+   start mismatch. CRM targets never have actuals, so the plan alone is read. */
+function crmForecastMonths(projid){
+  const set=new Set();
+  for(const pid in state.alloc){ const a=state.alloc[pid][projid]; if(!a) continue;
+    for(const mk in a){ if(a[mk]>0) set.add(mk); } }
+  return [...set].sort();
+}
+const monLabel=k=>{ const m=MONTHS.find(x=>x.key===k); return m?m.label:k; };
+function crmMismatch(pr){
+  if(pr.src!=="CRM") return null;
+  const fm=crmForecastMonths(pr.id);
+  if(!fm.length) return null;                                // nothing forecast — nothing to check
+  if(!pr.expectedStart || !(pr.expectedMonths>0)) return null; // Odoo data missing — skip
+  const [ey,em]=pr.expectedStart.split("-").map(Number);
+  const s=ey*12+(em-1), e=s+pr.expectedMonths-1;             // absolute month window from CRM
+  const y0=YEAR*12, y1=YEAR*12+11;                           // planner's visible year
+  const cs=Math.max(s,y0), ce=Math.min(e,y1);
+  const out={expStart:pr.expectedStart, expMonths:pr.expectedMonths, fStart:fm[0], fLen:fm.length, fHours:0};
+  for(const pid in state.alloc){ const a=state.alloc[pid][pr.id]; if(a) for(const mk in a) out.fHours+=a[mk]||0; }
+  if(cs>ce){ out.startFlag=true; out.lenFlag=false; out.visStart=null; out.visLen=0; return out; }
+  out.visStart=`${Math.floor(cs/12)}-${String(cs%12+1).padStart(2,"0")}`;
+  out.visLen=ce-cs+1;
+  out.startFlag = fm[0]!==out.visStart;
+  out.lenFlag = fm.length!==out.visLen;
+  return (out.startFlag||out.lenFlag)? out : null;
+}
+function mmBadge(pr){
+  const m=pr.src==="CRM"? crmMismatch(pr) : null; if(!m) return "";
+  let b="";
+  if(m.startFlag) b+=` <span class="badge np" title="Forecast starts ${monLabel(m.fStart)}, but the CRM expects ${m.visStart?monLabel(m.visStart):"no start this year (CRM start "+esc(m.expStart)+")"}">start ≠ CRM</span>`;
+  if(m.lenFlag) b+=` <span class="badge np" title="Forecast has hours in ${m.fLen} month${m.fLen===1?"":"s"}, but the CRM projects ${m.visLen} this year (${m.expMonths} total)">length ≠ CRM</span>`;
+  return b;
+}
 function sortedProjects(){ return ALL_PROJECTS.slice().sort((a,b)=>projRank(a)-projRank(b)||a.name.localeCompare(b.name)); }
 function sortProjIds(ids){ return ids.slice().sort((a,b)=>{ const x=projById(a), y=projById(b);
   if(!x||!y) return 0; return projRank(x)-projRank(y)||x.name.localeCompare(y.name); }); }
@@ -819,7 +860,7 @@ function allocLine(p,projid){
   const rt=MKEYS.reduce((s,k)=>s+alloc(p.id,projid,k),0);
   const pr8=pairRate(p.id,projid);
   return `<div class="a-line" data-line="${p.id}:${projid}">`+
-    `<div class="a-proj"><div style="min-width:0"><div class="pn">${esc(projLabel(pr))}${npBadge(pr)}</div>`+
+    `<div class="a-proj"><div style="min-width:0"><div class="pn">${esc(projLabel(pr))}${npBadge(pr)}${mmBadge(pr)}</div>`+
       `<div class="cl">${esc(pr.client||"")}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""}</div></div>`+
       actRateHint(p.id,projid)+
       `<span class="prate" title="Forecast bill rate for ${esc(p.name)} on this project ($/hr) — closed months use the actual rate from Odoo">$<input type="number" min="0" step="1" placeholder="0" value="${pr8||""}" data-prate="${p.id}|${projid}">/hr</span>`+
@@ -1030,7 +1071,7 @@ function projectRow(pr){
     `<div class="p-head">`+
       `<div class="p-ident" data-ptoggle="${id}">`+
         `<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>`+
-        `<div style="min-width:0"><div class="p-name">${badge} ${esc(pr.name)}${npBadge(pr)}</div>`+
+        `<div style="min-width:0"><div class="p-name">${badge} ${esc(pr.name)}${npBadge(pr)}${mmBadge(pr)}</div>`+
         `<div class="p-role">${esc(pr.client||"—")}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""} · ${people.length} resource${people.length===1?"":"s"}</div></div>`+
       `</div>`+
       `<div class="mgrid p-meta">${cells}<div class="mcell tot" data-pyr="${id}">${yr?(isD()?money(yrD):fmt0(yr)):"·"}</div></div>`+
@@ -1273,13 +1314,51 @@ function renderVariance(){
     `<span class="sw"><span class="box v-under"></span>under plan (actual &lt; forecast)</span></div></div>`;
 }
 
+/* ==================== CRM MISMATCHES (forecast vs CRM window) ==================== */
+function renderCrmCheck(){
+  const q=(F.search||"").toLowerCase();
+  const rows=CRM_PROJECTS
+    .map(pr=>({pr,m:crmMismatch(pr)}))
+    .filter(x=>x.m)
+    .filter(x=> !q || x.pr.name.toLowerCase().includes(q) || (x.pr.client||"").toLowerCase().includes(q))
+    .sort((a,b)=> a.pr.name.localeCompare(b.pr.name));
+  const flagCell=m=>{
+    let b="";
+    if(m.startFlag) b+=`<span class="badge np" style="margin-right:4px">start</span>`;
+    if(m.lenFlag) b+=`<span class="badge np">length</span>`;
+    return b;
+  };
+  const body=rows.map(({pr,m})=>`<tr>`+
+    `<td class="lbl"><span class="badge crm">CRM</span> ${esc(pr.name)}<div class="muted" style="font-size:11px">${esc(pr.client||"—")}${pr.stage?" · "+esc(pr.stage):""}</div></td>`+
+    `<td style="text-align:left">${flagCell(m)}</td>`+
+    `<td class="mcelln">${esc(m.expStart)}</td>`+
+    `<td class="mcelln">${m.visStart?monLabel(m.visStart):"—"}</td>`+
+    `<td class="mcelln ${m.startFlag?"v-over":""}">${monLabel(m.fStart)}</td>`+
+    `<td class="mcelln">${m.expMonths}</td>`+
+    `<td class="mcelln">${m.visLen}</td>`+
+    `<td class="mcelln ${m.lenFlag?"v-over":""}">${m.fLen}</td>`+
+    `<td class="mcelln col-tot">${fmt0(m.fHours)}</td>`+
+  `</tr>`).join("");
+  document.getElementById("viewRoot").innerHTML=
+    `<div class="panel"><div class="panel-hd"><h2>CRM mismatches — forecast vs opportunity window</h2>`+
+    `<span class="hint">${rows.length} flagged · start = forecast begins in a different month than the CRM expected start · length = months with forecast hours ≠ CRM projected months (both clipped to CY${String(YEAR).slice(2)})</span></div>`+
+    (rows.length?
+      `<div class="scroll"><table class="pivot"><thead><tr><th class="lbl">Opportunity</th><th style="text-align:left">Flags</th>`+
+      `<th>CRM start</th><th>Expected start (CY${String(YEAR).slice(2)})</th><th>Forecast start</th>`+
+      `<th>CRM months</th><th>Expected (CY${String(YEAR).slice(2)})</th><th>Forecast months</th><th class="col-tot">Forecast hrs</th></tr></thead>`+
+      `<tbody>${body}</tbody></table></div>`+
+      `<div class="legend"><span>Opportunities with no forecast, or with no CRM start date / projected months, are not checked.</span></div>`
+      :`<div class="empty-body" style="padding:28px">No mismatches — every forecast on a CRM opportunity agrees with its expected start date and projected length${CRM_PROJECTS.some(p=>p.expectedStart)?"":" (CRM planning fields not synced yet — run Sync Odoo)"}.</div>`)+
+    `</div>`;
+}
+
 /* ============================ ROUTER ============================ */
 function render(){
   renderBanner();
   renderKpis();
   const showFilters = VIEW!=="hiring";
   document.getElementById("filters").style.visibility = showFilters? "visible":"hidden";
-  const personFilters = VIEW!=="byProj" && VIEW!=="byCust";   // these views search projects/customers, not people
+  const personFilters = VIEW!=="byProj" && VIEW!=="byCust" && VIEW!=="crmCheck";   // these views search projects/customers, not people
   document.getElementById("fDept").style.display = personFilters? "":"none";
   document.getElementById("fType").style.display = personFilters? "":"none";
   document.getElementById("fSearch").placeholder = personFilters ? "Search name / role…"
@@ -1290,6 +1369,7 @@ function render(){
   else if(VIEW==="byProj") renderByProj();
   else if(VIEW==="byCust") renderByCust();
   else if(VIEW==="variance") renderVariance();
+  else if(VIEW==="crmCheck") renderCrmCheck();
   else if(VIEW==="hiring") renderHiring();
 }
 function setView(v){ VIEW=v;
@@ -1987,7 +2067,8 @@ async function bootstrap(){
   ME = me;
   PEOPLE = reference.people.map(p=>({ ...p, id:p.id }));
   PROJECTS = reference.projects.map(p=>({ ...p, src:"PRJ" }));
-  CRM_PROJECTS = reference.opportunities.map(o=>({ id:"crm-"+o.id, name:o.name, client:o.client, stage:o.stage, src:"CRM", billable:true, needsProject:!!o.needsProject }));
+  CRM_PROJECTS = reference.opportunities.map(o=>({ id:"crm-"+o.id, name:o.name, client:o.client, stage:o.stage, src:"CRM", billable:true, needsProject:!!o.needsProject,
+    expectedStart:o.expectedStart||null, expectedMonths:o.expectedMonths||0 }));
   rebuildProjects();
   SYNC = reference.sync || [];
 

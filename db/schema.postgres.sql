@@ -142,10 +142,16 @@ CREATE TABLE IF NOT EXISTS ref_opportunity (
   -- sync could not migrate to a delivery project (no confident match). The row is
   -- retained (active=1) so the UI can show the forecast with a "needs project"
   -- flag; each sync re-attempts the match and clears this once one is found.
-  needs_project SMALLINT NOT NULL DEFAULT 0
+  needs_project SMALLINT NOT NULL DEFAULT 0,
+  -- CRM planning fields (x_studio_expected_start_date / x_studio_projected_number_
+  -- of_months) used to cross-check the planner's forecast window per opportunity.
+  expected_start  DATE,
+  expected_months INT NOT NULL DEFAULT 0
 );
--- Additive migration for databases created before needs_project existed.
+-- Additive migrations for databases created before these columns existed.
 ALTER TABLE ref_opportunity ADD COLUMN IF NOT EXISTS needs_project SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE ref_opportunity ADD COLUMN IF NOT EXISTS expected_start DATE;
+ALTER TABLE ref_opportunity ADD COLUMN IF NOT EXISTS expected_months INT NOT NULL DEFAULT 0;
 
 -- Actual timesheet hours for closed months, by person/project/month.
 -- bill_rate is the ACTUAL realized rate from Odoo: billable revenue (hours x the

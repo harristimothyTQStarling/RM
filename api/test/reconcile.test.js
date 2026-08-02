@@ -130,6 +130,17 @@ test("mapOpportunityToProject moves the forecast and retires the opp from the UI
   assert.deepEqual(log.map((l) => l.action), ["map"]);
 });
 
+test("getReference exposes the CRM planning window (expected start / months)", async () => {
+  const db = open({ driver: "sqlite", file: ":memory:" });
+  db.run("INSERT INTO ref_opportunity (id,name,client,stage,active,expected_start,expected_months) VALUES (301,'Windowed Opp','Acme','Negotiate',1,'2026-08-27',7)");
+  db.run("INSERT INTO ref_opportunity (id,name,client,stage,active) VALUES (302,'Bare Opp','Acme','Qualify',1)");
+  const ref = await getReference(db);
+  const a = ref.opportunities.find((o) => o.id === 301);
+  assert.deepEqual({ s: a.expectedStart, m: a.expectedMonths }, { s: "2026-08", m: 7 }, "date truncated to YYYY-MM");
+  const b = ref.opportunities.find((o) => o.id === 302);
+  assert.deepEqual({ s: b.expectedStart, m: b.expectedMonths }, { s: null, m: 0 }, "missing fields -> null/0 so the UI skips the check");
+});
+
 test("reassignAllocations audits every move", async () => {
   const db = open({ driver: "sqlite", file: ":memory:" });
   seedAlloc(db, "emp:110", "crm:222", "2026-08", 100);

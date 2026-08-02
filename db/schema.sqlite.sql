@@ -107,7 +107,9 @@ CREATE TABLE IF NOT EXISTS ref_opportunity (
   stage  TEXT NOT NULL DEFAULT '',
   active INTEGER NOT NULL DEFAULT 1,
   -- see db/schema.postgres.sql: closed opp whose forecast has no matching project yet
-  needs_project INTEGER NOT NULL DEFAULT 0
+  needs_project INTEGER NOT NULL DEFAULT 0,
+  expected_start  TEXT,                     -- CRM expected start date (YYYY-MM-DD)
+  expected_months INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS ref_actual (

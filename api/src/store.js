@@ -60,14 +60,18 @@ async function getReference(db) {
   const [people, projects, opportunities, actuals, sync] = await Promise.all([
     db.all("SELECT id, name, role, dept, type FROM ref_person WHERE active = 1 ORDER BY name"),
     db.all("SELECT id, name, client, billable FROM ref_project WHERE active = 1 ORDER BY name"),
-    db.all("SELECT id, name, client, stage, needs_project FROM ref_opportunity WHERE active = 1 ORDER BY name"),
+    db.all("SELECT id, name, client, stage, needs_project, expected_start, expected_months FROM ref_opportunity WHERE active = 1 ORDER BY name"),
     db.all("SELECT employee_id, project_id, month, hours, bill_rate, revenue FROM ref_actual"),
     db.all("SELECT source, synced_at, row_count, ok, message FROM sync_state"),
   ]);
   return {
     people: people.map(p => ({ id: p.id, name: p.name, role: p.role || "", dept: p.dept || "", type: p.type })),
     projects: projects.map(p => ({ id: p.id, name: p.name, client: p.client || "", billable: !!p.billable })),
-    opportunities: opportunities.map(o => ({ id: o.id, name: o.name, client: o.client || "", stage: o.stage || "", needsProject: !!o.needs_project })),
+    opportunities: opportunities.map(o => ({
+      id: o.id, name: o.name, client: o.client || "", stage: o.stage || "", needsProject: !!o.needs_project,
+      expectedStart: o.expected_start ? String(o.expected_start).slice(0, 7) : null,   // YYYY-MM
+      expectedMonths: Number(o.expected_months) || 0,
+    })),
     actuals: actuals.map(a => ({
       employeeId: a.employee_id, projectId: a.project_id,
       month: String(a.month).slice(0, 7), hours: Number(a.hours),
