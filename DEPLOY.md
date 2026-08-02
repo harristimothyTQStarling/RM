@@ -121,6 +121,7 @@ PUBLIC_URL=https://<your-domain>          # no trailing slash
 SESSION_SECRET=<openssl rand -base64 48>
 EDITOR_UPNS=tim@tqstarling.com,someone@tqstarling.com
 IMPORTER_UPNS=tim@tqstarling.com            # optional; who may IMPORT a forecast. Unset => tim only. Empty => nobody.
+NIGHTLY_SYNC_UTC_HOUR=7                     # optional; nightly Odoo sync hour (0-23 UTC). Unset => 7 (≈2-3am ET). "off" disables.
 ODOO_URL=https://<your>.odoo.com
 ODOO_DB=<odoo database name>
 ODOO_USER=<read-only service account>

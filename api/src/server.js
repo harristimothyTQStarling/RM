@@ -138,15 +138,48 @@ async function initialSyncIfEmpty() {
   return `initial sync ${JSON.stringify(counts)}`;
 }
 
+/** Nightly Odoo sync: refreshes the reference cache (actuals + realized rates,
+ *  people/projects, CRM windows) and runs the closed-CRM reconciliation without
+ *  anyone clicking Sync Odoo. NIGHTLY_SYNC_UTC_HOUR sets the hour (0-23 UTC,
+ *  default 7 ≈ 2-3am US Eastern); "off" disables. A failed run logs and simply
+ *  tries again the next night — the cache just stays a day staler. */
+function scheduleNightlySync() {
+  const { msUntilUtcHour, nightlyHour } = require("./schedule");
+  const hour = nightlyHour(process.env.NIGHTLY_SYNC_UTC_HOUR);
+  if (hour == null) return "disabled (NIGHTLY_SYNC_UTC_HOUR=off)";
+  const arm = () => {
+    setTimeout(async () => {
+      try {
+        const { Odoo, syncAll } = require("./odoo");
+        const odoo = new Odoo();
+        if (odoo.configured) {
+          const y = new Date().getUTCFullYear();
+          const counts = await syncAll(db, odoo, { actualsFrom: `${y}-01-01`, actualsTo: `${y}-12-31` });
+          console.log(`[nightly-sync] ok ${JSON.stringify(counts)}`);
+        } else {
+          console.log("[nightly-sync] skipped: Odoo not configured");
+        }
+      } catch (e) {
+        console.error(`[nightly-sync] FAILED (will retry tomorrow): ${e.message}`);
+      }
+      arm();                                   // schedule the next night
+    }, msUntilUtcHour(hour)).unref();          // never keeps a dying process alive
+  };
+  arm();
+  return `nightly at ${String(hour).padStart(2, "0")}:00 UTC`;
+}
+
 (async () => {
   const m = await migrate(db);
   let odooMsg = "skipped";
   try { odooMsg = await initialSyncIfEmpty(); } catch (e) { odooMsg = `initial sync FAILED: ${e.message}`; console.error(odooMsg); }
+  const syncMsg = scheduleNightlySync();
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`resource-planner listening on :${PORT}`);
     console.log(`  db     : ${db.kind}${m.applied ? ` (schema applied, ${m.statements} statements)` : ""}`);
     console.log(`  auth   : ${oidc.isConfigured() ? "Entra ID" : process.env.DEV_USER ? `DEV impersonation as ${process.env.DEV_USER}` : "NOT CONFIGURED"}`);
     console.log(`  editors: ${process.env.EDITOR_UPNS || "(none — nobody can edit)"}`);
     console.log(`  odoo   : ${odooMsg}`);
+    console.log(`  sync   : ${syncMsg}`);
   });
 })().catch((e) => { console.error("startup failed:", e); process.exit(1); });
