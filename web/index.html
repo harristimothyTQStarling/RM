@@ -888,7 +888,7 @@ function allocLine(p,projid){
   const rt=MKEYS.reduce((s,k)=>s+alloc(p.id,projid,k),0);
   const pr8=pairRate(p.id,projid);
   return `<div class="a-line" data-line="${p.id}:${projid}">`+
-    `<div class="a-proj"><div style="min-width:0"><div class="pn">${esc(projLabel(pr))}${npBadge(pr)}${mmBadge(pr)}</div>`+
+    `<div class="a-proj"><div style="min-width:0"><div class="pn" title="${esc(projLabel(pr))}${pr.client?" · "+esc(pr.client):""}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""}">${esc(projLabel(pr))}${npBadge(pr)}${mmBadge(pr)}</div>`+
       `<div class="cl">${esc(pr.client||"")}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""}</div></div>`+
       actRateHint(p.id,projid)+
       `<span class="prate" title="Forecast bill rate for ${esc(p.name)} on this project ($/hr) — closed months use the actual rate from Odoo">$<input type="number" min="0" step="1" placeholder="0" value="${pr8||""}" data-prate="${p.id}|${projid}">/hr</span>`+
@@ -1099,7 +1099,7 @@ function projectRow(pr){
     `<div class="p-head">`+
       `<div class="p-ident" data-ptoggle="${id}">`+
         `<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>`+
-        `<div style="min-width:0"><div class="p-name">${badge} ${esc(pr.name)}${npBadge(pr)}${mmBadge(pr)}</div>`+
+        `<div style="min-width:0"><div class="p-name" title="${esc(pr.name)}${pr.client?" · "+esc(pr.client):""}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""}">${badge} ${esc(pr.name)}${npBadge(pr)}${mmBadge(pr)}</div>`+
         `<div class="p-role">${esc(pr.client||"—")}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""} · ${people.length} resource${people.length===1?"":"s"}</div></div>`+
       `</div>`+
       `<div class="mgrid p-meta">${cells}<div class="mcell tot" data-pyr="${id}">${yr?(isD()?money(yrD):fmt0(yr)):"·"}</div></div>`+
@@ -1133,7 +1133,7 @@ function resLine(p,pr){
   const pr8=pairRate(p.id,pr.id);
   const badge=p.type==="tbh"?" <span class='badge tbh'>TBH</span>":p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
   return `<div class="a-line">`+
-    `<div class="a-proj"><div style="min-width:0"><div class="pn">${esc(p.name)}${badge}</div>`+
+    `<div class="a-proj"><div style="min-width:0"><div class="pn" title="${esc(p.name)} · ${esc(p.role||deptLabel(p.dept))}">${esc(p.name)}${badge}</div>`+
       `<div class="cl">${esc(p.role||deptLabel(p.dept))}</div></div>`+
       actRateHint(p.id,pr.id)+
       `<span class="prate" title="Forecast bill rate for ${esc(p.name)} on ${esc(pr.name)} ($/hr) — closed months use the actual rate from Odoo">$<input type="number" min="0" step="1" placeholder="0" value="${pr8||""}" data-prate="${p.id}|${pr.id}">/hr</span>`+
