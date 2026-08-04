@@ -171,6 +171,12 @@ function scheduleNightlySync() {
 
 (async () => {
   const m = await migrate(db);
+  // One pool per role: convert/merge any historical To-Be-Hired seats into
+  // To-Be-Assigned role pools. Idempotent; a no-op once normalized.
+  try {
+    const n = await require("./store").normalizeTbaPools(db);
+    if (n.merged || n.renamed) console.log(`  tba    : normalized role pools (${n.renamed} renamed, ${n.merged} merged)`);
+  } catch (e) { console.error(`  tba    : pool normalization FAILED: ${e.message}`); }
   let odooMsg = "skipped";
   try { odooMsg = await initialSyncIfEmpty(); } catch (e) { odooMsg = `initial sync FAILED: ${e.message}`; console.error(odooMsg); }
   const syncMsg = scheduleNightlySync();

@@ -300,6 +300,84 @@ async function deleteTbh(db, user, tbhKey, scenario = "baseline") {
   });
 }
 
+/* --------------------------------------------- TBA role pools (normalize) -- */
+const roleSlug = (role) => {
+  const s = String(role || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return "tba-" + (s || "unassigned");
+};
+const tbaName = (role) => "TBA - " + (String(role || "").trim() || "Unassigned");
+
+/**
+ * To-Be-Assigned model: unstaffed demand lives against the ROLE, not a named
+ * seat — exactly ONE pool per role, named "TBA - <role>", with no capacity or
+ * start month of its own (demand-only). This normalizer converts historical
+ * To-Be-Hired seats: every tbh row is renamed to the pool convention and rows
+ * sharing a role are MERGED into the canonical pool — allocations move onto the
+ * pool's key (summing where both had hours on the same project/month), bill
+ * rates carry over where the pool has none, capacity overrides are dropped.
+ * Idempotent; runs at every boot and is a no-op once normalized.
+ */
+async function normalizeTbaPools(db) {
+  /* Move every allocation and bill rate from one resource key onto another,
+     summing allocation collisions and letting existing destination rates win —
+     a blanket key-update would trip the UNIQUE constraints when both keys hold
+     the same project/month. */
+  async function mergeResource(scenario, fromKey, toKey) {
+    const allocs = await db.all("SELECT id, target_key, month, hours FROM allocation WHERE scenario=? AND resource_key=?", [scenario, fromKey]);
+    for (const a of allocs) {
+      const dst = await db.get("SELECT id, hours FROM allocation WHERE scenario=? AND resource_key=? AND target_key=? AND month=?",
+        [scenario, toKey, a.target_key, a.month]);
+      if (dst) {
+        await db.run("UPDATE allocation SET hours=?, version=version+1 WHERE id=?", [Number(dst.hours) + Number(a.hours), dst.id]);
+        await db.run("DELETE FROM allocation WHERE id=?", [a.id]);
+      } else {
+        await db.run("UPDATE allocation SET resource_key=? WHERE id=?", [toKey, a.id]);
+      }
+    }
+    const rates = await db.all("SELECT id, target_key FROM bill_rate WHERE scenario=? AND resource_key=?", [scenario, fromKey]);
+    for (const r of rates) {
+      const dst = await db.get("SELECT id FROM bill_rate WHERE scenario=? AND resource_key=? AND target_key=?", [scenario, toKey, r.target_key]);
+      if (!dst) await db.run("UPDATE bill_rate SET resource_key=? WHERE id=?", [toKey, r.id]);
+      else await db.run("DELETE FROM bill_rate WHERE id=?", [r.id]);
+    }
+    await db.run("DELETE FROM capacity_override WHERE scenario=? AND resource_key=?", [scenario, fromKey]);
+  }
+
+  return db.tx(async () => {
+    const out = { merged: 0, renamed: 0 };
+    const rows = await db.all("SELECT id, scenario, tbh_key, name, role, dept, start_month, capacity FROM tbh ORDER BY id");
+    const groups = new Map();   // scenario|slug -> [rows]
+    for (const r of rows) {
+      const key = `${r.scenario}|${roleSlug(r.role)}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(r);
+    }
+    for (const [key, members] of groups) {
+      const scenario = key.slice(0, key.lastIndexOf("|"));
+      const slug = key.slice(key.lastIndexOf("|") + 1);
+      // Prefer an existing row already keyed canonically; else the oldest member.
+      const canon = members.find((m) => m.tbh_key === slug) || members[0];
+      const canonKey = `tbh:${slug}`;
+      // 1. put the canonical row on the pool key/name, demand-only
+      const wantName = tbaName(canon.role);
+      if (canon.tbh_key !== slug || canon.name !== wantName || canon.start_month != null || canon.capacity != null) {
+        if (canon.tbh_key !== slug) await mergeResource(scenario, `tbh:${canon.tbh_key}`, canonKey);
+        else await db.run("DELETE FROM capacity_override WHERE scenario=? AND resource_key=?", [scenario, canonKey]);
+        await db.run("UPDATE tbh SET tbh_key=?, name=?, start_month=NULL, capacity=NULL WHERE id=?", [slug, wantName, canon.id]);
+        out.renamed++;
+      }
+      // 2. fold every other member of the role into the pool
+      for (const m of members) {
+        if (m.id === canon.id) continue;
+        await mergeResource(scenario, `tbh:${m.tbh_key}`, canonKey);
+        await db.run("DELETE FROM tbh WHERE id=?", [m.id]);
+        out.merged++;
+      }
+    }
+    return out;
+  });
+}
+
 /* ------------------------------------------------- TBH -> employee handover -- */
 /**
  * The person was hired: move a TBH seat's forecast onto the real employee.
@@ -395,4 +473,4 @@ async function putImportMap(db, user, m) {
   return { ok: true };
 }
 
-module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, mapOpportunityToProject, putCapacity, putRate, putTbh, deleteTbh, shiftTbhForecast, putImportMap, Conflict, PastMonth, monthKey, currentMonthStart };
+module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, mapOpportunityToProject, putCapacity, putRate, putTbh, deleteTbh, shiftTbhForecast, normalizeTbaPools, roleSlug, tbaName, putImportMap, Conflict, PastMonth, monthKey, currentMonthStart };

@@ -402,7 +402,7 @@
       <button class="tab" role="tab" data-view="byCust" aria-selected="false">By Customer × Month</button>
       <button class="tab" role="tab" data-view="variance" aria-selected="false">Forecast vs Actual</button>
       <button class="tab" role="tab" data-view="crmCheck" aria-selected="false">CRM Mismatches</button>
-      <button class="tab" role="tab" data-view="hiring" aria-selected="false">Hiring / TBH</button>
+      <button class="tab" role="tab" data-view="hiring" aria-selected="false">To Be Assigned</button>
     </div>
     <div class="filters" id="filters">
       <div class="seg" id="modeSeg" role="group" aria-label="Show hours or dollars">
@@ -415,7 +415,7 @@
         <option value="all">All people</option>
         <option value="employee">Employees</option>
         <option value="contractor">Contractors</option>
-        <option value="tbh">To be hired</option>
+        <option value="tbh">To be assigned</option>
       </select>
     </div>
   </div>
@@ -664,7 +664,10 @@ function allPeople(){ return PEOPLE.concat(state.tbh); }
 function personById(id){ return allPeople().find(p=>String(p.id)===String(id)); }
 function projById(id){ return ALL_PROJECTS.find(p=>String(p.id)===String(id)); }
 function capOf(p,mkey){
-  if(p.type==="tbh" && p.start && mkey < p.start) return 0;
+  // TBA role pools are demand-only: unassigned hours against a role, with no
+  // capacity of their own. Whether the org can absorb them is answered by the
+  // role's available-capacity lines on the To Be Assigned tab.
+  if(p.type==="tbh") return 0;
   const ov=state.capacity[p.id];
   return (ov===undefined||ov===null||ov==="")? (p.cap||DEFAULT_CAP) : Number(ov);
 }
@@ -779,7 +782,7 @@ function renderKpis(){
   // count over-allocated people this month
   let over=0; ppl.forEach(p=>{ const c=capOf(p,cur); if(c && personMonthTotal(p.id,cur)>c*1.10) over++; });
   const kpi=[
-    {label:"People",val:emp+con+tbh,meta:emp+" emp · "+con+" contractor"+(tbh?" · "+tbh+" TBH":"")},
+    {label:"People",val:emp+con+tbh,meta:emp+" emp · "+con+" contractor"+(tbh?" · "+tbh+" TBA":"")},
     {label:"Projects",val:ALL_PROJECTS.length,meta:PROJECTS.length+" PRJ · "+CRM_PROJECTS.length+" CRM pipeline"},
     {label:curM.label+" · employees",val:E.u+"%"+mom(E,Ep),cls:E.cls,meta:(isD()? money(E.ad)+" forecast · "+fmt0(E.a)+"h of "+fmt0(E.c)+"h" : fmt0(E.a)+"h of "+fmt0(E.c)+"h capacity")+vsPrev},
     {label:curM.label+" · contractors",val:C.u+"%"+mom(C,Cp),cls:C.cls,meta:(isD()? money(C.ad)+" forecast · "+fmt0(C.a)+"h of "+fmt0(C.c)+"h" : fmt0(C.a)+"h of "+fmt0(C.c)+"h capacity")+vsPrev},
@@ -830,7 +833,7 @@ function personRow(p){
   }).join("");
   const yr=MKEYS.reduce((s,k)=>s+personMonthTotal(p.id,k),0);
   const yrD=personDollars(p.id);
-  const badge=p.type==="tbh"?`<span class="badge tbh">TBH</span>`:p.type==="contractor"?`<span class="badge contractor">Contractor</span>`:`<span class="badge emp">Employee</span>`;
+  const badge=p.type==="tbh"?`<span class="badge tbh">TBA</span>`:p.type==="contractor"?`<span class="badge contractor">Contractor</span>`:`<span class="badge emp">Employee</span>`;
   const rateBadge = isD()&&yr&&!yrD? ` <span class="badge tbh" title="No bill rates set on this person's project lines — dollars show $0">no rate</span>`:"";
   let body="";
   if(isOpen) body=personBody(p);
@@ -853,11 +856,14 @@ function personBody(p){
     : `<div class="empty-body">No projects yet — add one below.</div>`;
   const avail=sortedProjects().filter(pr=>!projs.includes(String(pr.id)));
   const opts=avail.map(pr=>`<option value="${pr.id}">${esc(projLabel(pr))}${pr.client&&pr.client!=="Internal"?" · "+esc(pr.client):""}</option>`).join("");
-  return `<div class="cap-row"><span>Monthly capacity</span>`+
+  return (p.type==="tbh"
+    // A TBA role pool is demand-only — no capacity of its own, so no capacity input.
+    ? `<div class="cap-row"><span class="muted">To-Be-Assigned role pool — unassigned demand for ${esc(p.role||"this role")}; see the To Be Assigned tab for the role's available capacity</span>`+
+      `<button class="btn" data-deltbh="${p.id}" style="margin-left:auto;padding:4px 9px">Remove pool</button></div>`
+    : `<div class="cap-row"><span>Monthly capacity</span>`+
       `<input type="number" min="0" step="1" placeholder="${DEFAULT_CAP}" value="${capVal}" data-cap="${p.id}"> h`+
-      `<span class="muted">· default ${DEFAULT_CAP}h${p.type==="tbh"&&p.start?` · starts ${MONTHS.find(m=>m.key===p.start)?.label||p.start}`:""}</span>`+
-      (p.type==="tbh"?`<button class="btn" data-deltbh="${p.id}" style="margin-left:auto;padding:4px 9px">Remove TBH</button>`:"")+
-    `</div>`+
+      `<span class="muted">· default ${DEFAULT_CAP}h</span>`+
+    `</div>`)+
     rows+
     `<div class="addproj"><select data-addproj="${p.id}"><option value="">+ Add project…</option>${opts}</select></div>`;
 }
@@ -970,7 +976,7 @@ function renderByEmp(){
         return cell;
       }).join("");
       grand+=rt; grandCap+=rcap; grandD+=rd; a.g+=rt; a.gc+=rcap; a.gd+=rd;
-      const badge=p.type==="tbh"?" <span class='badge tbh'>TBH</span>":p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
+      const badge=p.type==="tbh"?" <span class='badge tbh'>TBA</span>":p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
       body+=`<tr><td class="lbl">${p.name}${badge}<div class="muted" style="font-size:11px">${p.role||"—"}</div></td>${tds}${hpCell(rt,rcap,"","col-tot",null,rd)}</tr>`;
     });
   });
@@ -980,7 +986,7 @@ function renderByEmp(){
   const foot=`<tfoot>`+
     (acc.employee.n? footRow(`Employees <span class="muted">· ${acc.employee.n}</span>`,acc.employee):"")+
     (acc.contractor.n? footRow(`Contractors <span class="muted">· ${acc.contractor.n}</span>`,acc.contractor):"")+
-    (acc.tbh.n? footRow(`To be hired <span class="muted">· ${acc.tbh.n}</span>`,acc.tbh):"")+
+    (acc.tbh.n? footRow(`To be assigned <span class="muted">· ${acc.tbh.n}</span>`,acc.tbh):"")+
     footRow("All shown",{t:colTot,c:colCap,d:colD,g:grand,gc:grandCap,gd:grandD},"grand")+
     `</tfoot>`;
   document.getElementById("viewRoot").innerHTML=
@@ -1035,7 +1041,7 @@ function renderByRole(){
 
       grp.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(p=>{
         const {tds:ptds,rt:pt,rcap:pcap,rd:pd}=rowFor([p],false);
-        const badge=p.type==="tbh"?" <span class='badge tbh'>TBH</span>":p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
+        const badge=p.type==="tbh"?" <span class='badge tbh'>TBA</span>":p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
         body+=`<tr class="lvl3"><td class="lbl lvl3i">${esc(p.name)}${badge}</td>${ptds}${hpCell(pt,pcap,"","col-tot",null,pd)}</tr>`;
       });
     });
@@ -1113,7 +1119,7 @@ function projectBody(pr){
     : `<div class="empty-body">No resources yet — add one below.</div>`;
   const have=people.map(p=>String(p.id));
   const avail=allPeople().filter(p=>!have.includes(String(p.id))).sort(byPersonOrder);
-  const opts=avail.map(p=>`<option value="${p.id}">${esc(p.name)}${p.type==="tbh"?" (TBH)":""} · ${esc(p.role||deptLabel(p.dept))}</option>`).join("");
+  const opts=avail.map(p=>`<option value="${p.id}">${esc(p.name)}${p.type==="tbh"?" (TBA)":""} · ${esc(p.role||deptLabel(p.dept))}</option>`).join("");
   const mapBanner=(pr.needsProject && canEdit())? npMapBanner(pr) : "";
   return mapBanner+rows+`<div class="addproj"><select data-addres="${String(pr.id)}"><option value="">+ Add resource…</option>${opts}</select></div>`;
 }
@@ -1131,7 +1137,7 @@ function resLine(p,pr){
   const inputs=MONTHS.map(m=>lineCell(p.id,pr.id,m,esc(p.name))).join("");
   const rt=MKEYS.reduce((s,k)=>s+alloc(p.id,pr.id,k),0);
   const pr8=pairRate(p.id,pr.id);
-  const badge=p.type==="tbh"?" <span class='badge tbh'>TBH</span>":p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
+  const badge=p.type==="tbh"?" <span class='badge tbh'>TBA</span>":p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
   return `<div class="a-line">`+
     `<div class="a-proj"><div style="min-width:0"><div class="pn" title="${esc(p.name)} · ${esc(p.role||deptLabel(p.dept))}">${esc(p.name)}${badge}</div>`+
       `<div class="cl">${esc(p.role||deptLabel(p.dept))}</div></div>`+
@@ -1208,42 +1214,92 @@ function detectGaps(){
   });
   return gaps.sort((a,b)=>b.peak-a.peak);
 }
+/* -------- To Be Assigned: one demand-only pool per role -------- */
+const slugRole = (role) => "tba-" + ((String(role||"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"")) || "unassigned");
+const tbaLabel = (role) => "TBA - " + (String(role||"").trim() || "Unassigned");
+let tbaOpen = new Set();
+/* Available capacity for a role in a month: what people who ALREADY have that
+   role could still absorb — capacity minus allocated (actuals for closed months,
+   forecast for open ones). Split employee vs contractor. */
+function roleAvail(role, mkey, type){
+  const r=String(role||"").trim().toLowerCase();
+  let t=0;
+  PEOPLE.filter(p=>p.type===type && String(p.role||"").trim().toLowerCase()===r)
+    .forEach(p=>{ t += capOf(p,mkey) - personMonthTotal(p.id,mkey); });
+  return t;
+}
+function tbaDrill(t){
+  const byProj={}; const a=state.alloc[t.id]||{};
+  for(const proj in a) for(const mk in a[proj]) if(a[proj][mk]>0){ (byProj[proj]=byProj[proj]||{})[mk]=a[proj][mk]; }
+  const projs=sortProjIds(Object.keys(byProj));
+  const cell=(v,cls)=>`<td class="mcelln ${cls||""}">${v}</td>`;
+  const months=(fn)=>MONTHS.map(m=>fn(m.key,m.mi)).join("");
+  let html=`<div style="overflow:auto;margin-top:8px"><table class="pivot"><thead><tr><th class="lbl">Project</th>`+
+    MONTHS.map(m=>`<th class="${isPastMi(m.mi)?"actual":""}">${m.label}</th>`).join("")+`<th class="col-tot">Total</th></tr></thead><tbody>`;
+  if(!projs.length) html+=`<tr><td class="lbl muted">No demand staffed on this role yet — add projects from the Allocate tabs.</td>${MONTHS.map(()=>"<td></td>").join("")}<td></td></tr>`;
+  projs.forEach(proj=>{
+    const pr=projById(proj); const rate=pairRate(t.id,proj);
+    let tot=0;
+    const tds=months(k=>{ const h=byProj[proj][k]||0; tot+=h; const v=isD()? (h?money(h*rate):"") : (h?fmt(h):"");
+      return cell(v||"·"); });
+    html+=`<tr><td class="lbl" title="${pr?esc(projLabel(pr)):esc(proj)}">${pr?esc(projLabel(pr)):esc(proj)}${rate?`<div class="muted" style="font-size:10.5px">$${fmt(rate)}/hr</div>`:""}</td>${tds}`+
+      `<td class="mcelln col-tot">${isD()? money(tot*rate) : fmt0(tot)}</td></tr>`;
+  });
+  // pool demand total + role availability, employees vs contractors
+  let dTot=0;
+  const demandTds=months(k=>{ const h=personMonthTotal(t.id,k); dTot+=h; return cell(h?fmt(h):"·"); });
+  html+=`<tr class="grp"><td class="lbl">Unassigned demand (h)</td>${demandTds}<td class="mcelln col-tot">${fmt0(dTot)}</td></tr>`;
+  const availRow=(label,type)=>{
+    let tot=0;
+    const tds=months((k,mi)=>{ const v=roleAvail(t.role,k,type); tot+=v;
+      const cls = v<0? "v-over" : (v>0? "v-on":""); return cell(fmt(Math.round(v*10)/10)||"0",cls); });
+    return `<tr><td class="lbl">${label}</td>${tds}<td class="mcelln col-tot">${fmt0(tot)}</td></tr>`;
+  };
+  html+=availRow("Available — employees","employee");
+  html+=availRow("Available — contractors","contractor");
+  html+=`</tbody></table></div>`+
+    `<div class="legend" style="margin-top:4px"><span>Available = capacity − allocated for current people with the role “${esc(t.role||"—")}”. Green = spare capacity that could absorb this demand; red = that group is already over-allocated.</span></div>`;
+  return html;
+}
 function renderHiring(){
-  const tbhList=state.tbh;
+  const pools=state.tbh.slice().sort((a,b)=>(a.role||"~").localeCompare(b.role||"~"));
   const roleOpts=[...new Set(PEOPLE.map(p=>p.role).filter(Boolean))].sort();
   const gaps=detectGaps();
-  let tbhHtml = tbhList.length? tbhList.map(t=>{
+  let poolHtml = pools.length? pools.map(t=>{
     const yr=MKEYS.reduce((s,k)=>s+personMonthTotal(t.id,k),0);
     const fut=Object.values(tbhFutureByProject(t.id)).reduce((s,x)=>s+x,0);
-    return `<div class="tbh-item"><div class="avatar" style="background:${deptColor(t.dept)}">${initials(t.role||"TB")}</div>`+
-      `<div class="info"><div class="r">${t.name}</div><div class="d">${t.role} · ${deptLabel(t.dept)} · starts ${MONTHS.find(m=>m.key===t.start)?.label||t.start} · ${fmt0(capOf(t,t.start))}h/mo · ${isD()? money(personDollars(t.id))+" planned" : fmt0(yr)+"h planned"}</div></div>`+
-      (fut>0?`<button class="btn primary" data-shifttbh="${t.id}" style="padding:5px 9px" title="They were hired — move this seat's forecast onto the real employee">Shift forecast → employee</button>`:"")+
-      `<button class="btn" data-deltbh="${t.id}" style="padding:5px 9px">Remove</button></div>`;
-  }).join("") : `<div class="muted" style="font-size:12.5px">No to-be-hired roles yet. Add one to model a future hire and allocate them to projects like any employee.</div>`;
+    const open=tbaOpen.has(String(t.id));
+    return `<div class="tbh-item" style="flex-wrap:wrap">`+
+      `<div class="avatar" style="background:${deptColor(t.dept)};cursor:pointer" data-tbaopen="${t.id}">${initials(t.role||"TB")}</div>`+
+      `<div class="info" style="cursor:pointer" data-tbaopen="${t.id}"><div class="r">${esc(t.name)} <span class="muted" style="font-weight:400;font-size:11px">${open?"▾":"▸"} click to ${open?"collapse":"drill into projects & capacity"}</span></div>`+
+        `<div class="d">${esc(t.role||"—")}${t.dept?` · ${deptLabel(t.dept)}`:""} · ${isD()? money(personDollars(t.id))+" planned" : fmt0(yr)+"h planned"}</div></div>`+
+      (fut>0?`<button class="btn primary" data-shifttbh="${t.id}" style="padding:5px 9px" title="Someone was hired/assigned — move this role's forecast onto the real person">Shift forecast → employee</button>`:"")+
+      `<button class="btn" data-deltbh="${t.id}" style="padding:5px 9px">Remove</button>`+
+      (open?`<div style="flex-basis:100%;min-width:0">${tbaDrill(t)}</div>`:"")+
+    `</div>`;
+  }).join("") : `<div class="muted" style="font-size:12.5px">No to-be-assigned roles yet. Add one to pool unassigned demand against a role, then staff it on projects like any resource.</div>`;
 
   let gapHtml = gaps.length? gaps.slice(0,8).map(g=>
     `<div class="sugg"><span class="gaptag gap-pos">+${fmt0(g.peak)}h</span>`+
     `<div class="txt"><b>${g.role}</b> is over capacity — peak shortfall ${fmt0(g.peak)}h in ${g.peakMonth}, ${g.monthsOver} month${g.monthsOver>1?"s":""} over.</div>`+
-    `<button class="btn" data-prefill="${encodeURIComponent(g.role)}" style="padding:5px 9px">Add TBH</button></div>`
+    `<button class="btn" data-prefill="${encodeURIComponent(g.role)}" style="padding:5px 9px">Add TBA</button></div>`
   ).join("") : `<div class="muted" style="font-size:12.5px">No roles are over capacity in the current plan. Gaps appear here as you allocate demand beyond a role's combined capacity.</div>`;
 
-  const monthOpts=MONTHS.map(m=>`<option value="${m.key}">${m.label}</option>`).join("");
   const deptOpts=`<option value="">— No department —</option>`+DEPTS.map(d=>`<option value="${d}">${d}</option>`).join("");
   document.getElementById("viewRoot").innerHTML=
-    `<div class="panel"><div class="panel-hd"><h2>Hiring plan — to-be-hired resources</h2><span class="hint">model open roles, then staff them on projects to see the impact</span></div>`+
+    `<div class="panel"><div class="panel-hd"><h2>To Be Assigned — unstaffed role demand</h2><span class="hint">one pool per role · forecast against the role, then shift it to the person once they're assigned</span></div>`+
     `<div class="hire-wrap"><div class="hire-grid">`+
-      `<div class="card"><h3>Add a to-be-hired role</h3><div class="bd">`+
+      `<div class="card"><h3>Add a to-be-assigned role</h3><div class="bd">`+
         `<div class="form-grid">`+
           `<div class="field"><label>Role / title</label><input type="text" id="tbhRole" list="roleList" placeholder="e.g. Senior Solution Consultant"><datalist id="roleList">${roleOpts.map(r=>`<option value="${r}">`).join("")}</datalist></div>`+
           `<div class="field"><label>Department</label><select id="tbhDept">${deptOpts}</select></div>`+
-          `<div class="field"><label>Start month</label><select id="tbhStart">${monthOpts}</select></div>`+
-          `<div class="field"><label>Capacity (h/mo)</label><input type="number" id="tbhCap" value="160" min="0" step="1"></div>`+
         `</div>`+
-        `<button class="btn primary" id="tbhAdd">Add open role</button>`+
+        `<button class="btn primary" id="tbhAdd">Add role pool</button>`+
+        `<div class="muted" style="font-size:11.5px;margin-top:6px">Named “TBA - &lt;role&gt;”. One pool per role — adding an existing role opens its pool.</div>`+
       `</div></div>`+
-      `<div class="card"><h3>Suggested hires — role gaps</h3><div class="bd">${gapHtml}</div></div>`+
+      `<div class="card"><h3>Suggested roles — capacity gaps</h3><div class="bd">${gapHtml}</div></div>`+
     `</div>`+
-    `<div class="card"><h3>Open roles (${tbhList.length})</h3><div class="bd">${tbhHtml}</div></div>`+
+    `<div class="card"><h3>To Be Assigned (${pools.length})</h3><div class="bd">${poolHtml}</div></div>`+
     `</div></div>`;
 }
 
@@ -1492,7 +1548,9 @@ document.getElementById("viewRoot").addEventListener("click",e=>{
   if(rm){ const [pid,projid]=rm.dataset.rmproj.split("|"); if(state.alloc[pid]) delete state.alloc[pid][projid];
     if(pairRate(pid,projid)){ setPairRateLocal(pid,projid,0); pushRate(pid,projid,0); }
     /*saved via API*/ keepScroll(renderAllocate); renderKpis(); return; }
-  const sh=e.target.closest("[data-shifttbh]");   // Hiring: move a seat's forecast to the hired employee
+  const tba=e.target.closest("[data-tbaopen]");   // To Be Assigned: drill into a role pool
+  if(tba){ const id=String(tba.dataset.tbaopen); if(tbaOpen.has(id)) tbaOpen.delete(id); else tbaOpen.add(id); renderHiring(); return; }
+  const sh=e.target.closest("[data-shifttbh]");   // move a role pool's forecast to the assigned person
   if(sh){ if(!canEdit()) return; openShiftModal(sh.dataset.shifttbh); return; }
   const del=e.target.closest("[data-deltbh]");
   if(del){ const id=del.dataset.deltbh;
@@ -1521,15 +1579,15 @@ function openTbhForm(role,dept){
 function addTbh(){
   const role=(document.getElementById("tbhRole").value||"").trim();
   const dept=document.getElementById("tbhDept").value;
-  const start=document.getElementById("tbhStart").value;
-  const cap=Number(document.getElementById("tbhCap").value)||DEFAULT_CAP;
   if(!role){ document.getElementById("tbhRole").focus(); return; }
-  const nextNum=state.tbh.filter(t=>t.role===role).length+1;
-  const id="tbh-"+Date.now();
-  const t={id,name:"TBH · "+role+(nextNum>1?" #"+nextNum:""),role,dept,type:"tbh",start,cap};
-  state.tbh.push(t); renderHiring(); renderKpis();
-  api("PUT","/api/tbh",{tbhKey:String(id).replace(/^tbh-?/,""),name:t.name,role,dept,start,cap})
-    .then(()=>status("Saved")).catch(e=>toast("Open role not saved: "+e.message));
+  // ONE pool per role: adding an existing role just opens its pool.
+  const key=slugRole(role), id="tbh-"+key;
+  const existing=state.tbh.find(t=>String(t.id)===id);
+  if(existing){ tbaOpen.add(id); renderHiring(); toast(`“${tbaLabel(role)}” already exists — opened its pool.`); return; }
+  const t={id,name:tbaLabel(role),role,dept,type:"tbh",start:null,cap:null};
+  state.tbh.push(t); tbaOpen.add(id); renderHiring(); renderKpis();
+  api("PUT","/api/tbh",{tbhKey:key,name:t.name,role,dept,start:null,cap:null})
+    .then(()=>status("Saved")).catch(e=>toast("Role pool not saved: "+e.message));
 }
 
 /* ---------------------- Hours / Dollars toggle ---------------------- */
@@ -1820,7 +1878,7 @@ function autoPerson(n){ const g=guessPerson(n); return g? String(g) : "__tbh__";
 function autoProject(n){ const a=guessProject(n); return a? String(a) : "skip"; }
 
 function personOptions(sel){ return `<option value="skip"${sel==="skip"?" selected":""}>— skip —</option>`+
-  `<option value="__tbh__"${sel==="__tbh__"?" selected":""}>➕ Create as To-Be-Hired</option>`+
+  `<option value="__tbh__"${sel==="__tbh__"?" selected":""}>➕ Pool as To-Be-Assigned (by role)</option>`+
   PEOPLE.slice().sort((a,b)=>DEPTS.indexOf(a.dept)-DEPTS.indexOf(b.dept)||a.name.localeCompare(b.name))
   .map(p=>`<option value="${p.id}"${String(sel)===String(p.id)?" selected":""}>${esc(p.name)} · ${esc(p.role||p.dept)}</option>`).join(""); }
 function projectOptions(sel){ return `<option value="skip"${sel==="skip"?" selected":""}>— skip —</option>`+
@@ -1874,8 +1932,8 @@ function openImportModal(records, sheetName){
         <div class="stat"><div class="n tnum">${projects.length}</div><div class="l">Projects in sheet</div></div>
         <div class="stat"><div class="n tnum">${fmt0(totalHrs)}</div><div class="l">Forecast hours</div></div>
       </div>
-      <div class="mapsec"><h3>People ${tag(matchedP,persons.length)} <span class="cnt">unmatched → To-Be-Hired · role snapped to Odoo${ratedCount?` · ${ratedCount} with bill rates from the sheet`:""}</span></h3>
-        <div class="scrollbox"><table class="maptbl"><thead><tr><th>In spreadsheet</th><th>Hours</th><th>Rate</th><th>Maps to (Odoo person)</th><th>Role (if To-Be-Hired)</th></tr></thead><tbody>
+      <div class="mapsec"><h3>People ${tag(matchedP,persons.length)} <span class="cnt">unmatched → pooled into TBA role · role snapped to Odoo${ratedCount?` · ${ratedCount} with bill rates from the sheet`:""}</span></h3>
+        <div class="scrollbox"><table class="maptbl"><thead><tr><th>In spreadsheet</th><th>Hours</th><th>Rate</th><th>Maps to (Odoo person)</th><th>Role (if To-Be-Assigned)</th></tr></thead><tbody>
         ${persons.map(n=>{ const sp=selP(n); return `<tr><td class="src">${esc(n)}${personSheetRole[n]?`<div class="muted" style="font-size:11px">${esc(personSheetRole[n])}</div>`:""}</td><td class="hrs">${fmt0(personHrs[n])}h</td><td class="hrs">${personRate(n)?"$"+personRate(n):"—"}</td><td><select data-mapp="${esc(n)}">${personOptions(sp)}</select></td><td><select data-maprole="${esc(n)}"${sp==="__tbh__"?"":" disabled"}>${roleOptions(roleFor(n))}</select></td></tr>`; }).join("")}
         </tbody></table></div></div>
       <div class="mapsec"><h3>Projects ${tag(matchedPr,projects.length)} <span class="cnt">matched by client / name</span></h3>
@@ -1926,26 +1984,26 @@ function applyImport(records,pmap,prmap,sheetName,rolemap){
   });
   state.importMap.v=MATCH_V;
   state.alloc={}; state.capacity=state.capacity||{};
-  // Unmatched sheet people -> To-Be-Hired seats, numbered within their matched Odoo
-  // role: "To Hire - Technical Consultant #1, #2". One seat per person; its role is
-  // snapped to a standard delivery role (editable in the modal). Seats are persisted
-  // via /api/tbh so they survive a reload rather than living only in memory.
+  // Unmatched sheet people pool into ONE To-Be-Assigned entry per role
+  // ("TBA - Technical Consultant"): resourcing is against the role, not a named
+  // seat, so two unmatched people with the same role land in the same pool and
+  // their hours accumulate. Pools are persisted via /api/tbh (demand-only: no
+  // capacity or start month).
   rolemap=rolemap||{};
-  const tbhByPerson={}, roleCount={};
+  const tbhByPerson={}, poolById={};
   [...new Set(records.map(r=>r.person))].filter(n=>pmap[n]==="__tbh__").forEach(name=>{
     const rec=records.find(r=>r.person===name)||{};
     const role=(rolemap[name]||matchRole(rec.role||"")||"").trim();
     const dept=DEPTS.includes(rec.dept)?rec.dept:"";
-    const bucket=role||"Unassigned"; roleCount[bucket]=(roleCount[bucket]||0)+1;
-    const label=role?`To Hire - ${role} #${roleCount[bucket]}`:`To Hire #${roleCount[bucket]}`;
-    const id="tbh-imp-"+name.replace(/[^a-z0-9]+/gi,"-").toLowerCase();
-    tbhByPerson[name]={id,name:label,role,dept};
+    const id="tbh-"+slugRole(role);
+    tbhByPerson[name]={id};
+    if(!poolById[id]) poolById[id]={id,name:tbaLabel(role),role,dept};
   });
-  Object.values(tbhByPerson).forEach(s=>{
+  Object.values(poolById).forEach(s=>{
     const ex=state.tbh.find(t=>String(t.id)===String(s.id));
-    if(ex){ ex.name=s.name; ex.role=s.role; ex.dept=s.dept; }
-    else state.tbh.push({id:s.id,name:s.name,role:s.role,dept:s.dept,type:"tbh",start:CURRENT_KEY,cap:160});
-    api("PUT","/api/tbh",{tbhKey:String(s.id).replace(/^tbh-?/,""),name:s.name,role:s.role,dept:s.dept,start:CURRENT_KEY,cap:160}).catch(()=>{});
+    if(ex){ ex.name=s.name; ex.role=s.role; if(!ex.dept) ex.dept=s.dept; }
+    else state.tbh.push({id:s.id,name:s.name,role:s.role,dept:s.dept,type:"tbh",start:null,cap:null});
+    api("PUT","/api/tbh",{tbhKey:String(s.id).replace(/^tbh-/,""),name:s.name,role:s.role,dept:s.dept,start:null,cap:null}).catch(()=>{});
   });
   let applied=0;
   const rateHrs={}, rateDol={};   // per mapped person|project pair: hours & dollars from rated rows → weighted avg bill rate
@@ -2006,7 +2064,7 @@ document.getElementById("xlsxInput").addEventListener("change",e=>{ const f=e.ta
 
 /* ============================ BULK ALLOCATE ============================ */
 function bulkPeopleOpts(){ return allPeople().slice().sort((a,b)=>DEPTS.indexOf(a.dept)-DEPTS.indexOf(b.dept)||a.name.localeCompare(b.name))
-  .map(p=>`<option value="${p.id}">${esc(p.name)}${p.type==="tbh"?" (TBH)":""} · ${esc(p.role||p.dept)}</option>`).join(""); }
+  .map(p=>`<option value="${p.id}">${esc(p.name)}${p.type==="tbh"?" (TBA)":""} · ${esc(p.role||p.dept)}</option>`).join(""); }
 function bulkProjOpts(){ return sortedProjects()   // PRJ first, then CRM
   .map(p=>`<option value="${p.id}">${esc(projLabel(p))}${p.client&&p.client!=="Internal"?" · "+esc(p.client):""}</option>`).join(""); }
 function bulkMonthOpts(sel){ return MONTHS.filter(m=>!isPastMi(m.mi)).map(m=>`<option value="${m.key}"${m.key===sel?" selected":""}>${m.label}</option>`).join(""); }
@@ -2124,14 +2182,14 @@ function refreshShiftUI(tid){
   const any=[...document.querySelectorAll("[data-shsel]")].some(c=>c.checked);
   const all=[...document.querySelectorAll("[data-shsel]")].every(c=>c.checked);
   const rm=document.getElementById("shRemove"); if(rm && !any) rm.checked=false;
-  const hint=document.getElementById("shRemoveHint"); if(hint) hint.textContent = all? "" : "(some projects stay — removing the seat would drop their forecast)";
+  const hint=document.getElementById("shRemoveHint"); if(hint) hint.textContent = all? "" : "(some projects stay — removing the pool would drop their forecast)";
   document.getElementById("shApply").disabled = !any;
 }
 function openShiftModal(tid){
   const t=state.tbh.find(x=>String(x.id)===String(tid)); if(!t) return;
   const byProj=tbhFutureByProject(tid);
   const projs=sortProjIds(Object.keys(byProj));
-  if(!projs.length){ toast("This seat has no forecast from the current month onward."); return; }
+  if(!projs.length){ toast("This role pool has no forecast from the current month onward."); return; }
   const defEmp=(PEOPLE[0]||{}).id;
   const hasRates=projs.some(p=>pairRate(tid,p)>0);
   const rows=projs.map(p=>{ const pr=projById(p); return `<tr data-shrow="${esc(String(p))}">`+
@@ -2141,7 +2199,7 @@ function openShiftModal(tid){
     `<td><select data-shemp>${shiftEmpOpts(defEmp)}</select></td></tr>`; }).join("");
   document.getElementById("modalRoot").innerHTML=`<div class="backdrop" id="shBackdrop"><div class="modal" style="width:min(760px,100%)" role="dialog" aria-modal="true">
     <div class="modal-hd"><h2>Shift forecast to employee</h2>
-      <p><b>${esc(t.name)}</b> · ${esc(t.role||"")} — move this seat's forecast (${MONTHS[CURRENT_MI]?MONTHS[CURRENT_MI].name+"–"+MONTHS[11].name:"remaining months"}) onto the person who was hired. Closed months stay behind.</p></div>
+      <p><b>${esc(t.name)}</b> · ${esc(t.role||"")} — move this role's unassigned forecast (${MONTHS[CURRENT_MI]?MONTHS[CURRENT_MI].name+"–"+MONTHS[11].name:"remaining months"}) onto the person who was assigned or hired. Closed months stay behind.</p></div>
     <div class="modal-bd">
       <div class="field"><label>Move everything to</label><select id="shAll">${shiftEmpOpts(defEmp)}</select></div>
       <div class="scrollbox"><table class="maptbl"><thead><tr><th></th><th>Project</th><th>Hours</th><th>Moves to</th></tr></thead><tbody>${rows}</tbody></table></div>
@@ -2149,17 +2207,17 @@ function openShiftModal(tid){
         <div class="field"><label>⚠ <span id="shCollideN">0</span> month-cell(s) already have hours on the employee — what should happen?</label>
         <select id="shMode">
           <option value="sum" selected>Add the hours together</option>
-          <option value="replace">Replace with the seat's hours</option>
-          <option value="skip">Skip those cells (they stay on the seat)</option>
+          <option value="replace">Replace with the pool's hours</option>
+          <option value="skip">Skip those cells (they stay on the pool)</option>
         </select></div>
       </div>
-      ${hasRates?`<div class="field"><label>Bill rates on this seat's lines</label>
+      ${hasRates?`<div class="field"><label>Bill rates on this role's lines</label>
         <select id="shRates">
           <option value="overwrite" selected>Copy the rate from the TBH to the employee / project combination</option>
           <option value="copy">Leave the rate that already exists for the employee / project combination</option>
           <option value="none">Don't copy — set the rate manually</option>
         </select></div>`:""}
-      <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" id="shRemove" checked> Also remove the TBH seat afterwards <span class="muted" id="shRemoveHint" style="font-size:11.5px"></span></label>
+      <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" id="shRemove" checked> Also remove the TBA role pool afterwards <span class="muted" id="shRemoveHint" style="font-size:11.5px"></span></label>
     </div>
     <div class="modal-ft"><span class="muted" style="font-size:12px">Every move is audited. Nothing changes until you apply.</span>
       <span style="display:flex;gap:8px"><button class="btn" id="shCancel">Cancel</button><button class="btn primary" id="shApply">Shift forecast</button></span></div>
@@ -2194,7 +2252,7 @@ async function applyShift(tid){
     closeModal();
     toast(`Forecast shifted — ${r.moved} cell${r.moved===1?"":"s"} moved`+
       (r.merged?`, ${r.merged} merged`:"")+(r.replaced?`, ${r.replaced} replaced`:"")+(r.skipped?`, ${r.skipped} skipped`:"")+
-      (r.ratesCopied?`, ${r.ratesCopied} rate${r.ratesCopied===1?"":"s"} copied`:"")+(r.seatRemoved?" · seat removed":"")+".");
+      (r.ratesCopied?`, ${r.ratesCopied} rate${r.ratesCopied===1?"":"s"} copied`:"")+(r.seatRemoved?" · pool removed":"")+".");
     await bootstrap();   // reload the shared plan from the server's new truth
   }catch(e){ status("Shift failed"); toast("Shift failed: "+(e&&e.message?e.message:e)); btn.disabled=false; btn.textContent="Shift forecast"; }
 }
