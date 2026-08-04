@@ -1451,37 +1451,47 @@ document.getElementById("viewRoot").addEventListener("change",e=>{
   }
   if(el.dataset.addproj!==undefined && el.value){ const pid=el.dataset.addproj, projid=el.value;
     if(!state.alloc[pid]) state.alloc[pid]={}; if(!state.alloc[pid][projid]) state.alloc[pid][projid]={};
-    /*saved via API*/ renderAllocate(); // keep this person open
+    /*saved via API*/ keepScroll(renderAllocate); // keep this person open, stay where we were
   }
   if(el.dataset.addres!==undefined && el.value){ const projid=el.dataset.addres, pid=el.value;
     if(!state.alloc[pid]) state.alloc[pid]={}; if(!state.alloc[pid][projid]) state.alloc[pid][projid]={};
-    /*saved via API*/ renderByProj(); // keep this project open
+    /*saved via API*/ keepScroll(renderByProj); // keep this project open, stay where we were
   }
 });
+/* Re-rendering a grid replaces its .scroll container, which silently resets the
+   scroll position — so expanding a row deep in the list snapped the view back to
+   the top. Capture the container's scroll offsets and restore them after. */
+function keepScroll(fn){
+  const sc=document.querySelector("#viewRoot .scroll");
+  const t=sc?sc.scrollTop:0, l=sc?sc.scrollLeft:0;
+  fn();
+  const sc2=document.querySelector("#viewRoot .scroll");
+  if(sc2){ sc2.scrollTop=t; sc2.scrollLeft=l; }
+}
 document.getElementById("viewRoot").addEventListener("click",e=>{
   if(e.target.closest("#btnBulk")){ openBulkModal(); return; }
   const rp=e.target.closest("[data-rp]");            // By Role: practice → people
-  if(rp){ const k=rp.getAttribute("data-rp"); if(rpOpen.has(k)) rpOpen.delete(k); else rpOpen.add(k); renderByRole(); return; }
+  if(rp){ const k=rp.getAttribute("data-rp"); if(rpOpen.has(k)) rpOpen.delete(k); else rpOpen.add(k); keepScroll(renderByRole); return; }
   const rr=e.target.closest("[data-role]");          // By Role: role → practices
-  if(rr){ const k=rr.getAttribute("data-role"); if(roleOpen.has(k)) roleOpen.delete(k); else roleOpen.add(k); renderByRole(); return; }
+  if(rr){ const k=rr.getAttribute("data-role"); if(roleOpen.has(k)) roleOpen.delete(k); else roleOpen.add(k); keepScroll(renderByRole); return; }
   const cu=e.target.closest("[data-cust]");          // By Customer: customer → projects/CRM
-  if(cu){ const k=cu.getAttribute("data-cust"); if(custOpen.has(k)) custOpen.delete(k); else custOpen.add(k); renderByCust(); return; }
+  if(cu){ const k=cu.getAttribute("data-cust"); if(custOpen.has(k)) custOpen.delete(k); else custOpen.add(k); keepScroll(renderByCust); return; }
   const ptog=e.target.closest("[data-ptoggle]");   // By Project: expand a project
-  if(ptog){ const id=ptog.dataset.ptoggle; if(projOpen.has(id)) projOpen.delete(id); else projOpen.add(id); renderByProj(); return; }
+  if(ptog){ const id=ptog.dataset.ptoggle; if(projOpen.has(id)) projOpen.delete(id); else projOpen.add(id); keepScroll(renderByProj); return; }
   const rmr=e.target.closest("[data-rmres]");      // By Project: remove a resource from a project
   if(rmr){ const [pid,projid]=rmr.dataset.rmres.split("|"); if(state.alloc[pid]) delete state.alloc[pid][projid];
     if(pairRate(pid,projid)){ setPairRateLocal(pid,projid,0); pushRate(pid,projid,0); }
-    /*saved via API*/ renderByProj(); renderKpis(); return; }
+    /*saved via API*/ keepScroll(renderByProj); renderKpis(); return; }
   const mo=e.target.closest("[data-mapopp]");      // By Project: map a closed CRM opp's forecast onto a project
   if(mo){ const oppId=mo.dataset.mapopp; const sel=document.querySelector(`[data-mapsel="${oppId}"]`);
     const projectId=sel&&sel.value; if(!projectId){ toast("Choose a project to map to."); return; }
     mapOppToProject(oppId,projectId); return; }
   const tog=e.target.closest("[data-toggle]");
-  if(tog){ const id=tog.dataset.toggle; if(openSet.has(id)) openSet.delete(id); else openSet.add(id); renderAllocate(); return; }
+  if(tog){ const id=tog.dataset.toggle; if(openSet.has(id)) openSet.delete(id); else openSet.add(id); keepScroll(renderAllocate); return; }
   const rm=e.target.closest("[data-rmproj]");
   if(rm){ const [pid,projid]=rm.dataset.rmproj.split("|"); if(state.alloc[pid]) delete state.alloc[pid][projid];
     if(pairRate(pid,projid)){ setPairRateLocal(pid,projid,0); pushRate(pid,projid,0); }
-    /*saved via API*/ renderAllocate(); renderKpis(); return; }
+    /*saved via API*/ keepScroll(renderAllocate); renderKpis(); return; }
   const sh=e.target.closest("[data-shifttbh]");   // Hiring: move a seat's forecast to the hired employee
   if(sh){ if(!canEdit()) return; openShiftModal(sh.dataset.shifttbh); return; }
   const del=e.target.closest("[data-deltbh]");
