@@ -93,6 +93,20 @@ CREATE TABLE IF NOT EXISTS import_map (
   UNIQUE (scenario, kind, source_name)
 );
 
+-- Proposed hire per (TBA role pool × project): the candidate's name typed in by
+-- an editor before they exist in Odoo. Free text, last-write-wins (audited);
+-- cleared automatically when the pair's forecast is shifted to a real person.
+CREATE TABLE IF NOT EXISTS proposed_hire (
+  id           SERIAL PRIMARY KEY,
+  scenario     VARCHAR(64)  NOT NULL DEFAULT 'baseline',
+  resource_key VARCHAR(64)  NOT NULL,
+  target_key   VARCHAR(64)  NOT NULL,
+  name         VARCHAR(128) NOT NULL,
+  updated_by   VARCHAR(128) NOT NULL,
+  updated_at   TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  UNIQUE (scenario, resource_key, target_key)
+);
+
 -- Append-only change log: row-level updated_by says who touched a cell last,
 -- this says what it was before — the question actually asked when two people
 -- disagree about a number.

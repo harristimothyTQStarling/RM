@@ -190,6 +190,12 @@
      read-only text — same look as a locked past input, but text not an input. */
   .a-inputs .dcell{border-left:1px solid var(--line);background:var(--surface-3);color:var(--muted);font-style:italic;
     display:flex;align-items:center;justify-content:center;font-size:11.5px;font-variant-numeric:tabular-nums;padding:6px 2px;overflow:hidden;white-space:nowrap;}
+  /* proposed-hire name per (TBA pool × project) */
+  .prophire input{width:150px;border:1px dashed var(--line-strong);border-radius:5px;background:var(--surface);color:var(--ink);
+    font:inherit;font-size:11px;padding:2px 6px;margin-top:3px;font-weight:400;}
+  .prophire input::placeholder{color:var(--faint);font-style:italic;}
+  .prophire input:focus{outline:none;border-color:var(--accent);border-style:solid;}
+  body.viewer .prophire input{pointer-events:none;background:var(--surface-3);color:var(--muted);}
   /* latest actual realized rate, shown beside the (forecast) rate input */
   .actrate{font-size:10px;color:var(--muted);white-space:nowrap;}
   .a-proj .actrate{margin-left:auto;}
@@ -546,7 +552,7 @@ function boundaryLabel(){
    write is rejected rather than silently overwriting a colleague. */
 const MATCH_V=2;   // bump when the auto-matcher changes — invalidates remembered mappings
 let ME = { upn:"", name:"", canEdit:false, canImport:false };
-let state = { alloc:{}, capacity:{}, rates:{}, tbh:[], theme:null, viewMode:"hours", importMap:{people:{},projects:{},v:MATCH_V}, lastImport:null };
+let state = { alloc:{}, capacity:{}, rates:{}, tbh:[], proposed:{}, theme:null, viewMode:"hours", importMap:{people:{},projects:{},v:MATCH_V}, lastImport:null };
 let VER = {};                      // "resourceKey|targetKey|YYYY-MM" -> version last seen from the server
 let RATE_VER = {};                 // "resourceKey|targetKey" -> bill-rate version last seen from the server
 // Hours vs dollars is a personal display preference, not plan data — kept per browser.
@@ -895,7 +901,7 @@ function allocLine(p,projid){
   const pr8=pairRate(p.id,projid);
   return `<div class="a-line" data-line="${p.id}:${projid}">`+
     `<div class="a-proj"><div style="min-width:0"><div class="pn" title="${esc(projLabel(pr))}${pr.client?" · "+esc(pr.client):""}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""}">${esc(projLabel(pr))}${npBadge(pr)}${mmBadge(pr)}</div>`+
-      `<div class="cl">${esc(pr.client||"")}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""}</div></div>`+
+      `<div class="cl">${esc(pr.client||"")}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""}${p.type==="tbh"&&proposedFor(p.id,projid)?` · <b>proposed: ${esc(proposedFor(p.id,projid))}</b>`:""}</div></div>`+
       actRateHint(p.id,projid)+
       `<span class="prate" title="Forecast bill rate for ${esc(p.name)} on this project ($/hr) — closed months use the actual rate from Odoo">$<input type="number" min="0" step="1" placeholder="0" value="${pr8||""}" data-prate="${p.id}|${projid}">/hr</span>`+
       `<button class="rm" data-rmproj="${p.id}|${projid}" title="Remove project" aria-label="Remove">×</button></div>`+
@@ -1140,7 +1146,7 @@ function resLine(p,pr){
   const badge=p.type==="tbh"?" <span class='badge tbh'>TBA</span>":p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
   return `<div class="a-line">`+
     `<div class="a-proj"><div style="min-width:0"><div class="pn" title="${esc(p.name)} · ${esc(p.role||deptLabel(p.dept))}">${esc(p.name)}${badge}</div>`+
-      `<div class="cl">${esc(p.role||deptLabel(p.dept))}</div></div>`+
+      `<div class="cl">${esc(p.role||deptLabel(p.dept))}${p.type==="tbh"&&proposedFor(p.id,pr.id)?` · <b>proposed: ${esc(proposedFor(p.id,pr.id))}</b>`:""}</div></div>`+
       actRateHint(p.id,pr.id)+
       `<span class="prate" title="Forecast bill rate for ${esc(p.name)} on ${esc(pr.name)} ($/hr) — closed months use the actual rate from Odoo">$<input type="number" min="0" step="1" placeholder="0" value="${pr8||""}" data-prate="${p.id}|${pr.id}">/hr</span>`+
       `<button class="rm" data-rmres="${p.id}|${pr.id}" title="Remove resource" aria-label="Remove">×</button></div>`+
@@ -1218,6 +1224,7 @@ function detectGaps(){
 const slugRole = (role) => "tba-" + ((String(role||"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"")) || "unassigned");
 const tbaLabel = (role) => "TBA - " + (String(role||"").trim() || "Unassigned");
 let tbaOpen = new Set();
+const proposedFor = (pid,projid) => state.proposed[`${pid}|${projid}`] || "";
 /* Available capacity for a role in a month: what people who ALREADY have that
    role could still absorb — capacity minus allocated (actuals for closed months,
    forecast for open ones). Split employee vs contractor. */
@@ -1242,7 +1249,8 @@ function tbaDrill(t){
     let tot=0;
     const tds=months(k=>{ const h=byProj[proj][k]||0; tot+=h; const v=isD()? (h?money(h*rate):"") : (h?fmt(h):"");
       return cell(v||"·"); });
-    html+=`<tr><td class="lbl" title="${pr?esc(projLabel(pr)):esc(proj)}">${pr?esc(projLabel(pr)):esc(proj)}${rate?`<div class="muted" style="font-size:10.5px">$${fmt(rate)}/hr</div>`:""}</td>${tds}`+
+    html+=`<tr><td class="lbl" title="${pr?esc(projLabel(pr)):esc(proj)}">${pr?esc(projLabel(pr)):esc(proj)}${rate?`<div class="muted" style="font-size:10.5px">$${fmt(rate)}/hr</div>`:""}`+
+      `<div class="prophire"><input type="text" data-proposed="${t.id}|${esc(String(proj))}" value="${esc(proposedFor(t.id,proj))}" placeholder="proposed hire…" title="Candidate you have in mind for this role on this project — free text, shared with everyone"></div></td>${tds}`+
       `<td class="mcelln col-tot">${isD()? money(tot*rate) : fmt0(tot)}</td></tr>`;
   });
   // pool demand total + role availability, employees vs contractors
@@ -1504,6 +1512,14 @@ document.getElementById("viewRoot").addEventListener("change",e=>{
     setPairRateLocal(pid,projid,r);
     refreshPairRate(pid,projid);
     pushRate(pid,projid,r);
+  }
+  if(el.dataset.proposed!==undefined){ const [pid,projid]=el.dataset.proposed.split("|");
+    if(!canEdit()){ el.value=proposedFor(pid,projid); return; }
+    const name=el.value.trim();
+    if(name) state.proposed[`${pid}|${projid}`]=name; else delete state.proposed[`${pid}|${projid}`];
+    api("PUT","/api/proposed",{resourceKey:resKey(pid),targetKey:tgtKey(projid),name})
+      .then(()=>status("Saved")).catch(err=>toast("Proposed hire not saved: "+err.message));
+    return;
   }
   if(el.dataset.addproj!==undefined && el.value){ const pid=el.dataset.addproj, projid=el.value;
     if(!state.alloc[pid]) state.alloc[pid]={}; if(!state.alloc[pid][projid]) state.alloc[pid][projid]={};
@@ -2192,11 +2208,15 @@ function openShiftModal(tid){
   if(!projs.length){ toast("This role pool has no forecast from the current month onward."); return; }
   const defEmp=(PEOPLE[0]||{}).id;
   const hasRates=projs.some(p=>pairRate(tid,p)>0);
-  const rows=projs.map(p=>{ const pr=projById(p); return `<tr data-shrow="${esc(String(p))}">`+
+  const rows=projs.map(p=>{ const pr=projById(p);
+    // A proposed hire that now matches a real Odoo person preselects that person.
+    const prop=proposedFor(tid,p); const match=prop? guessPerson(prop) : "";
+    return `<tr data-shrow="${esc(String(p))}">`+
     `<td style="text-align:center"><input type="checkbox" data-shsel checked></td>`+
-    `<td class="src">${pr?esc(projLabel(pr)):esc(String(p))}${pr&&pr.client?`<div class="muted" style="font-size:11px">${esc(pr.client)}</div>`:""}</td>`+
+    `<td class="src">${pr?esc(projLabel(pr)):esc(String(p))}${pr&&pr.client?`<div class="muted" style="font-size:11px">${esc(pr.client)}</div>`:""}`+
+      (prop?`<div class="muted" style="font-size:11px">proposed: <b>${esc(prop)}</b>${match?" ✓ matched":""}</div>`:"")+`</td>`+
     `<td class="hrs">${fmt0(byProj[p])}h${pairRate(tid,p)?`<div class="muted" style="font-size:11px">$${fmt(pairRate(tid,p))}/hr</div>`:""}</td>`+
-    `<td><select data-shemp>${shiftEmpOpts(defEmp)}</select></td></tr>`; }).join("");
+    `<td><select data-shemp>${shiftEmpOpts(match||defEmp)}</select></td></tr>`; }).join("");
   document.getElementById("modalRoot").innerHTML=`<div class="backdrop" id="shBackdrop"><div class="modal" style="width:min(760px,100%)" role="dialog" aria-modal="true">
     <div class="modal-hd"><h2>Shift forecast to employee</h2>
       <p><b>${esc(t.name)}</b> · ${esc(t.role||"")} — move this role's unassigned forecast (${MONTHS[CURRENT_MI]?MONTHS[CURRENT_MI].name+"–"+MONTHS[11].name:"remaining months"}) onto the person who was assigned or hired. Closed months stay behind.</p></div>
@@ -2307,6 +2327,9 @@ async function bootstrap(){
     RATE_VER[`${r.resourceKey}|${r.targetKey}`]=r.version;
   });
   state.tbh = plan.tbh.map(t=>({ id:"tbh-"+t.tbhKey, name:t.name, role:t.role, dept:t.dept, type:"tbh", start:t.start, cap:t.cap }));
+  // proposed-hire names per (TBA pool × project), keyed "uiResourceId|uiProjId"
+  state.proposed={};
+  (plan.proposed||[]).forEach(p=>{ state.proposed[`${fromResKey(p.resourceKey)}|${fromTgtKey(p.targetKey)}`]=p.name; });
   // The API returns remembered import mappings keyed by import_map.kind — 'person'
   // and 'project' (singular). The UI works in 'people'/'projects' (plural), so map
   // them here; without this state.importMap.people is undefined and the import

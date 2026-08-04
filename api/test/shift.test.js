@@ -106,6 +106,18 @@ test("bill rates: copy inherits but never overwrites; overwrite wins; none leave
   assert.equal((await rates(db))["prj:102"], undefined, "none: nothing copied");
 });
 
+test("shifting a project clears its proposed-hire note; removeSeat clears the rest", async () => {
+  const db = fresh(); await seed(db);
+  await call(db, "PUT", "/api/proposed", { resourceKey: "tbh:tc-1", targetKey: "prj:101", name: "Jason Kuhar" });
+  await call(db, "PUT", "/api/proposed", { resourceKey: "tbh:tc-1", targetKey: "prj:102", name: "Dilip Bura" });
+  await call(db, "POST", "/api/tbh/shift", { tbhKey: "tc-1", moves: [{ targetKey: "prj:101", employeeId: 110 }] });
+  let names = (await call(db, "GET", "/api/plan")).body.proposed.map(p => p.name);
+  assert.deepEqual(names, ["Dilip Bura"], "the shifted pair's note is gone; the other stays");
+  await call(db, "POST", "/api/tbh/shift", { tbhKey: "tc-1", moves: [{ targetKey: "prj:102", employeeId: 110 }], removeSeat: true });
+  names = (await call(db, "GET", "/api/plan")).body.proposed;
+  assert.deepEqual(names, [], "pool removal takes the remaining notes with it");
+});
+
 test("validation: unknown seat, unknown employee, bad modes; viewers 403", async () => {
   const db = fresh(); await seed(db);
   assert.equal((await call(db, "POST", "/api/tbh/shift", { tbhKey: "nope", moves: [{ targetKey: "prj:1", employeeId: 110 }] })).status, 400);

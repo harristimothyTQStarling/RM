@@ -31,12 +31,13 @@ const currentMonthStart = () => {
 
 /* ---------------------------------------------------------------- read plan -- */
 async function getPlan(db, scenario = "baseline") {
-  const [allocations, capacity, tbh, importMap, rates] = await Promise.all([
+  const [allocations, capacity, tbh, importMap, rates, proposed] = await Promise.all([
     db.all("SELECT resource_key, target_key, month, hours, version, updated_by, updated_at FROM allocation WHERE scenario = ?", [scenario]),
     db.all("SELECT resource_key, hours_per_month, version FROM capacity_override WHERE scenario = ?", [scenario]),
     db.all("SELECT tbh_key, name, role, dept, start_month, capacity, version FROM tbh WHERE scenario = ?", [scenario]),
     db.all("SELECT kind, source_name, target_key FROM import_map WHERE scenario = ?", [scenario]),
     db.all("SELECT resource_key, target_key, rate, version FROM bill_rate WHERE scenario = ?", [scenario]),
+    db.all("SELECT resource_key, target_key, name FROM proposed_hire WHERE scenario = ?", [scenario]),
   ]);
   return {
     scenario,
@@ -53,7 +54,35 @@ async function getPlan(db, scenario = "baseline") {
       cap: r.capacity == null ? null : Number(r.capacity), version: r.version,
     })),
     importMap: importMap.reduce((acc, r) => { (acc[r.kind] ||= {})[r.source_name] = r.target_key; return acc; }, { person: {}, project: {} }),
+    proposed: proposed.map(r => ({ resourceKey: r.resource_key, targetKey: r.target_key, name: r.name })),
   };
+}
+
+/* --------------------------------------------------------- proposed hires -- */
+/** Candidate name pinned to one (TBA pool × project) pair. Free text — the
+ *  person usually doesn't exist in Odoo yet. Blank name clears the entry.
+ *  Last-write-wins (it's a note, not plan data), but every change is audited. */
+async function putProposedHire(db, user, p) {
+  const scenario = p.scenario || "baseline";
+  const name = String(p.name || "").trim();
+  const cur = await db.get("SELECT id, name FROM proposed_hire WHERE scenario=? AND resource_key=? AND target_key=?",
+    [scenario, p.resourceKey, p.targetKey]);
+  const key = `${scenario}|${p.resourceKey}|${p.targetKey}`;
+  if (!name) {
+    if (cur) { await db.run("DELETE FROM proposed_hire WHERE id=?", [cur.id]); await audit(db, user.upn, "proposed", key, "delete", cur.name, null); }
+    return { cleared: true };
+  }
+  if (cur) {
+    if (cur.name !== name) {
+      await db.run("UPDATE proposed_hire SET name=?, updated_by=?, updated_at=? WHERE id=?", [name, user.upn, nowIso(), cur.id]);
+      await audit(db, user.upn, "proposed", key, "update", cur.name, name);
+    }
+  } else {
+    await db.run("INSERT INTO proposed_hire (scenario, resource_key, target_key, name, updated_by, updated_at) VALUES (?,?,?,?,?,?)",
+      [scenario, p.resourceKey, p.targetKey, name, user.upn, nowIso()]);
+    await audit(db, user.upn, "proposed", key, "insert", null, name);
+  }
+  return { name };
 }
 
 /* ------------------------------------------------------- reference (Odoo) -- */
@@ -294,6 +323,7 @@ async function deleteTbh(db, user, tbhKey, scenario = "baseline") {
     await db.run("DELETE FROM allocation WHERE scenario=? AND resource_key=?", [scenario, `tbh:${tbhKey}`]);
     await db.run("DELETE FROM capacity_override WHERE scenario=? AND resource_key=?", [scenario, `tbh:${tbhKey}`]);
     await db.run("DELETE FROM bill_rate WHERE scenario=? AND resource_key=?", [scenario, `tbh:${tbhKey}`]);
+    await db.run("DELETE FROM proposed_hire WHERE scenario=? AND resource_key=?", [scenario, `tbh:${tbhKey}`]);
     const r = await db.run("DELETE FROM tbh WHERE scenario=? AND tbh_key=?", [scenario, tbhKey]);
     await audit(db, user.upn, "tbh", `${scenario}|${tbhKey}`, "delete", null, null);
     return { deleted: r.changes > 0 };
@@ -339,6 +369,12 @@ async function normalizeTbaPools(db) {
       const dst = await db.get("SELECT id FROM bill_rate WHERE scenario=? AND resource_key=? AND target_key=?", [scenario, toKey, r.target_key]);
       if (!dst) await db.run("UPDATE bill_rate SET resource_key=? WHERE id=?", [toKey, r.id]);
       else await db.run("DELETE FROM bill_rate WHERE id=?", [r.id]);
+    }
+    const props = await db.all("SELECT id, target_key FROM proposed_hire WHERE scenario=? AND resource_key=?", [scenario, fromKey]);
+    for (const r of props) {
+      const dst = await db.get("SELECT id FROM proposed_hire WHERE scenario=? AND resource_key=? AND target_key=?", [scenario, toKey, r.target_key]);
+      if (!dst) await db.run("UPDATE proposed_hire SET resource_key=? WHERE id=?", [toKey, r.id]);
+      else await db.run("DELETE FROM proposed_hire WHERE id=?", [r.id]);
     }
     await db.run("DELETE FROM capacity_override WHERE scenario=? AND resource_key=?", [scenario, fromKey]);
   }
@@ -443,11 +479,14 @@ async function shiftTbhForecast(db, user, { tbhKey, moves, collisionMode = "sum"
         }
         await db.run("DELETE FROM bill_rate WHERE scenario=? AND resource_key=? AND target_key=?", [scenario, fromKey, mv.targetKey]);
       }
+      // the proposed hire became a real assignment — the note has served its purpose
+      await db.run("DELETE FROM proposed_hire WHERE scenario=? AND resource_key=? AND target_key=?", [scenario, fromKey, mv.targetKey]);
     }
     if (removeSeat) {
       await db.run("DELETE FROM allocation WHERE scenario=? AND resource_key=?", [scenario, fromKey]);
       await db.run("DELETE FROM capacity_override WHERE scenario=? AND resource_key=?", [scenario, fromKey]);
       await db.run("DELETE FROM bill_rate WHERE scenario=? AND resource_key=?", [scenario, fromKey]);
+      await db.run("DELETE FROM proposed_hire WHERE scenario=? AND resource_key=?", [scenario, fromKey]);
       const r = await db.run("DELETE FROM tbh WHERE scenario=? AND tbh_key=?", [scenario, tbhKey]);
       out.seatRemoved = r.changes > 0;
       await audit(db, user.upn, "tbh", `${scenario}|${tbhKey}`, "delete", null, "shifted to employee");
@@ -473,4 +512,4 @@ async function putImportMap(db, user, m) {
   return { ok: true };
 }
 
-module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, mapOpportunityToProject, putCapacity, putRate, putTbh, deleteTbh, shiftTbhForecast, normalizeTbaPools, roleSlug, tbaName, putImportMap, Conflict, PastMonth, monthKey, currentMonthStart };
+module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, mapOpportunityToProject, putCapacity, putRate, putTbh, deleteTbh, shiftTbhForecast, normalizeTbaPools, roleSlug, tbaName, putImportMap, putProposedHire, Conflict, PastMonth, monthKey, currentMonthStart };

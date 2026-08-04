@@ -103,6 +103,12 @@ async function handle(db, req) {
       if (!proj) return json(400, { error: "no such active project" });
       return json(200, await store.mapOpportunityToProject(db, user, oppId, projectId));
     }
+    if (method === "PUT" && path === "/api/proposed") {
+      // Proposed-hire name for one (TBA pool × project) pair; blank clears it.
+      if (!body.resourceKey || !body.targetKey) return json(400, { error: "resourceKey and targetKey required" });
+      if (String(body.name || "").length > 128) return json(400, { error: "name too long" });
+      return json(200, await store.putProposedHire(db, user, { ...body, scenario }));
+    }
     if (method === "PUT" && path === "/api/importmap") {
       if (!body.kind || !body.sourceName) return json(400, { error: "kind and sourceName required" });
       return json(200, await store.putImportMap(db, user, { ...body, scenario }));

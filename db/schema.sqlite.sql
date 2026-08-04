@@ -66,6 +66,17 @@ CREATE TABLE IF NOT EXISTS import_map (
   UNIQUE (scenario, kind, source_name)
 );
 
+CREATE TABLE IF NOT EXISTS proposed_hire (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  scenario     TEXT NOT NULL DEFAULT 'baseline',
+  resource_key TEXT NOT NULL,
+  target_key   TEXT NOT NULL,
+  name         TEXT NOT NULL,
+  updated_by   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL,
+  UNIQUE (scenario, resource_key, target_key)
+);
+
 CREATE TABLE IF NOT EXISTS audit_log (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   at         TEXT NOT NULL,

@@ -125,6 +125,23 @@ test("editor can map a closed CRM opp's forecast onto a project; viewer cannot",
   assert.deepEqual(rows.map((a) => a.targetKey), ["prj:119"], "forecast now lives on the project");
 });
 
+/* ---- proposed hires (TBA pool × project) ---- */
+
+test("proposed hire: set, read back, overwrite, clear; viewers cannot write", async () => {
+  const db = fresh();
+  const put = (name, headers) => call(db, "PUT", "/api/proposed", { resourceKey: "tbh:tba-technical-consultant", targetKey: "prj:101", name }, headers);
+  assert.equal((await put("Jason Kuhar")).status, 200);
+  let plan = await call(db, "GET", "/api/plan");
+  assert.deepEqual(plan.body.proposed, [{ resourceKey: "tbh:tba-technical-consultant", targetKey: "prj:101", name: "Jason Kuhar" }]);
+  await put("Dilip Bura");                                       // last write wins
+  plan = await call(db, "GET", "/api/plan");
+  assert.equal(plan.body.proposed[0].name, "Dilip Bura");
+  assert.equal((await put("x", VIEWER)).status, 403, "viewer cannot write");
+  await put("");                                                 // blank clears
+  plan = await call(db, "GET", "/api/plan");
+  assert.deepEqual(plan.body.proposed, [], "cleared");
+});
+
 /* ---- permissions ---- */
 
 test("viewer can read but not write", async () => {
