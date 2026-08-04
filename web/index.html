@@ -292,7 +292,9 @@
   body.viewer .rm,
   body.viewer .addproj,
   body.viewer #bannerImport,
-  body.viewer .card:has(#tbhAdd){display:none!important;}
+  body.viewer .card:has(#tbhAdd),
+  body.viewer [data-shifttbh],
+  body.viewer [data-deltbh]{display:none!important;}
   /* forecast import is restricted to importers (IMPORTER_UPNS); the server enforces
      it too — this just hides controls that would 403. */
   body.noimport #btnImportXlsx,
@@ -1212,8 +1214,10 @@ function renderHiring(){
   const gaps=detectGaps();
   let tbhHtml = tbhList.length? tbhList.map(t=>{
     const yr=MKEYS.reduce((s,k)=>s+personMonthTotal(t.id,k),0);
+    const fut=Object.values(tbhFutureByProject(t.id)).reduce((s,x)=>s+x,0);
     return `<div class="tbh-item"><div class="avatar" style="background:${deptColor(t.dept)}">${initials(t.role||"TB")}</div>`+
       `<div class="info"><div class="r">${t.name}</div><div class="d">${t.role} · ${deptLabel(t.dept)} · starts ${MONTHS.find(m=>m.key===t.start)?.label||t.start} · ${fmt0(capOf(t,t.start))}h/mo · ${isD()? money(personDollars(t.id))+" planned" : fmt0(yr)+"h planned"}</div></div>`+
+      (fut>0?`<button class="btn primary" data-shifttbh="${t.id}" style="padding:5px 9px" title="They were hired — move this seat's forecast onto the real employee">Shift forecast → employee</button>`:"")+
       `<button class="btn" data-deltbh="${t.id}" style="padding:5px 9px">Remove</button></div>`;
   }).join("") : `<div class="muted" style="font-size:12.5px">No to-be-hired roles yet. Add one to model a future hire and allocate them to projects like any employee.</div>`;
 
@@ -1478,6 +1482,8 @@ document.getElementById("viewRoot").addEventListener("click",e=>{
   if(rm){ const [pid,projid]=rm.dataset.rmproj.split("|"); if(state.alloc[pid]) delete state.alloc[pid][projid];
     if(pairRate(pid,projid)){ setPairRateLocal(pid,projid,0); pushRate(pid,projid,0); }
     /*saved via API*/ renderAllocate(); renderKpis(); return; }
+  const sh=e.target.closest("[data-shifttbh]");   // Hiring: move a seat's forecast to the hired employee
+  if(sh){ if(!canEdit()) return; openShiftModal(sh.dataset.shifttbh); return; }
   const del=e.target.closest("[data-deltbh]");
   if(del){ const id=del.dataset.deltbh;
     state.tbh=state.tbh.filter(t=>String(t.id)!==String(id)); delete state.alloc[id]; delete state.capacity[id]; openSet.delete(String(id)); render();
@@ -2070,6 +2076,117 @@ function applyBulk(){
   pushBatch(months.map((mi,k)=>({ resourceKey:resKey(pid), targetKey:tgtKey(prj), month:MONTHS[mi].key, hours:vals[k],
     version:VER[verKey(pid,prj,MONTHS[mi].key)]||0 })));
   toast("Allocated "+vals.reduce((s,x)=>s+x,0)+"h across "+months.length+" month"+(months.length>1?"s":""));
+}
+
+/* ==================== SHIFT TBH FORECAST -> EMPLOYEE ==================== */
+/* The hire happened: move a seat's remaining (current-month-onward) forecast onto
+   the real employee — all projects to one person, or split per project. Closed
+   months never move; the server enforces the same boundary. */
+function tbhFutureByProject(tid){
+  const out={}; const a=state.alloc[tid]; if(!a) return out;
+  for(const proj in a) for(const mk in a[proj]){
+    const mi=MKEYS.indexOf(mk);
+    if(mi>=CURRENT_MI && a[proj][mk]>0) out[proj]=(out[proj]||0)+a[proj][mk];
+  }
+  return out;
+}
+function shiftEmpOpts(sel){
+  return PEOPLE.slice().sort((a,b)=>DEPTS.indexOf(a.dept)-DEPTS.indexOf(b.dept)||a.name.localeCompare(b.name))
+    .map(p=>`<option value="${p.id}"${String(sel)===String(p.id)?" selected":""}>${esc(p.name)} · ${esc(p.role||p.dept)}</option>`).join("");
+}
+/* cells where the chosen employee already has forecast on the same project+month */
+function shiftCollisions(tid){
+  let n=0;
+  document.querySelectorAll("[data-shrow]").forEach(row=>{
+    if(!row.querySelector("[data-shsel]").checked) return;
+    const proj=row.dataset.shrow, eid=row.querySelector("[data-shemp]").value;
+    const src=state.alloc[tid]&&state.alloc[tid][proj], dst=state.alloc[eid]&&state.alloc[eid][proj];
+    if(!src||!dst) return;
+    for(const mk in src){ const mi=MKEYS.indexOf(mk); if(mi>=CURRENT_MI && src[mk]>0 && dst[mk]>0) n++; }
+  });
+  return n;
+}
+function refreshShiftUI(tid){
+  const n=shiftCollisions(tid);
+  const box=document.getElementById("shCollide");
+  if(box) box.style.display = n? "":"none";
+  const cnt=document.getElementById("shCollideN"); if(cnt) cnt.textContent=n;
+  const any=[...document.querySelectorAll("[data-shsel]")].some(c=>c.checked);
+  const all=[...document.querySelectorAll("[data-shsel]")].every(c=>c.checked);
+  const rm=document.getElementById("shRemove"); if(rm && !any) rm.checked=false;
+  const hint=document.getElementById("shRemoveHint"); if(hint) hint.textContent = all? "" : "(some projects stay — removing the seat would drop their forecast)";
+  document.getElementById("shApply").disabled = !any;
+}
+function openShiftModal(tid){
+  const t=state.tbh.find(x=>String(x.id)===String(tid)); if(!t) return;
+  const byProj=tbhFutureByProject(tid);
+  const projs=sortProjIds(Object.keys(byProj));
+  if(!projs.length){ toast("This seat has no forecast from the current month onward."); return; }
+  const defEmp=(PEOPLE[0]||{}).id;
+  const hasRates=projs.some(p=>pairRate(tid,p)>0);
+  const rows=projs.map(p=>{ const pr=projById(p); return `<tr data-shrow="${esc(String(p))}">`+
+    `<td style="text-align:center"><input type="checkbox" data-shsel checked></td>`+
+    `<td class="src">${pr?esc(projLabel(pr)):esc(String(p))}${pr&&pr.client?`<div class="muted" style="font-size:11px">${esc(pr.client)}</div>`:""}</td>`+
+    `<td class="hrs">${fmt0(byProj[p])}h${pairRate(tid,p)?`<div class="muted" style="font-size:11px">$${fmt(pairRate(tid,p))}/hr</div>`:""}</td>`+
+    `<td><select data-shemp>${shiftEmpOpts(defEmp)}</select></td></tr>`; }).join("");
+  document.getElementById("modalRoot").innerHTML=`<div class="backdrop" id="shBackdrop"><div class="modal" style="width:min(760px,100%)" role="dialog" aria-modal="true">
+    <div class="modal-hd"><h2>Shift forecast to employee</h2>
+      <p><b>${esc(t.name)}</b> · ${esc(t.role||"")} — move this seat's forecast (${MONTHS[CURRENT_MI]?MONTHS[CURRENT_MI].name+"–"+MONTHS[11].name:"remaining months"}) onto the person who was hired. Closed months stay behind.</p></div>
+    <div class="modal-bd">
+      <div class="field"><label>Move everything to</label><select id="shAll">${shiftEmpOpts(defEmp)}</select></div>
+      <div class="scrollbox"><table class="maptbl"><thead><tr><th></th><th>Project</th><th>Hours</th><th>Moves to</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div id="shCollide" style="display:none">
+        <div class="field"><label>⚠ <span id="shCollideN">0</span> month-cell(s) already have hours on the employee — what should happen?</label>
+        <select id="shMode">
+          <option value="sum" selected>Add the hours together</option>
+          <option value="replace">Replace with the seat's hours</option>
+          <option value="skip">Skip those cells (they stay on the seat)</option>
+        </select></div>
+      </div>
+      ${hasRates?`<div class="field"><label>Bill rates on this seat's lines</label>
+        <select id="shRates">
+          <option value="copy" selected>Copy to the employee (keep any rate they already have)</option>
+          <option value="overwrite">Copy and overwrite the employee's rate</option>
+          <option value="none">Don't copy — set rates manually</option>
+        </select></div>`:""}
+      <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" id="shRemove" checked> Also remove the TBH seat afterwards <span class="muted" id="shRemoveHint" style="font-size:11.5px"></span></label>
+    </div>
+    <div class="modal-ft"><span class="muted" style="font-size:12px">Every move is audited. Nothing changes until you apply.</span>
+      <span style="display:flex;gap:8px"><button class="btn" id="shCancel">Cancel</button><button class="btn primary" id="shApply">Shift forecast</button></span></div>
+  </div></div>`;
+  document.getElementById("shCancel").addEventListener("click",closeModal);
+  document.getElementById("shBackdrop").addEventListener("click",e=>{ if(e.target.id==="shBackdrop") closeModal(); });
+  document.getElementById("shAll").addEventListener("change",e=>{
+    document.querySelectorAll("[data-shemp]").forEach(s=>s.value=e.target.value); refreshShiftUI(tid); });
+  document.getElementById("shBackdrop").addEventListener("change",e=>{
+    if(e.target.matches("[data-shemp],[data-shsel]")) refreshShiftUI(tid); });
+  document.getElementById("shApply").addEventListener("click",()=>applyShift(tid));
+  refreshShiftUI(tid);
+}
+async function applyShift(tid){
+  const moves=[];
+  document.querySelectorAll("[data-shrow]").forEach(row=>{
+    if(!row.querySelector("[data-shsel]").checked) return;
+    moves.push({ targetKey:tgtKey(row.dataset.shrow), employeeId:Number(row.querySelector("[data-shemp]").value) });
+  });
+  if(!moves.length){ toast("Select at least one project to move."); return; }
+  const modeSel=document.getElementById("shMode"), rateSel=document.getElementById("shRates");
+  const removeSeat=document.getElementById("shRemove").checked;
+  const btn=document.getElementById("shApply"); btn.disabled=true; btn.textContent="Shifting…";
+  try{
+    status("Shifting forecast…");
+    const r=await api("POST","/api/tbh/shift",{
+      tbhKey:String(tid).replace(/^tbh-?/,""), moves,
+      collisionMode: modeSel? modeSel.value : "sum",
+      rateMode: rateSel? rateSel.value : "copy",
+      removeSeat,
+    });
+    closeModal();
+    toast(`Forecast shifted — ${r.moved} cell${r.moved===1?"":"s"} moved`+
+      (r.merged?`, ${r.merged} merged`:"")+(r.replaced?`, ${r.replaced} replaced`:"")+(r.skipped?`, ${r.skipped} skipped`:"")+
+      (r.ratesCopied?`, ${r.ratesCopied} rate${r.ratesCopied===1?"":"s"} copied`:"")+(r.seatRemoved?" · seat removed":"")+".");
+    await bootstrap();   // reload the shared plan from the server's new truth
+  }catch(e){ status("Shift failed"); toast("Shift failed: "+(e&&e.message?e.message:e)); btn.disabled=false; btn.textContent="Shift forecast"; }
 }
 
 /* ============================ INIT ============================ */

@@ -75,6 +75,25 @@ async function handle(db, req) {
     if (method === "DELETE" && path.startsWith("/api/tbh/")) {
       return json(200, await store.deleteTbh(db, user, decodeURIComponent(path.slice("/api/tbh/".length)), scenario));
     }
+    if (method === "POST" && path === "/api/tbh/shift") {
+      // The hire happened: move a TBH seat's forecast onto real employee(s).
+      const moves = Array.isArray(body.moves) ? body.moves : null;
+      if (!body.tbhKey || !moves || !moves.length) return json(400, { error: "tbhKey and moves[] required" });
+      if (!moves.every(m => /^(prj|crm):\d+$/.test(String(m.targetKey)) && Number.isInteger(Number(m.employeeId))))
+        return json(400, { error: "each move needs a targetKey (prj:<id>|crm:<id>) and employeeId" });
+      if (!["sum", "replace", "skip"].includes(body.collisionMode || "sum")) return json(400, { error: "bad collisionMode" });
+      if (!["copy", "overwrite", "none"].includes(body.rateMode || "copy")) return json(400, { error: "bad rateMode" });
+      const seat = await db.get("SELECT id FROM tbh WHERE scenario=? AND tbh_key=?", [scenario, body.tbhKey]);
+      if (!seat) return json(400, { error: "no such TBH seat" });
+      for (const m of moves) {
+        const emp = await db.get("SELECT id FROM ref_person WHERE id=? AND active=1", [Number(m.employeeId)]);
+        if (!emp) return json(400, { error: `employee ${m.employeeId} is not an active person in Odoo` });
+      }
+      return json(200, await store.shiftTbhForecast(db, user, {
+        tbhKey: body.tbhKey, moves, collisionMode: body.collisionMode || "sum",
+        rateMode: body.rateMode || "copy", removeSeat: !!body.removeSeat, scenario,
+      }));
+    }
     if (method === "POST" && path === "/api/opportunity/map") {
       // Manually map a closed CRM opportunity's forecast onto a delivery project.
       const oppId = parseInt(body.oppId, 10);

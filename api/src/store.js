@@ -293,9 +293,88 @@ async function deleteTbh(db, user, tbhKey, scenario = "baseline") {
   return db.tx(async () => {
     await db.run("DELETE FROM allocation WHERE scenario=? AND resource_key=?", [scenario, `tbh:${tbhKey}`]);
     await db.run("DELETE FROM capacity_override WHERE scenario=? AND resource_key=?", [scenario, `tbh:${tbhKey}`]);
+    await db.run("DELETE FROM bill_rate WHERE scenario=? AND resource_key=?", [scenario, `tbh:${tbhKey}`]);
     const r = await db.run("DELETE FROM tbh WHERE scenario=? AND tbh_key=?", [scenario, tbhKey]);
     await audit(db, user.upn, "tbh", `${scenario}|${tbhKey}`, "delete", null, null);
     return { deleted: r.changes > 0 };
+  });
+}
+
+/* ------------------------------------------------- TBH -> employee handover -- */
+/**
+ * The person was hired: move a TBH seat's forecast onto the real employee.
+ *
+ * moves: [{ targetKey, employeeId }] — per-project targeting, so one seat's
+ * projects can be split across different hires. Only months from the current
+ * month onward move; closed-month TBH forecast stays behind (it belongs to the
+ * seat's history, not the employee's variance baseline).
+ *
+ * collisionMode, for cells where the employee already has forecast:
+ *   sum (default) — add the TBH hours in;  replace — TBH hours win;
+ *   skip — leave both sides untouched (that forecast stays on the seat).
+ * rateMode, for the seat's per-project bill rates:
+ *   copy (default) — employee inherits where they have no rate;  overwrite —
+ *   seat rate always wins;  none — rates stay behind.
+ * removeSeat: also delete the TBH afterwards (its remaining rows go with it).
+ */
+async function shiftTbhForecast(db, user, { tbhKey, moves, collisionMode = "sum", rateMode = "copy", removeSeat = false, scenario = "baseline" }) {
+  const fromKey = `tbh:${tbhKey}`;
+  const cutoff = currentMonthStart();
+  return db.tx(async () => {
+    const out = { moved: 0, merged: 0, replaced: 0, skipped: 0, ratesCopied: 0, seatRemoved: false };
+    for (const mv of moves) {
+      const toKey = `emp:${mv.employeeId}`;
+      const rows = await db.all(
+        "SELECT id, resource_key, month, hours FROM allocation WHERE scenario=? AND resource_key=? AND target_key=? AND month>=?",
+        [scenario, fromKey, mv.targetKey, cutoff]);
+      for (const r of rows) {
+        const dst = await db.get(
+          "SELECT id, hours FROM allocation WHERE scenario=? AND resource_key=? AND target_key=? AND month=?",
+          [scenario, toKey, mv.targetKey, r.month]);
+        const key = `${scenario}|${toKey}|${mv.targetKey}|${String(r.month).slice(0, 7)}`;
+        if (!dst) {
+          await db.run("UPDATE allocation SET resource_key=?, updated_by=?, updated_at=?, version=version+1 WHERE id=?",
+            [toKey, user.upn, nowIso(), r.id]);
+          await audit(db, user.upn, "allocation", key, "shift", fromKey, toKey);
+          out.moved++;
+        } else if (collisionMode === "skip") {
+          out.skipped++;
+        } else {
+          const hours = collisionMode === "replace" ? Number(r.hours) : Number(dst.hours) + Number(r.hours);
+          await db.run("UPDATE allocation SET hours=?, updated_by=?, updated_at=?, version=version+1 WHERE id=?",
+            [hours, user.upn, nowIso(), dst.id]);
+          await db.run("DELETE FROM allocation WHERE id=?", [r.id]);
+          await audit(db, user.upn, "allocation", key, collisionMode === "replace" ? "shift-replace" : "shift-merge", dst.hours, hours);
+          collisionMode === "replace" ? out.replaced++ : out.merged++;
+          out.moved++;
+        }
+      }
+      if (rateMode !== "none") {
+        const srcRate = await db.get("SELECT rate FROM bill_rate WHERE scenario=? AND resource_key=? AND target_key=?", [scenario, fromKey, mv.targetKey]);
+        if (srcRate && Number(srcRate.rate) > 0) {
+          const dstRate = await db.get("SELECT id FROM bill_rate WHERE scenario=? AND resource_key=? AND target_key=?", [scenario, toKey, mv.targetKey]);
+          if (dstRate && rateMode === "overwrite") {
+            await db.run("UPDATE bill_rate SET rate=?, updated_by=?, updated_at=?, version=version+1 WHERE id=?", [srcRate.rate, user.upn, nowIso(), dstRate.id]);
+            out.ratesCopied++;
+          } else if (!dstRate) {
+            await db.run("INSERT INTO bill_rate (scenario, resource_key, target_key, rate, updated_by, updated_at, version) VALUES (?,?,?,?,?,?,1)",
+              [scenario, toKey, mv.targetKey, srcRate.rate, user.upn, nowIso()]);
+            out.ratesCopied++;
+          }
+          await audit(db, user.upn, "rate", `${scenario}|${toKey}|${mv.targetKey}`, "shift", fromKey, srcRate.rate);
+        }
+        await db.run("DELETE FROM bill_rate WHERE scenario=? AND resource_key=? AND target_key=?", [scenario, fromKey, mv.targetKey]);
+      }
+    }
+    if (removeSeat) {
+      await db.run("DELETE FROM allocation WHERE scenario=? AND resource_key=?", [scenario, fromKey]);
+      await db.run("DELETE FROM capacity_override WHERE scenario=? AND resource_key=?", [scenario, fromKey]);
+      await db.run("DELETE FROM bill_rate WHERE scenario=? AND resource_key=?", [scenario, fromKey]);
+      const r = await db.run("DELETE FROM tbh WHERE scenario=? AND tbh_key=?", [scenario, tbhKey]);
+      out.seatRemoved = r.changes > 0;
+      await audit(db, user.upn, "tbh", `${scenario}|${tbhKey}`, "delete", null, "shifted to employee");
+    }
+    return out;
   });
 }
 
@@ -316,4 +395,4 @@ async function putImportMap(db, user, m) {
   return { ok: true };
 }
 
-module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, mapOpportunityToProject, putCapacity, putRate, putTbh, deleteTbh, putImportMap, Conflict, PastMonth, monthKey, currentMonthStart };
+module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, mapOpportunityToProject, putCapacity, putRate, putTbh, deleteTbh, shiftTbhForecast, putImportMap, Conflict, PastMonth, monthKey, currentMonthStart };
