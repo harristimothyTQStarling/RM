@@ -5,7 +5,7 @@
  */
 const test = require("node:test");
 const assert = require("node:assert");
-const { as, fresh, call: rawCall } = require("./helpers");
+const { as, fresh, fm, call: rawCall } = require("./helpers");
 
 // Two named editors + one colleague who may only view.
 process.env.EDITOR_UPNS = "tim@tqstarling.com,sam@tqstarling.com";
@@ -16,7 +16,7 @@ const VIEWER = as("jane@tqstarling.com");  // signed in, not an editor
 
 const call = (db, method, path, body, headers = EDITOR, query = {}) => rawCall(db, method, path, body, headers, query);
 const putAlloc = (db, hours, version, headers = EDITOR) =>
-  call(db, "PUT", "/api/allocation", { resourceKey: "emp:110", targetKey: "prj:119", month: "2026-08", hours, version }, headers);
+  call(db, "PUT", "/api/allocation", { resourceKey: "emp:110", targetKey: "prj:119", month: fm(0), hours, version }, headers);
 
 test("write then read round-trips", async () => {
   const db = fresh();
@@ -27,7 +27,7 @@ test("write then read round-trips", async () => {
   assert.equal(plan.body.allocations.length, 1);
   assert.deepEqual(
     { rk: plan.body.allocations[0].resourceKey, m: plan.body.allocations[0].month, h: plan.body.allocations[0].hours },
-    { rk: "emp:110", m: "2026-08", h: 100 }
+    { rk: "emp:110", m: fm(0), h: 100 }
   );
   assert.equal(plan.body.allocations[0].updatedBy, "tim@tqstarling.com", "audit: who wrote it");
 });
@@ -35,10 +35,32 @@ test("write then read round-trips", async () => {
 test("CRM opportunities and TBH resources are storable (no id collision)", async () => {
   const db = fresh();
   await call(db, "PUT", "/api/tbh", { tbhKey: "resource-3", name: "RESOURCE 3", role: "Business Process Consultant", dept: "", start: "2026-07", cap: 160 });
-  await call(db, "PUT", "/api/allocation", { resourceKey: "tbh:resource-3", targetKey: "crm:222", month: "2026-09", hours: 80, version: 0 });
+  await call(db, "PUT", "/api/allocation", { resourceKey: "tbh:resource-3", targetKey: "crm:222", month: fm(1), hours: 80, version: 0 });
   const plan = await call(db, "GET", "/api/plan");
   assert.equal(plan.body.tbh[0].dept, "", "TBH with no department persists");
   assert.equal(plan.body.allocations[0].targetKey, "crm:222", "allocation against a CRM opportunity");
+});
+
+/* ---- closed months are actuals territory ---- */
+
+test("writes to a past month are rejected (400), even from an editor", async () => {
+  const db = fresh();
+  const r = await call(db, "PUT", "/api/allocation",
+    { resourceKey: "emp:110", targetKey: "prj:119", month: fm(-1), hours: 100, version: 0 });
+  assert.equal(r.status, 400, "last month is closed");
+  assert.match(r.body.error, /closed/, "the error explains why");
+  assert.equal((await call(db, "GET", "/api/plan")).body.allocations.length, 0, "nothing was written");
+});
+
+test("a batch containing a past month fails atomically — nothing is applied", async () => {
+  const db = fresh();
+  const items = [
+    { resourceKey: "emp:110", targetKey: "prj:119", month: fm(1), hours: 50, version: 0 },
+    { resourceKey: "emp:110", targetKey: "prj:119", month: fm(-2), hours: 50, version: 0 },
+  ];
+  const r = await call(db, "POST", "/api/allocations", { items });
+  assert.equal(r.status, 400);
+  assert.equal((await call(db, "GET", "/api/plan")).body.allocations.length, 0, "the valid future row rolled back too");
 });
 
 /* ---- the reason this app exists: two people, one cell ---- */
@@ -88,7 +110,7 @@ test("insert claiming a version conflicts when the row already exists", async ()
 test("editor can map a closed CRM opp's forecast onto a project; viewer cannot", async () => {
   const db = fresh();
   db.run("INSERT INTO ref_project (id,name,client,billable,active) VALUES (119,'Bain Phase 2B','Bain',1,1)");
-  await call(db, "PUT", "/api/allocation", { resourceKey: "emp:110", targetKey: "crm:222", month: "2026-09", hours: 80, version: 0 });
+  await call(db, "PUT", "/api/allocation", { resourceKey: "emp:110", targetKey: "crm:222", month: fm(1), hours: 80, version: 0 });
 
   const forbidden = await call(db, "POST", "/api/opportunity/map", { oppId: 222, projectId: 119 }, VIEWER);
   assert.equal(forbidden.status, 403, "viewer must not map");
@@ -129,8 +151,8 @@ test("batch write is atomic — a conflict rolls the whole import back", async (
   const db = fresh();
   await putAlloc(db, 100, 0);                       // existing cell at v1
   const items = [
-    { resourceKey: "emp:36",  targetKey: "prj:46",  month: "2026-08", hours: 168, version: 0 },
-    { resourceKey: "emp:110", targetKey: "prj:119", month: "2026-08", hours: 50,  version: 0 }, // stale: row is v1
+    { resourceKey: "emp:36",  targetKey: "prj:46",  month: fm(0), hours: 168, version: 0 },
+    { resourceKey: "emp:110", targetKey: "prj:119", month: fm(0), hours: 50,  version: 0 }, // stale: row is v1
   ];
   const r = await call(db, "POST", "/api/allocations", { items });
   assert.equal(r.status, 409);
@@ -141,7 +163,7 @@ test("batch write is atomic — a conflict rolls the whole import back", async (
 
 test("bulk allocate spreads across months", async () => {
   const db = fresh();
-  const items = ["2026-07", "2026-08", "2026-09"].map(month => ({ resourceKey: "emp:110", targetKey: "prj:96", month, hours: 100, version: 0 }));
+  const items = [fm(0), fm(1), fm(2)].map(month => ({ resourceKey: "emp:110", targetKey: "prj:96", month, hours: 100, version: 0 }));
   const r = await call(db, "POST", "/api/allocations", { items });
   assert.equal(r.status, 200);
   assert.equal((await call(db, "GET", "/api/plan")).body.allocations.length, 3);
@@ -164,7 +186,7 @@ test("import overrides are shared, and clearable so auto-match re-runs", async (
 test("deleting a TBH removes its allocations (no orphan demand)", async () => {
   const db = fresh();
   await call(db, "PUT", "/api/tbh", { tbhKey: "r3", name: "TBH r3" });
-  await call(db, "PUT", "/api/allocation", { resourceKey: "tbh:r3", targetKey: "prj:119", month: "2026-08", hours: 40, version: 0 });
+  await call(db, "PUT", "/api/allocation", { resourceKey: "tbh:r3", targetKey: "prj:119", month: fm(0), hours: 40, version: 0 });
   await call(db, "DELETE", "/api/tbh/r3");
   const plan = await call(db, "GET", "/api/plan");
   assert.equal(plan.body.tbh.length, 0);
@@ -176,7 +198,7 @@ test("deleting a TBH removes its allocations (no orphan demand)", async () => {
 test("scenarios are isolated", async () => {
   const db = fresh();
   await putAlloc(db, 100, 0);
-  await call(db, "PUT", "/api/allocation", { resourceKey: "emp:110", targetKey: "prj:119", month: "2026-08", hours: 300, version: 0 }, EDITOR, { scenario: "win-medtronic" });
+  await call(db, "PUT", "/api/allocation", { resourceKey: "emp:110", targetKey: "prj:119", month: fm(0), hours: 300, version: 0 }, EDITOR, { scenario: "win-medtronic" });
   assert.equal((await call(db, "GET", "/api/plan", {}, EDITOR, { scenario: "baseline" })).body.allocations[0].hours, 100);
   assert.equal((await call(db, "GET", "/api/plan", {}, EDITOR, { scenario: "win-medtronic" })).body.allocations[0].hours, 300);
 });

@@ -17,8 +17,17 @@ const { nowIso, audit } = require("./db");
 class Conflict extends Error {
   constructor(current) { super("version conflict"); this.code = "conflict"; this.current = current; }
 }
+class PastMonth extends Error {
+  constructor(month) { super(`month ${month} is closed — past months carry Odoo actuals, not forecast`); this.code = "past_month"; }
+}
 
 const monthKey = (m) => String(m).length === 7 ? `${m}-01` : String(m).slice(0, 10);
+/* First day of the current month (UTC — Railway runs UTC and Odoo actuals are
+   aggregated by calendar month). Everything before this is closed. */
+const currentMonthStart = () => {
+  const d = new Date();
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`;
+};
 
 /* ---------------------------------------------------------------- read plan -- */
 async function getPlan(db, scenario = "baseline") {
@@ -86,6 +95,11 @@ async function getReference(db) {
 async function putAllocation(db, user, a) {
   const scenario = a.scenario || "baseline";
   const month = monthKey(a.month);
+  // Closed months are actuals territory: the UI locks them, and this guard stops a
+  // stale page (opened before the month rolled over) from writing them anyway.
+  // Server-side moves (reassignAllocations) bypass this deliberately — migrating a
+  // closed opportunity must carry its full history.
+  if (month < currentMonthStart()) throw new PastMonth(month.slice(0, 7));
   const hours = Number(a.hours) || 0;
   const expected = Number.isFinite(a.version) ? Number(a.version) : 0;
 
@@ -302,4 +316,4 @@ async function putImportMap(db, user, m) {
   return { ok: true };
 }
 
-module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, mapOpportunityToProject, putCapacity, putRate, putTbh, deleteTbh, putImportMap, Conflict, monthKey };
+module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, mapOpportunityToProject, putCapacity, putRate, putTbh, deleteTbh, putImportMap, Conflict, PastMonth, monthKey, currentMonthStart };

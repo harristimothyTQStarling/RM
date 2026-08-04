@@ -5,7 +5,7 @@
  */
 const test = require("node:test");
 const assert = require("node:assert");
-const { as, ANON, fresh, call } = require("./helpers");
+const { as, ANON, fresh, fm, call } = require("./helpers");
 const oidc = require("../src/oidc");
 
 const TIM  = as("tim@tqstarling.com");     // allowlisted editor
@@ -13,13 +13,13 @@ const SAM  = as("sam@tqstarling.com");     // allowlisted editor
 const JANE = as("jane@tqstarling.com");    // signed in, view only
 
 const write = (db, headers) => call(db, "PUT", "/api/allocation",
-  { resourceKey: "emp:110", targetKey: "prj:119", month: "2026-08", hours: 100, version: 0 }, headers);
+  { resourceKey: "emp:110", targetKey: "prj:119", month: fm(0), hours: 100, version: 0 }, headers);
 
 test.beforeEach(() => { process.env.EDITOR_UPNS = "tim@tqstarling.com, sam@tqstarling.com"; delete process.env.IMPORTER_UPNS; });
 test.after(() => { delete process.env.EDITOR_UPNS; delete process.env.IMPORTER_UPNS; });
 
 const importBatch = (db, headers) => call(db, "POST", "/api/allocations",
-  { mode: "import", items: [{ resourceKey: "emp:110", targetKey: "prj:119", month: "2026-08", hours: 10, version: 0 }] }, headers);
+  { mode: "import", items: [{ resourceKey: "emp:110", targetKey: "prj:119", month: fm(0), hours: 10, version: 0 }] }, headers);
 
 test("named editors can write", async () => {
   const db = fresh();
@@ -58,7 +58,7 @@ test("/api/me exposes canImport so the UI hides import for non-importers", async
 
 test("ordinary bulk allocate (no import mode) stays open to every editor", async () => {
   const ok = await call(fresh(), "POST", "/api/allocations",
-    { items: [{ resourceKey: "emp:110", targetKey: "prj:119", month: "2026-08", hours: 10, version: 0 }] }, SAM);
+    { items: [{ resourceKey: "emp:110", targetKey: "prj:119", month: fm(0), hours: 10, version: 0 }] }, SAM);
   assert.equal(ok.status, 200, "restricting import must not restrict normal bulk editing");
 });
 

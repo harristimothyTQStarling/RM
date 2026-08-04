@@ -110,6 +110,9 @@ async function handle(db, req) {
       // 409 carries the winning value so the UI can say what it lost to.
       return json(409, { error: "conflict", current: e.current });
     }
+    if (e && e.code === "past_month") {
+      return json(400, { error: e.message });
+    }
     throw e;
   }
 

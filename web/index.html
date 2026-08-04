@@ -431,7 +431,10 @@
 /* ============================ SEED DATA (live Odoo snapshot 2026-07-13) ============================ */
 const DATA_DATE = "2026-07-16";   // refreshed from Odoo
 const YEAR = 2026;              // calendar-year axis, aligned to the CY26 forecast workbook
-const CURRENT_KEY = "2026-07";  // current month (for KPI "this month")
+/* The forecast/actuals boundary follows the real clock — it used to be a
+   hardcoded month, which left July editable into August. */
+const NOW = new Date();
+const CURRENT_KEY = `${NOW.getFullYear()}-${String(NOW.getMonth()+1).padStart(2,"0")}`;
 
 
 
@@ -522,8 +525,18 @@ const MONTHS = (() => {
   return out;
 })();
 const MKEYS = MONTHS.map(m=>m.key);
-const CURRENT_MI = Math.max(0, MONTHS.findIndex(m=>m.key===CURRENT_KEY)); // 6 = Jul; months before this are "past" (actuals)
+/* Index of the current month within the planner's year; months before it are
+   "past" (locked actuals). Clamped for year boundaries: before the planner year
+   nothing is past, after it everything is. */
+const CURRENT_MI = NOW.getFullYear()>YEAR ? 12 : NOW.getFullYear()<YEAR ? 0 : NOW.getMonth();
 const isPastMi = mi => mi < CURRENT_MI;
+/* "Jan–Jul are actual hours (locked) · Aug–Dec are editable forecast", kept true
+   as the boundary moves each month. */
+function boundaryLabel(){
+  if(CURRENT_MI<=0) return "all months are editable forecast";
+  if(CURRENT_MI>=12) return "all months are locked actuals";
+  return `${MONTHS[0].name}–${MONTHS[CURRENT_MI-1].name} are actual hours (locked) · ${MONTHS[CURRENT_MI].name}–${MONTHS[11].name} are editable forecast`;
+}
 
 /* ============================ STATE ============================ */
 /* The plan lives in Postgres. This is a local mirror kept in step with the server:
@@ -794,7 +807,7 @@ function renderAllocate(){
   let html=`<div class="panel"><div class="panel-hd">`+
     `<div style="display:flex;align-items:center;gap:12px"><h2>Allocate hours</h2>`+
     `<button class="btn" id="btnBulk" style="padding:5px 11px"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> Bulk allocate</button></div>`+
-    `<span class="hint">Click a person to expand · Jan–Jun are actual hours (locked) · Jul–Dec are editable forecast · saved automatically${isD()?" · <b>$ view</b>: totals are hours × per-project bill rate; inputs stay hours":""}</span></div>`+
+    `<span class="hint">Click a person to expand · ${boundaryLabel()} · saved automatically${isD()?" · <b>$ view</b>: totals are hours × per-project bill rate; inputs stay hours":""}</span></div>`+
     `<div class="scroll"><div style="min-width:900px">`;
   // sticky month header aligned to grid (offset by name column)
   html+=`<div style="display:grid;grid-template-columns:var(--namecol) 1fr;position:sticky;top:0;z-index:5">`+
@@ -1964,8 +1977,8 @@ function renderBanner(){
     el.innerHTML=`<div class="banner" style="background:var(--surface-2);border-color:var(--line-strong);color:var(--ink-2)">${check}<div class="sp">Imported <b>${esc(state.lastImport.sheet)}</b> — ${state.lastImport.count} allocations on ${esc(state.lastImport.date)}.${canImport()?" Re-import to refresh from the latest workbook.":""}</div>${impBtn}<button class="x" id="bannerX" title="Dismiss">×</button></div>`;
   } else {
     const msg = canImport()
-      ? `Showing a <b>June-actuals draft</b>. Import your <b>CY26 forecast workbook</b> to load the real plan — it's parsed in your browser, nothing is uploaded.`
-      : `Showing a <b>June-actuals draft</b>. The <b>CY26 forecast</b> is imported by the planning admin.`;
+      ? `No forecast imported yet. Import your <b>CY26 forecast workbook</b> to load the real plan — it's parsed in your browser, nothing is uploaded.`
+      : `No forecast imported yet. The <b>CY26 forecast</b> is imported by the planning admin.`;
     el.innerHTML=`<div class="banner">${check}<div class="sp">${msg}</div>${impBtn}<button class="x" id="bannerX" title="Dismiss">×</button></div>`;
   }
   const bi=el.querySelector("#bannerImport");
@@ -1999,7 +2012,7 @@ function bulkValues(months){
 function bulkPreview(){
   const el=document.getElementById("bkPreview"); if(!el) return;
   const months=bulkRange(), vals=bulkValues(months);
-  if(!months.length){ el.textContent="Select a valid future month range (Jul–Dec)."; return; }
+  if(!months.length){ el.textContent=`Select a valid future month range${CURRENT_MI<12?` (${MONTHS[CURRENT_MI].name}–${MONTHS[11].name})`:""}.`; return; }
   const total=vals.reduce((s,x)=>s+x,0), label=MONTHS[months[0]].label+"–"+MONTHS[months[months.length-1]].label;
   const rate=Math.max(0,parseFloat(document.getElementById("bkRate")?.value)||0);
   const dollars = rate? ` · <b>${money(total*rate)}</b> at $${rate}/hr` : "";
@@ -2066,8 +2079,8 @@ function applyBulk(){
 })();
 document.getElementById("foot").innerHTML=
   `Roster &amp; projects from Odoo via CData · ${DATA_DATE}. ${PEOPLE.length} people · ${PROJECTS.length} PRJ projects + ${CRM_PROJECTS.length} CRM pipeline opportunities · calendar year ${YEAR}. `+
-  `<b>Jan–Jun show actual timesheet hours (locked)</b>; Jul–Dec are forecast. Until you import, Jul–Sep are seeded from June actuals as a draft. `+
-  `Use <b>Import forecast</b> to load your CY26 workbook for Jul–Dec (parsed in your browser — nothing is uploaded). `+
+  `<b>Closed months show actual timesheet hours (locked)</b>; the current month onward is forecast. `+
+  `Use <b>Import forecast</b> to load your CY26 workbook (parsed in your browser — nothing is uploaded). `+
   `Shared plan — every change is saved for everyone and attributed to you.`;
 
 /* ============================ BOOTSTRAP ============================ */

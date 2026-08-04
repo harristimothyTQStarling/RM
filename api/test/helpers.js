@@ -24,4 +24,13 @@ const fresh = () => open({ driver: "sqlite", file: ":memory:" });
 const call = (db, method, path, body, headers = {}, query = {}) =>
   handle(db, { method, path, body, headers, query });
 
-module.exports = { as, ANON, fresh, call };
+/** "YYYY-MM" for the current UTC month + n. Allocation writes to months before the
+ *  current month are rejected (past months are actuals), so tests must build their
+ *  months relative to the clock rather than hardcoding them. */
+function fm(n = 0) {
+  const d = new Date();
+  const abs = d.getUTCFullYear() * 12 + d.getUTCMonth() + n;
+  return `${Math.floor(abs / 12)}-${String((abs % 12) + 1).padStart(2, "0")}`;
+}
+
+module.exports = { as, ANON, fresh, call, fm };
