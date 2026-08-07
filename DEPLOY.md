@@ -154,7 +154,8 @@ curl https://<your-domain>/healthz          # {"ok":true,"db":"postgres"}
 |---|---|
 | **Sign in** | anyone in your Entra tenant (the `tid` claim is checked, so no outside accounts) |
 | **Edit** | only addresses listed in `EDITOR_UPNS` |
-| **Import a forecast / Sync Odoo** | only addresses in `IMPORTER_UPNS` (unset ⇒ `tim@tqstarling.com`; must also be an editor) — both rewrite shared data wholesale, so they are held tighter than editing |
+| **Import a forecast** | only addresses in `IMPORTER_UPNS` (unset ⇒ `tim@tqstarling.com`; must also be an editor) — an import rewrites the whole plan, so it is held tighter than editing |
+| **Sync Odoo** | any signed-in user — read-only against Odoo, just refreshes the reference cache (same as the nightly run) |
 | **Everyone else** | read-only |
 | **Changing editors** | edit the variable — takes effect immediately, no redeploy |
 | **Revoking all sessions** | rotate `SESSION_SECRET` — every cookie becomes invalid |

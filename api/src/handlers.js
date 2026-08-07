@@ -39,6 +39,22 @@ async function handle(db, req) {
     const rows = await db.all("SELECT at, actor, entity, entity_key, action, old_value, new_value FROM audit_log ORDER BY at DESC, id DESC LIMIT 200");
     return json(200, { entries: rows });
   }
+  if (method === "POST" && path === "/api/sync") {
+    // Refresh the Odoo reference cache on demand. Available to EVERY signed-in
+    // user (viewers included): the sync is read-only against Odoo and only
+    // re-caches what Odoo already says, so it can't corrupt the plan — the
+    // nightly run does the same thing unattended.
+    const { Odoo, syncAll } = require("./odoo");
+    const odoo = new Odoo();
+    if (!odoo.configured) return json(503, { error: "Odoo is not configured (ODOO_URL / ODOO_DB / ODOO_USER / ODOO_PASSWORD)" });
+    const year = new Date().getUTCFullYear();
+    try {
+      const counts = await syncAll(db, odoo, { actualsFrom: `${year}-01-01`, actualsTo: `${year}-12-31` });
+      return json(200, { ok: true, counts });
+    } catch (e) {
+      return json(502, { error: `Odoo sync failed: ${e.message}` });
+    }
+  }
 
   // ---- writes (Editor only) ----
   const write = ["PUT", "POST", "DELETE"].includes(method);
@@ -112,23 +128,6 @@ async function handle(db, req) {
     if (method === "PUT" && path === "/api/importmap") {
       if (!body.kind || !body.sourceName) return json(400, { error: "kind and sourceName required" });
       return json(200, await store.putImportMap(db, user, { ...body, scenario }));
-    }
-    if (method === "POST" && path === "/api/sync") {
-      // Refresh the Odoo reference cache on demand. Read-only against Odoo, but a
-      // sync rewrites the shared reference cache (and reconciles closed CRM opps),
-      // so it is held to the same planning-admin capability as forecast import
-      // (IMPORTER_UPNS — unset means tim@tqstarling.com only).
-      if (!canImport(user)) return json(403, { error: "Odoo sync is restricted to the planning admin" });
-      const { Odoo, syncAll } = require("./odoo");
-      const odoo = new Odoo();
-      if (!odoo.configured) return json(503, { error: "Odoo is not configured (ODOO_URL / ODOO_DB / ODOO_USER / ODOO_PASSWORD)" });
-      const year = new Date().getUTCFullYear();
-      try {
-        const counts = await syncAll(db, odoo, { actualsFrom: `${year}-01-01`, actualsTo: `${year}-12-31` });
-        return json(200, { ok: true, counts });
-      } catch (e) {
-        return json(502, { error: `Odoo sync failed: ${e.message}` });
-      }
     }
   } catch (e) {
     if (e && e.code === "conflict") {

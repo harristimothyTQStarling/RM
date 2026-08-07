@@ -304,7 +304,6 @@
   /* forecast import is restricted to importers (IMPORTER_UPNS); the server enforces
      it too — this just hides controls that would 403. */
   body.noimport #btnImportXlsx,
-  body.noimport #btnSync,
   body.noimport #bannerImport{display:none!important;}
   body.viewer .a-inputs input,
   body.viewer .prate input,
@@ -1627,12 +1626,10 @@ document.getElementById("btnTheme").addEventListener("click",()=>{
 
 /* ============================ IMPORT / EXPORT ============================ */
 const exportMenu=document.getElementById("exportMenu");
-/* Sync from Odoo on demand (read-only against Odoo). Editor-only server-side;
-   needed after month close so the actuals cache picks up new hours AND the
-   realized bill rates (older caches predate the bill_rate column). */
+/* Sync from Odoo on demand — read-only against Odoo, so open to every signed-in
+   user. Refreshes people, projects, opportunities and actuals + realized rates. */
 document.getElementById("btnSync").addEventListener("click",async e=>{
   const b=e.currentTarget; if(b.disabled) return;
-  if(!canImport()){ toast("Odoo sync is restricted to the planning admin."); return; }
   b.disabled=true; const old=b.innerHTML; b.textContent="Syncing…"; status("Syncing from Odoo…");
   try{
     const r=await api("POST","/api/sync");

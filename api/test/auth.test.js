@@ -62,12 +62,13 @@ test("ordinary bulk allocate (no import mode) stays open to every editor", async
   assert.equal(ok.status, 200, "restricting import must not restrict normal bulk editing");
 });
 
-test("Odoo sync is planning-admin only (same capability as import)", async () => {
-  // TIM is the default importer; SAM is an editor but not an importer.
-  assert.equal((await call(fresh(), "POST", "/api/sync", {}, SAM)).status, 403, "editor without import rights cannot sync");
-  assert.equal((await call(fresh(), "POST", "/api/sync", {}, JANE)).status, 403, "viewer cannot sync");
-  // TIM passes the capability gate; with no Odoo configured the next check answers 503.
-  assert.equal((await call(fresh(), "POST", "/api/sync", {}, TIM)).status, 503, "tim reaches the Odoo-config check");
+test("Odoo sync is open to every signed-in user (read-only against Odoo)", async () => {
+  // With no Odoo configured, reaching the config check answers 503 — which
+  // proves the request passed the auth gates.
+  assert.equal((await call(fresh(), "POST", "/api/sync", {}, TIM)).status, 503, "admin reaches the Odoo-config check");
+  assert.equal((await call(fresh(), "POST", "/api/sync", {}, SAM)).status, 503, "editor too");
+  assert.equal((await call(fresh(), "POST", "/api/sync", {}, JANE)).status, 503, "viewer too");
+  assert.equal((await call(fresh(), "POST", "/api/sync", {}, ANON)).status, 401, "but not anonymous");
 });
 
 test("IMPORTER_UPNS overrides who may import", async () => {
