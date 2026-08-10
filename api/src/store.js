@@ -34,7 +34,7 @@ async function getPlan(db, scenario = "baseline") {
   const [allocations, capacity, tbh, importMap, rates, proposed] = await Promise.all([
     db.all("SELECT resource_key, target_key, month, hours, version, updated_by, updated_at FROM allocation WHERE scenario = ?", [scenario]),
     db.all("SELECT resource_key, hours_per_month, version FROM capacity_override WHERE scenario = ?", [scenario]),
-    db.all("SELECT tbh_key, name, role, dept, start_month, capacity, version FROM tbh WHERE scenario = ?", [scenario]),
+    db.all("SELECT tbh_key, name, role, dept, shore, start_month, capacity, version FROM tbh WHERE scenario = ?", [scenario]),
     db.all("SELECT kind, source_name, target_key FROM import_map WHERE scenario = ?", [scenario]),
     db.all("SELECT resource_key, target_key, rate, version FROM bill_rate WHERE scenario = ?", [scenario]),
     db.all("SELECT resource_key, target_key, name FROM proposed_hire WHERE scenario = ?", [scenario]),
@@ -49,7 +49,7 @@ async function getPlan(db, scenario = "baseline") {
     capacity: capacity.map(r => ({ resourceKey: r.resource_key, hoursPerMonth: Number(r.hours_per_month), version: r.version })),
     rates: rates.map(r => ({ resourceKey: r.resource_key, targetKey: r.target_key, rate: Number(r.rate), version: r.version })),
     tbh: tbh.map(r => ({
-      tbhKey: r.tbh_key, name: r.name, role: r.role, dept: r.dept,
+      tbhKey: r.tbh_key, name: r.name, role: r.role, dept: r.dept, shore: r.shore || "onshore",
       start: r.start_month ? String(r.start_month).slice(0, 7) : null,
       cap: r.capacity == null ? null : Number(r.capacity), version: r.version,
     })),
@@ -302,16 +302,17 @@ async function putRate(db, user, b) {
 async function putTbh(db, user, t) {
   const scenario = t.scenario || "baseline";
   const start = t.start ? monthKey(t.start) : null;
+  const shore = normShore(t.shore);
   const cur = await db.get("SELECT id, version FROM tbh WHERE scenario=? AND tbh_key=?", [scenario, t.tbhKey]);
   if (!cur) {
-    await db.run("INSERT INTO tbh (scenario, tbh_key, name, role, dept, start_month, capacity, updated_by, updated_at, version) VALUES (?,?,?,?,?,?,?,?,?,1)",
-      [scenario, t.tbhKey, t.name, t.role || "", t.dept || "", start, t.cap == null ? null : Number(t.cap), user.upn, nowIso()]);
+    await db.run("INSERT INTO tbh (scenario, tbh_key, name, role, dept, shore, start_month, capacity, updated_by, updated_at, version) VALUES (?,?,?,?,?,?,?,?,?,?,1)",
+      [scenario, t.tbhKey, t.name, t.role || "", t.dept || "", shore, start, t.cap == null ? null : Number(t.cap), user.upn, nowIso()]);
     await audit(db, user.upn, "tbh", `${scenario}|${t.tbhKey}`, "insert", null, t.name);
     return { version: 1 };
   }
   const next = cur.version + 1;
-  await db.run("UPDATE tbh SET name=?, role=?, dept=?, start_month=?, capacity=?, updated_by=?, updated_at=?, version=? WHERE id=?",
-    [t.name, t.role || "", t.dept || "", start, t.cap == null ? null : Number(t.cap), user.upn, nowIso(), next, cur.id]);
+  await db.run("UPDATE tbh SET name=?, role=?, dept=?, shore=?, start_month=?, capacity=?, updated_by=?, updated_at=?, version=? WHERE id=?",
+    [t.name, t.role || "", t.dept || "", shore, start, t.cap == null ? null : Number(t.cap), user.upn, nowIso(), next, cur.id]);
   await audit(db, user.upn, "tbh", `${scenario}|${t.tbhKey}`, "update", null, t.name);
   return { version: next };
 }
@@ -331,11 +332,14 @@ async function deleteTbh(db, user, tbhKey, scenario = "baseline") {
 }
 
 /* --------------------------------------------- TBA role pools (normalize) -- */
-const roleSlug = (role) => {
+/* Shore is part of a pool's identity: "Technical Consultant (Onshore)" and
+   "(Offshore)" are different roles with different pools. */
+const normShore = (s) => String(s || "").trim().toLowerCase() === "offshore" ? "offshore" : "onshore";
+const roleSlug = (role, shore) => {
   const s = String(role || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  return "tba-" + (s || "unassigned");
+  return "tba-" + (s || "unassigned") + "-" + normShore(shore);
 };
-const tbaName = (role) => "TBA - " + (String(role || "").trim() || "Unassigned");
+const tbaName = (role, shore) => "TBA - " + (String(role || "").trim() || "Unassigned") + (normShore(shore) === "offshore" ? " (Offshore)" : " (Onshore)");
 
 /**
  * To-Be-Assigned model: unstaffed demand lives against the ROLE, not a named
@@ -381,10 +385,17 @@ async function normalizeTbaPools(db) {
 
   return db.tx(async () => {
     const out = { merged: 0, renamed: 0 };
-    const rows = await db.all("SELECT id, scenario, tbh_key, name, role, dept, start_month, capacity FROM tbh ORDER BY id");
-    const groups = new Map();   // scenario|slug -> [rows]
+    const rows = await db.all("SELECT id, scenario, tbh_key, name, role, dept, shore, start_month, capacity FROM tbh ORDER BY id");
+    // Historical rows carry no shore ('') — classify by the seat's average bill
+    // rate: under $100/hr reads as offshore, otherwise onshore.
     for (const r of rows) {
-      const key = `${r.scenario}|${roleSlug(r.role)}`;
+      if (r.shore === "onshore" || r.shore === "offshore") continue;
+      const avg = await db.get("SELECT AVG(rate) AS a FROM bill_rate WHERE scenario=? AND resource_key=?", [r.scenario, `tbh:${r.tbh_key}`]);
+      r.shore = (avg && avg.a != null && Number(avg.a) < 100) ? "offshore" : "onshore";
+    }
+    const groups = new Map();   // scenario|slug(role+shore) -> [rows]
+    for (const r of rows) {
+      const key = `${r.scenario}|${roleSlug(r.role, r.shore)}`;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(r);
     }
@@ -395,14 +406,14 @@ async function normalizeTbaPools(db) {
       const canon = members.find((m) => m.tbh_key === slug) || members[0];
       const canonKey = `tbh:${slug}`;
       // 1. put the canonical row on the pool key/name, demand-only
-      const wantName = tbaName(canon.role);
+      const wantName = tbaName(canon.role, canon.shore);
       if (canon.tbh_key !== slug || canon.name !== wantName || canon.start_month != null || canon.capacity != null) {
         if (canon.tbh_key !== slug) await mergeResource(scenario, `tbh:${canon.tbh_key}`, canonKey);
         else await db.run("DELETE FROM capacity_override WHERE scenario=? AND resource_key=?", [scenario, canonKey]);
-        await db.run("UPDATE tbh SET tbh_key=?, name=?, start_month=NULL, capacity=NULL WHERE id=?", [slug, wantName, canon.id]);
+        await db.run("UPDATE tbh SET tbh_key=?, name=?, shore=?, start_month=NULL, capacity=NULL WHERE id=?", [slug, wantName, canon.shore, canon.id]);
         out.renamed++;
       }
-      // 2. fold every other member of the role into the pool
+      // 2. fold every other member of the (role, shore) group into the pool
       for (const m of members) {
         if (m.id === canon.id) continue;
         await mergeResource(scenario, `tbh:${m.tbh_key}`, canonKey);
@@ -512,4 +523,4 @@ async function putImportMap(db, user, m) {
   return { ok: true };
 }
 
-module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, mapOpportunityToProject, putCapacity, putRate, putTbh, deleteTbh, shiftTbhForecast, normalizeTbaPools, roleSlug, tbaName, putImportMap, putProposedHire, Conflict, PastMonth, monthKey, currentMonthStart };
+module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, mapOpportunityToProject, putCapacity, putRate, putTbh, deleteTbh, shiftTbhForecast, normalizeTbaPools, roleSlug, tbaName, normShore, putImportMap, putProposedHire, Conflict, PastMonth, monthKey, currentMonthStart };

@@ -24,6 +24,18 @@ function sqliteDriver(file) {
   db.exec("PRAGMA foreign_keys = ON");
   const schema = fs.readFileSync(path.join(__dirname, "../../db/schema.sqlite.sql"), "utf8");
   db.exec(schema);
+  // Additive column migrations for EXISTING local files: the CREATE IF NOT EXISTS
+  // schema above no-ops on tables that already exist, so columns added later never
+  // arrive (Postgres gets them via the ALTERs in schema.postgres.sql). SQLite has
+  // no ADD COLUMN IF NOT EXISTS — attempt each and ignore "duplicate column".
+  for (const sql of [
+    "ALTER TABLE tbh ADD COLUMN shore TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE ref_opportunity ADD COLUMN needs_project INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE ref_opportunity ADD COLUMN expected_start TEXT",
+    "ALTER TABLE ref_opportunity ADD COLUMN expected_months INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE ref_actual ADD COLUMN bill_rate REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE ref_actual ADD COLUMN revenue REAL NOT NULL DEFAULT 0",
+  ]) { try { db.exec(sql); } catch { /* column already exists */ } }
   return {
     kind: "sqlite",
     all: (sql, params = []) => db.prepare(sql).all(...params),

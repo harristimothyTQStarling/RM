@@ -71,6 +71,10 @@ CREATE TABLE IF NOT EXISTS tbh (
   name         VARCHAR(128) NOT NULL,
   role         VARCHAR(128) NOT NULL DEFAULT '',
   dept         VARCHAR(128) NOT NULL DEFAULT '',
+  -- 'onshore' | 'offshore' — part of a TBA pool's identity (the same role on
+  -- and offshore are DIFFERENT pools). '' means not yet classified; the boot
+  -- normalizer infers it for historical rows (avg bill rate < $100 => offshore).
+  shore        VARCHAR(16)  NOT NULL DEFAULT '',
   start_month  DATE,
   capacity     NUMERIC(7,2),
   updated_by   VARCHAR(128) NOT NULL,
@@ -78,6 +82,7 @@ CREATE TABLE IF NOT EXISTS tbh (
   version      INT          NOT NULL DEFAULT 1,
   UNIQUE (scenario, tbh_key)
 );
+ALTER TABLE tbh ADD COLUMN IF NOT EXISTS shore VARCHAR(16) NOT NULL DEFAULT '';
 
 -- Remembered forecast-import overrides, shared so one person's correction fixes
 -- the mapping for everyone. Only MANUAL overrides are stored — auto-matches

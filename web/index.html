@@ -1267,8 +1267,11 @@ function detectGaps(){
   return gaps.sort((a,b)=>b.peak-a.peak);
 }
 /* -------- To Be Assigned: one demand-only pool per role -------- */
-const slugRole = (role) => "tba-" + ((String(role||"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"")) || "unassigned");
-const tbaLabel = (role) => "TBA - " + (String(role||"").trim() || "Unassigned");
+/* Shore is part of a pool's identity: the same role on- and offshore are
+   DIFFERENT pools. Mirrors the server's roleSlug/tbaName. */
+const normShore = (s) => String(s||"").trim().toLowerCase()==="offshore" ? "offshore" : "onshore";
+const slugRole = (role,shore) => "tba-" + ((String(role||"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"")) || "unassigned") + "-" + normShore(shore);
+const tbaLabel = (role,shore) => "TBA - " + (String(role||"").trim() || "Unassigned") + (normShore(shore)==="offshore" ? " (Offshore)" : " (Onshore)");
 let tbaOpen = new Set();
 const proposedFor = (pid,projid) => state.proposed[`${pid}|${projid}`] || "";
 /* Available capacity for a role in a month: what people who ALREADY have that
@@ -1326,7 +1329,7 @@ function renderHiring(){
     return `<div class="tbh-item" style="flex-wrap:wrap">`+
       `<div class="avatar" style="background:${deptColor(t.dept)};cursor:pointer" data-tbaopen="${t.id}">${initials(t.role||"TB")}</div>`+
       `<div class="info" style="cursor:pointer" data-tbaopen="${t.id}"><div class="r">${esc(t.name)} <span class="muted" style="font-weight:400;font-size:11px">${open?"▾":"▸"} click to ${open?"collapse":"drill into projects & capacity"}</span></div>`+
-        `<div class="d">${esc(t.role||"—")}${t.dept?` · ${deptLabel(t.dept)}`:""} · ${isD()? money(personDollars(t.id))+" planned" : fmt0(yr)+"h planned"}</div></div>`+
+        `<div class="d">${esc(t.role||"—")} · ${t.shore==="offshore"?"Offshore":"Onshore"}${t.dept?` · ${deptLabel(t.dept)}`:""} · ${isD()? money(personDollars(t.id))+" planned" : fmt0(yr)+"h planned"}</div></div>`+
       (fut>0?`<button class="btn primary" data-shifttbh="${t.id}" style="padding:5px 9px" title="Someone was hired/assigned — move this role's forecast onto the real person">Shift forecast → employee</button>`:"")+
       `<button class="btn" data-deltbh="${t.id}" style="padding:5px 9px">Remove</button>`+
       (open?`<div style="flex-basis:100%;min-width:0">${tbaDrill(t)}</div>`:"")+
@@ -1347,6 +1350,7 @@ function renderHiring(){
         `<div class="form-grid">`+
           `<div class="field"><label>Role / title</label><input type="text" id="tbhRole" list="roleList" placeholder="e.g. Senior Solution Consultant"><datalist id="roleList">${roleOpts.map(r=>`<option value="${r}">`).join("")}</datalist></div>`+
           `<div class="field"><label>Department</label><select id="tbhDept">${deptOpts}</select></div>`+
+          `<div class="field"><label>Shore</label><select id="tbhShore"><option value="onshore">Onshore</option><option value="offshore">Offshore</option></select></div>`+
         `</div>`+
         `<button class="btn primary" id="tbhAdd">Add role pool</button>`+
         `<div class="muted" style="font-size:11.5px;margin-top:6px">Named “TBA - &lt;role&gt;”. One pool per role — adding an existing role opens its pool.</div>`+
@@ -1665,14 +1669,15 @@ function openTbhForm(role,dept){
 function addTbh(){
   const role=(document.getElementById("tbhRole").value||"").trim();
   const dept=document.getElementById("tbhDept").value;
+  const shore=normShore(document.getElementById("tbhShore").value);
   if(!role){ document.getElementById("tbhRole").focus(); return; }
-  // ONE pool per role: adding an existing role just opens its pool.
-  const key=slugRole(role), id="tbh-"+key;
+  // ONE pool per (role, shore): adding an existing combination opens its pool.
+  const key=slugRole(role,shore), id="tbh-"+key;
   const existing=state.tbh.find(t=>String(t.id)===id);
-  if(existing){ tbaOpen.add(id); renderHiring(); toast(`“${tbaLabel(role)}” already exists — opened its pool.`); return; }
-  const t={id,name:tbaLabel(role),role,dept,type:"tbh",start:null,cap:null};
+  if(existing){ tbaOpen.add(id); renderHiring(); toast(`“${tbaLabel(role,shore)}” already exists — opened its pool.`); return; }
+  const t={id,name:tbaLabel(role,shore),role,dept,shore,type:"tbh",start:null,cap:null};
   state.tbh.push(t); tbaOpen.add(id); renderHiring(); renderKpis();
-  api("PUT","/api/tbh",{tbhKey:key,name:t.name,role,dept,start:null,cap:null})
+  api("PUT","/api/tbh",{tbhKey:key,name:t.name,role,dept,shore,start:null,cap:null})
     .then(()=>status("Saved")).catch(e=>toast("Role pool not saved: "+e.message));
 }
 
@@ -2079,15 +2084,20 @@ function applyImport(records,pmap,prmap,sheetName,rolemap){
     const rec=records.find(r=>r.person===name)||{};
     const role=(rolemap[name]||matchRole(rec.role||"")||"").trim();
     const dept=DEPTS.includes(rec.dept)?rec.dept:"";
-    const id="tbh-"+slugRole(role);
+    // Shore from the sheet's bill rate (weighted average across the person's
+    // rated rows): under $100/hr reads as offshore; no rate defaults onshore.
+    let rh=0, rd=0;
+    records.filter(r=>r.person===name && r.rate>0).forEach(r=>{ const t=Object.values(r.months).reduce((s,x)=>s+x,0); rh+=t; rd+=t*r.rate; });
+    const shore = (rh>0 && rd/rh<100) ? "offshore" : "onshore";
+    const id="tbh-"+slugRole(role,shore);
     tbhByPerson[name]={id};
-    if(!poolById[id]) poolById[id]={id,name:tbaLabel(role),role,dept};
+    if(!poolById[id]) poolById[id]={id,name:tbaLabel(role,shore),role,dept,shore};
   });
   Object.values(poolById).forEach(s=>{
     const ex=state.tbh.find(t=>String(t.id)===String(s.id));
-    if(ex){ ex.name=s.name; ex.role=s.role; if(!ex.dept) ex.dept=s.dept; }
-    else state.tbh.push({id:s.id,name:s.name,role:s.role,dept:s.dept,type:"tbh",start:null,cap:null});
-    api("PUT","/api/tbh",{tbhKey:String(s.id).replace(/^tbh-/,""),name:s.name,role:s.role,dept:s.dept,start:null,cap:null}).catch(()=>{});
+    if(ex){ ex.name=s.name; ex.role=s.role; ex.shore=s.shore; if(!ex.dept) ex.dept=s.dept; }
+    else state.tbh.push({id:s.id,name:s.name,role:s.role,dept:s.dept,shore:s.shore,type:"tbh",start:null,cap:null});
+    api("PUT","/api/tbh",{tbhKey:String(s.id).replace(/^tbh-/,""),name:s.name,role:s.role,dept:s.dept,shore:s.shore,start:null,cap:null}).catch(()=>{});
   });
   let applied=0;
   const rateHrs={}, rateDol={};   // per mapped person|project pair: hours & dollars from rated rows → weighted avg bill rate
@@ -2394,7 +2404,7 @@ async function bootstrap(){
     setPairRateLocal(fromResKey(r.resourceKey), fromTgtKey(r.targetKey), r.rate);
     RATE_VER[`${r.resourceKey}|${r.targetKey}`]=r.version;
   });
-  state.tbh = plan.tbh.map(t=>({ id:"tbh-"+t.tbhKey, name:t.name, role:t.role, dept:t.dept, type:"tbh", start:t.start, cap:t.cap }));
+  state.tbh = plan.tbh.map(t=>({ id:"tbh-"+t.tbhKey, name:t.name, role:t.role, dept:t.dept, shore:t.shore||"onshore", type:"tbh", start:t.start, cap:t.cap }));
   // proposed-hire names per (TBA pool × project), keyed "uiResourceId|uiProjId"
   state.proposed={};
   (plan.proposed||[]).forEach(p=>{ state.proposed[`${fromResKey(p.resourceKey)}|${fromTgtKey(p.targetKey)}`]=p.name; });

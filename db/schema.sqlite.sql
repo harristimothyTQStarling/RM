@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS tbh (
   name        TEXT NOT NULL,
   role        TEXT NOT NULL DEFAULT '',
   dept        TEXT NOT NULL DEFAULT '',
+  shore       TEXT NOT NULL DEFAULT '',   -- see db/schema.postgres.sql
+
   start_month TEXT,
   capacity    REAL,
   updated_by  TEXT NOT NULL,
