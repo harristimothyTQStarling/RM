@@ -388,6 +388,9 @@
   #aiPanel{position:fixed;right:22px;bottom:22px;z-index:95;width:min(420px,calc(100vw - 44px));
     height:min(640px,calc(100vh - 60px));display:flex;flex-direction:column;background:var(--surface);
     border:1px solid var(--line-strong);border-radius:14px;box-shadow:var(--shadow);overflow:hidden;}
+  /* display:flex above would defeat the hidden attribute's UA display:none —
+     without this rule the panel can never close. */
+  #aiPanel[hidden]{display:none;}
   .ai-hd{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line);background:var(--surface-2);}
   .ai-hd .t{font-weight:680;font-size:13.5px;}
   .ai-hd .s{font-size:11px;color:var(--muted);}
