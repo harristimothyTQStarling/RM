@@ -1301,7 +1301,9 @@ function tbaDrill(t){
     const otherShore = t.shore==="offshore" ? "onshore" : "offshore";
     html+=`<tr><td class="lbl" title="${pr?esc(projLabel(pr)):esc(proj)}">${pr?esc(projLabel(pr)):esc(proj)}${rate?`<div class="muted" style="font-size:10.5px">$${fmt(rate)}/hr</div>`:""}`+
       `<div class="prophire"><input type="text" data-proposed="${t.id}|${esc(String(proj))}" value="${esc(proposedFor(t.id,proj))}" placeholder="proposed hire…" title="Candidate you have in mind for this role on this project — free text, shared with everyone"></div>`+
-      (canEdit()?`<div><button class="btn" data-shoremv="${t.id}|${esc(String(proj))}" data-shoreto="${otherShore}" style="font-size:10px;padding:2px 7px;margin-top:3px" title="Move this project's demand to the ${otherShore} ${esc(t.role||"")} pool (created if needed) — hours, rate and proposed hire go with it">⇄ Move to ${otherShore==="offshore"?"Offshore":"Onshore"}</button></div>`:"")+
+      (canEdit()?`<div><button class="btn" data-shoremv="${t.id}|${esc(String(proj))}" data-shoreto="${otherShore}" style="font-size:10px;padding:2px 7px;margin-top:3px" title="Move this project's demand to the ${otherShore} ${esc(t.role||"")} pool (created if needed) — hours, rate and proposed hire go with it">⇄ Move to ${otherShore==="offshore"?"Offshore":"Onshore"}</button></div>`+
+      `<div><select data-transfer="${t.id}|${esc(String(proj))}" style="font-size:10.5px;margin-top:3px;max-width:170px" title="Transfer this project's forecast (current month onward) to a real person — bill rate copies where they have none, and the proposed-hire note clears">`+
+        `<option value="">Transfer to person…</option>${shiftEmpOpts("")}</select></div>`:"")+
       `</td>${tds}`+
       `<td class="mcelln col-tot">${isD()? money(tot*rate) : fmt0(tot)}</td></tr>`;
   });
@@ -1596,6 +1598,15 @@ document.getElementById("viewRoot").addEventListener("change",e=>{
     if(name) state.proposed[`${pid}|${projid}`]=name; else delete state.proposed[`${pid}|${projid}`];
     api("PUT","/api/proposed",{resourceKey:resKey(pid),targetKey:tgtKey(projid),name})
       .then(()=>status("Saved")).catch(err=>toast("Proposed hire not saved: "+err.message));
+    return;
+  }
+  if(el.dataset.transfer!==undefined && el.value){ const [tid,proj]=el.dataset.transfer.split("|"); const eid=el.value;
+    if(!canEdit()){ el.value=""; return; }
+    const who=personById(eid);
+    el.disabled=true;
+    api("POST","/api/tbh/shift",{tbhKey:String(tid).replace(/^tbh-/,""),moves:[{targetKey:tgtKey(proj),employeeId:Number(eid)}],collisionMode:"sum",rateMode:"copy",removeSeat:false})
+      .then(r=>{ toast(`Transferred to ${who?who.name:"person"} — ${r.moved} month${r.moved===1?"":"s"} moved${r.merged?`, ${r.merged} merged`:""}${r.ratesCopied?", rate copied":""}.`); return bootstrap(); })
+      .catch(err=>{ toast("Transfer failed: "+err.message); el.disabled=false; el.value=""; });
     return;
   }
   if(el.dataset.addproj!==undefined && el.value){ const pid=el.dataset.addproj, projid=el.value;

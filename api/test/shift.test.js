@@ -41,6 +41,15 @@ test("shift moves all future forecast to the employee and can remove the seat", 
   assert.equal(plan.body.tbh.length, 0, "seat gone");
 });
 
+test("a single-pair transfer can target a contractor too", async () => {
+  const db = fresh(); await seed(db);
+  db.run("INSERT INTO ref_person (id,name,role,dept,type,active) VALUES (112,'Riley Brooks','Technical Consultant','Contractor','contractor',1)");
+  const r = await call(db, "POST", "/api/tbh/shift", { tbhKey: "tc-1", moves: [{ targetKey: "prj:101", employeeId: 112 }] });
+  assert.equal(r.status, 200);
+  assert.equal((await allocs(db, "emp:112")).length, 2, "contractor received the pair's months");
+  assert.deepEqual((await allocs(db, "tbh:tc-1")).map(a => a.targetKey), ["prj:102"], "other project stays");
+});
+
 test("projects can be split across different employees", async () => {
   const db = fresh(); await seed(db);
   const r = await call(db, "POST", "/api/tbh/shift", {
