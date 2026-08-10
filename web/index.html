@@ -315,6 +315,7 @@
   body.viewer #bannerImport,
   body.viewer .card:has(#tbhAdd),
   body.viewer [data-shifttbh],
+  body.viewer [data-xfer],
   body.viewer [data-deltbh]{display:none!important;}
   /* forecast import is restricted to importers (IMPORTER_UPNS); the server enforces
      it too — this just hides controls that would 403. */
@@ -946,6 +947,7 @@ function allocLine(p,projid){
       `<div class="cl">${esc(pr.client||"")}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""}${p.type==="tbh"&&proposedFor(p.id,projid)?` · <b>proposed: ${esc(proposedFor(p.id,projid))}</b>`:""}</div></div>`+
       actRateHint(p.id,projid)+
       `<span class="prate" title="Forecast bill rate for ${esc(p.name)} on this project ($/hr) — closed months use the actual rate from Odoo">$<input type="number" min="0" step="1" placeholder="0" value="${pr8||""}" data-prate="${p.id}|${projid}">/hr</span>`+
+      `<button class="btn" data-xfer="${p.id}|${projid}" style="font-size:10px;padding:2px 7px;margin-left:6px;flex:none" title="Transfer all or part of these hours to another person or TBA pool…">⇄</button>`+
       `<button class="rm" data-rmproj="${p.id}|${projid}" title="Remove project" aria-label="Remove">×</button></div>`+
     `<div class="a-inputs">${inputs}<div class="rowtot" data-rt="${p.id}:${projid}">${rt?fmtHD0(rt,lineDollars(p.id,projid)):""}</div></div>`+
   `</div>`;
@@ -1194,6 +1196,7 @@ function resLine(p,pr){
       `<div class="cl">${esc(p.role||deptLabel(p.dept))}${p.type==="tbh"&&proposedFor(p.id,pr.id)?` · <b>proposed: ${esc(proposedFor(p.id,pr.id))}</b>`:""}</div></div>`+
       actRateHint(p.id,pr.id)+
       `<span class="prate" title="Forecast bill rate for ${esc(p.name)} on ${esc(pr.name)} ($/hr) — closed months use the actual rate from Odoo">$<input type="number" min="0" step="1" placeholder="0" value="${pr8||""}" data-prate="${p.id}|${pr.id}">/hr</span>`+
+      `<button class="btn" data-xfer="${p.id}|${pr.id}" style="font-size:10px;padding:2px 7px;margin-left:6px;flex:none" title="Transfer all or part of these hours to another person or TBA pool…">⇄</button>`+
       `<button class="rm" data-rmres="${p.id}|${pr.id}" title="Remove resource" aria-label="Remove">×</button></div>`+
     `<div class="a-inputs">${inputs}<div class="rowtot" data-rt="${p.id}:${pr.id}">${rt?fmtHD0(rt,lineDollars(p.id,pr.id)):""}</div></div>`+
   `</div>`;
@@ -1602,11 +1605,10 @@ document.getElementById("viewRoot").addEventListener("change",e=>{
   }
   if(el.dataset.transfer!==undefined && el.value){ const [tid,proj]=el.dataset.transfer.split("|"); const eid=el.value;
     if(!canEdit()){ el.value=""; return; }
-    const who=personById(eid);
-    el.disabled=true;
-    api("POST","/api/tbh/shift",{tbhKey:String(tid).replace(/^tbh-/,""),moves:[{targetKey:tgtKey(proj),employeeId:Number(eid)}],collisionMode:"sum",rateMode:"copy",removeSeat:false})
-      .then(r=>{ toast(`Transferred to ${who?who.name:"person"} — ${r.moved} month${r.moved===1?"":"s"} moved${r.merged?`, ${r.merged} merged`:""}${r.ratesCopied?", rate copied":""}.`); return bootstrap(); })
-      .catch(err=>{ toast("Transfer failed: "+err.message); el.disabled=false; el.value=""; });
+    // Opens the transfer dialog with this person preselected, so the amount can
+    // be trimmed for a partial handover; amounts default to everything.
+    el.value="";
+    openTransferModal(tid, proj, eid);
     return;
   }
   if(el.dataset.addproj!==undefined && el.value){ const pid=el.dataset.addproj, projid=el.value;
@@ -1642,6 +1644,8 @@ document.getElementById("viewRoot").addEventListener("click",e=>{
   if(rmr){ const [pid,projid]=rmr.dataset.rmres.split("|"); if(state.alloc[pid]) delete state.alloc[pid][projid];
     if(pairRate(pid,projid)){ setPairRateLocal(pid,projid,0); pushRate(pid,projid,0); }
     /*saved via API*/ keepScroll(renderByProj); renderKpis(); return; }
+  const xf=e.target.closest("[data-xfer]");        // Allocate tabs: transfer all/partial hours to another resource
+  if(xf){ if(!canEdit()) return; const s=xf.dataset.xfer, i=s.indexOf("|"); openTransferModal(s.slice(0,i), s.slice(i+1)); return; }
   const mo=e.target.closest("[data-mapopp]");      // By Project: map a closed CRM opp's forecast onto a project
   if(mo){ const oppId=mo.dataset.mapopp; const sel=document.querySelector(`[data-mapsel="${oppId}"]`);
     const projectId=sel&&sel.value; if(!projectId){ toast("Choose a project to map to."); return; }
@@ -1682,6 +1686,55 @@ async function mapOppToProject(oppId,projectId){
     toast(`Forecast moved to the project${r&&r.merged?` (${r.merged} month${r.merged>1?"s":""} merged)`:""}.`);
     await bootstrap();   // reload reference + plan from the server's new truth
   }catch(e){ status("Map failed"); toast("Map failed: "+(e&&e.message?e.message:e)); }
+}
+/* ============== TRANSFER HOURS (any resource × project pair) ============== */
+/* Move all or part of a pair's open-month forecast to another person or TBA
+   pool. Amounts default to everything — edit them (or use All/Half/None) for a
+   partial transfer. Used from both Allocate tabs and the TBA tab. */
+function openTransferModal(fromId, projid, presetDest){
+  const src=personById(fromId); const pr=projById(projid);
+  const monthsAvail=MONTHS.filter(m=>!isPastMi(m.mi))
+    .map(m=>({key:m.key,label:m.label,avail:(state.alloc[fromId]&&state.alloc[fromId][projid]&&state.alloc[fromId][projid][m.key])||0}))
+    .filter(x=>x.avail>0);
+  if(!monthsAvail.length){ toast("No transferable hours — only open months with forecast can move."); return; }
+  const destOpts=allPeople().filter(p=>String(p.id)!==String(fromId))
+    .sort((a,b)=>((a.type==="tbh")-(b.type==="tbh")) || DEPTS.indexOf(a.dept)-DEPTS.indexOf(b.dept) || a.name.localeCompare(b.name))
+    .map(p=>`<option value="${p.id}"${String(presetDest||"")===String(p.id)?" selected":""}>${esc(p.name)}${p.type==="tbh"?" (TBA)":""} · ${esc(p.role||deptLabel(p.dept))}</option>`).join("");
+  const rows=monthsAvail.map(x=>`<tr><td class="src">${x.label}</td><td class="hrs">${fmt(x.avail)}h</td>`+
+    `<td><input type="number" min="0" max="${x.avail}" step="0.5" value="${x.avail}" data-tramt="${x.key}" style="width:90px"></td></tr>`).join("");
+  document.getElementById("modalRoot").innerHTML=`<div class="backdrop" id="trBackdrop"><div class="modal" style="width:min(560px,100%)" role="dialog" aria-modal="true">
+    <div class="modal-hd"><h2>Transfer hours</h2>
+      <p><b>${esc(src?src.name:String(fromId))}</b> · ${pr?esc(projLabel(pr)):esc(String(projid))} — move all or part of the open-month forecast to another person or TBA pool.</p></div>
+    <div class="modal-bd">
+      <div class="field"><label>Transfer to</label><select id="trDest">${destOpts}</select></div>
+      <div class="scrollbox"><table class="maptbl"><thead><tr><th>Month</th><th>Available</th><th>Transfer</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div style="display:flex;gap:8px"><button class="btn" id="trAll" style="font-size:11px;padding:3px 9px">All</button>
+        <button class="btn" id="trHalf" style="font-size:11px;padding:3px 9px">Half</button>
+        <button class="btn" id="trNone" style="font-size:11px;padding:3px 9px">None</button></div>
+    </div>
+    <div class="modal-ft"><span class="muted" style="font-size:12px">Destination cells add on top of what's already there; the bill rate copies where the destination has none. Audited.</span>
+      <span style="display:flex;gap:8px"><button class="btn" id="trCancel">Cancel</button><button class="btn primary" id="trApply">Transfer</button></span></div>
+  </div></div>`;
+  const setAll=f=>document.querySelectorAll("[data-tramt]").forEach(i=>{ const mx=Number(i.max); i.value=Math.round(mx*f*100)/100; });
+  document.getElementById("trAll").addEventListener("click",()=>setAll(1));
+  document.getElementById("trHalf").addEventListener("click",()=>setAll(0.5));
+  document.getElementById("trNone").addEventListener("click",()=>setAll(0));
+  document.getElementById("trCancel").addEventListener("click",closeModal);
+  document.getElementById("trBackdrop").addEventListener("click",e=>{ if(e.target.id==="trBackdrop") closeModal(); });
+  document.getElementById("trApply").addEventListener("click",async ()=>{
+    const destId=document.getElementById("trDest").value;
+    const moves=[]; document.querySelectorAll("[data-tramt]").forEach(i=>{ const v=Math.min(Number(i.value)||0, Number(i.max)); if(v>0) moves.push({month:i.dataset.tramt, hours:v}); });
+    if(!moves.length){ toast("Enter hours to transfer."); return; }
+    const btn=document.getElementById("trApply"); btn.disabled=true; btn.textContent="Transferring…";
+    try{
+      status("Transferring…");
+      const r=await api("POST","/api/allocation/transfer",{fromResourceKey:resKey(fromId),toResourceKey:resKey(destId),targetKey:tgtKey(projid),moves});
+      const who=personById(destId);
+      closeModal();
+      toast(`Transferred ${fmt(r.hoursMoved)}h across ${r.moved} month${r.moved===1?"":"s"} to ${who?who.name:"destination"}.`);
+      await bootstrap();
+    }catch(e){ status("Transfer failed"); toast("Transfer failed: "+e.message); btn.disabled=false; btn.textContent="Transfer"; }
+  });
 }
 function openTbhForm(role,dept){
   const r=document.getElementById("tbhRole"), d=document.getElementById("tbhDept");

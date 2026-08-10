@@ -91,6 +91,27 @@ async function handle(db, req) {
     if (method === "DELETE" && path.startsWith("/api/tbh/")) {
       return json(200, await store.deleteTbh(db, user, decodeURIComponent(path.slice("/api/tbh/".length)), scenario));
     }
+    if (method === "POST" && path === "/api/allocation/transfer") {
+      // Move all or part of one (resource × project) pair's hours to another
+      // person or TBA pool.
+      const keyRx = /^(emp:\d+|tbh:[a-z0-9-]+)$/;
+      if (!keyRx.test(String(body.fromResourceKey || "")) || !keyRx.test(String(body.toResourceKey || "")))
+        return json(400, { error: "fromResourceKey and toResourceKey must be emp:<id> or tbh:<key>" });
+      if (!/^(prj|crm):\d+$/.test(String(body.targetKey || ""))) return json(400, { error: "targetKey (prj:<id>|crm:<id>) required" });
+      const moves = Array.isArray(body.moves) ? body.moves.filter(m => Number(m.hours) > 0) : null;
+      if (!moves || !moves.length) return json(400, { error: "moves[] with positive hours required" });
+      const to = String(body.toResourceKey);
+      if (to.startsWith("emp:")) {
+        const emp = await db.get("SELECT id FROM ref_person WHERE id=? AND active=1", [Number(to.slice(4))]);
+        if (!emp) return json(400, { error: "destination is not an active person" });
+      } else {
+        const pool = await db.get("SELECT id FROM tbh WHERE scenario=? AND tbh_key=?", [scenario, to.slice(4)]);
+        if (!pool) return json(400, { error: "destination TBA pool does not exist" });
+      }
+      return json(200, await store.transferHours(db, user, {
+        fromKey: body.fromResourceKey, toKey: to, targetKey: body.targetKey, moves, scenario,
+      }));
+    }
     if (method === "POST" && path === "/api/tbh/move") {
       // Reclassify one project of a TBA pool to the role's other-shore pool.
       if (!body.tbhKey || !/^(prj|crm):\d+$/.test(String(body.targetKey || ""))) return json(400, { error: "tbhKey and targetKey (prj:<id>|crm:<id>) required" });

@@ -425,6 +425,55 @@ async function normalizeTbaPools(db) {
   });
 }
 
+/* ------------------------------------- transfer hours between resources -- */
+/**
+ * Move all or part of one (resource × project) pair's forecast to another
+ * resource — person to person, person to TBA pool, pool to person, any mix.
+ * moves: [{month:'YYYY-MM', hours}] — per-month amounts, each capped by what the
+ * source actually has; the remainder stays behind. Destination cells sum. Only
+ * open months are transferable (closed months are actuals territory). The
+ * source pair's bill rate is COPIED to the destination pair where it has none
+ * (copied, not moved — the source may keep a remainder that still needs it).
+ */
+async function transferHours(db, user, { fromKey, toKey, targetKey, moves, scenario = "baseline" }) {
+  if (fromKey === toKey) { const e = new Error("source and destination are the same resource"); e.code = "bad_request"; throw e; }
+  const cutoff = currentMonthStart();
+  return db.tx(async () => {
+    let moved = 0, hoursMoved = 0;
+    for (const mv of moves) {
+      const month = monthKey(mv.month);
+      const amt = Number(mv.hours);
+      if (!(amt > 0)) continue;
+      if (month < cutoff) { const e = new PastMonth(month.slice(0, 7)); throw e; }
+      const src = await db.get("SELECT id, hours FROM allocation WHERE scenario=? AND resource_key=? AND target_key=? AND month=?",
+        [scenario, fromKey, targetKey, month]);
+      if (!src || Number(src.hours) < amt - 1e-9) {
+        const e = new Error(`only ${src ? src.hours : 0}h available in ${month.slice(0, 7)} — cannot transfer ${amt}h`);
+        e.code = "bad_request"; throw e;
+      }
+      const rest = Math.round((Number(src.hours) - amt) * 100) / 100;
+      if (rest > 0) await db.run("UPDATE allocation SET hours=?, updated_by=?, updated_at=?, version=version+1 WHERE id=?", [rest, user.upn, nowIso(), src.id]);
+      else await db.run("DELETE FROM allocation WHERE id=?", [src.id]);
+      const dst = await db.get("SELECT id, hours FROM allocation WHERE scenario=? AND resource_key=? AND target_key=? AND month=?",
+        [scenario, toKey, targetKey, month]);
+      if (dst) await db.run("UPDATE allocation SET hours=?, updated_by=?, updated_at=?, version=version+1 WHERE id=?", [Number(dst.hours) + amt, user.upn, nowIso(), dst.id]);
+      else await db.run("INSERT INTO allocation (scenario, resource_key, target_key, month, hours, updated_by, updated_at, version) VALUES (?,?,?,?,?,?,?,1)",
+        [scenario, toKey, targetKey, month, amt, user.upn, nowIso()]);
+      await audit(db, user.upn, "allocation", `${scenario}|${toKey}|${targetKey}|${month.slice(0, 7)}`, "transfer", `${amt}h`, `from ${fromKey}`);
+      moved++; hoursMoved += amt;
+    }
+    if (moved) {
+      const srcRate = await db.get("SELECT rate FROM bill_rate WHERE scenario=? AND resource_key=? AND target_key=?", [scenario, fromKey, targetKey]);
+      if (srcRate && Number(srcRate.rate) > 0) {
+        const dstRate = await db.get("SELECT id FROM bill_rate WHERE scenario=? AND resource_key=? AND target_key=?", [scenario, toKey, targetKey]);
+        if (!dstRate) await db.run("INSERT INTO bill_rate (scenario, resource_key, target_key, rate, updated_by, updated_at, version) VALUES (?,?,?,?,?,?,1)",
+          [scenario, toKey, targetKey, srcRate.rate, user.upn, nowIso()]);
+      }
+    }
+    return { moved, hoursMoved: Math.round(hoursMoved * 100) / 100 };
+  });
+}
+
 /* ------------------------------------------ move one project between pools -- */
 /**
  * Reclassify ONE project's demand to the role's other-shore pool: everything for
@@ -577,4 +626,4 @@ async function putImportMap(db, user, m) {
   return { ok: true };
 }
 
-module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, mapOpportunityToProject, putCapacity, putRate, putTbh, deleteTbh, shiftTbhForecast, moveTbaTarget, normalizeTbaPools, roleSlug, tbaName, normShore, putImportMap, putProposedHire, Conflict, PastMonth, monthKey, currentMonthStart };
+module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, mapOpportunityToProject, putCapacity, putRate, putTbh, deleteTbh, shiftTbhForecast, moveTbaTarget, transferHours, normalizeTbaPools, roleSlug, tbaName, normShore, putImportMap, putProposedHire, Conflict, PastMonth, monthKey, currentMonthStart };
