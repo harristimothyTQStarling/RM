@@ -1372,17 +1372,19 @@ function renderVariance(){
     `<th class="col-tot mgrp" rowspan="2">Forecast</th><th class="col-tot" rowspan="2">Actual</th><th class="col-tot" rowspan="2">Variance</th><th class="col-tot" rowspan="2">Var %</th></tr>`+
     `<tr class="subhd">`+CLOSED_MONTHS.map(()=>`<th class="actual mgrp">Fcst</th><th class="actual">Act</th>`).join("")+`</tr></thead>`;
   const byDept={}; ppl.forEach(p=>{ const d=p.dept||""; (byDept[d]=byDept[d]||[]).push(p); });
-  const acc={employee:{f:0,a:0,n:0}, contractor:{f:0,a:0,n:0}};
+  const mkAcc=()=>({f:0,a:0,n:0, mf:CLOSED_MONTHS.map(()=>0), ma:CLOSED_MONTHS.map(()=>0)});
+  const acc={employee:mkAcc(), contractor:mkAcc()};
   const colF=CLOSED_MONTHS.map(()=>0), colA=CLOSED_MONTHS.map(()=>0);
   let body="";
   deptsInOrder(ppl).forEach(d=>{ if(!byDept[d]) return;
     body+=`<tr class="grp"><td class="lbl">${deptLabel(d)}</td>`+CLOSED_MONTHS.map(()=>`<td class="fcst"></td><td></td>`).join("")+`<td class="col-tot fcst"></td><td class="col-tot"></td><td class="col-tot"></td><td class="col-tot"></td></tr>`;
     byDept[d].forEach(p=>{
       let rf=0, ra=0;
+      const A=acc[p.type]||acc.employee;
       const tds=CLOSED_MONTHS.map((m,i)=>{ const f=personForecastMonth(p.id,m.key), a=personActualMonth(p.id,m.key);
-        rf+=f; ra+=a; colF[i]+=f; colA[i]+=a;
+        rf+=f; ra+=a; colF[i]+=f; colA[i]+=a; A.mf[i]+=f; A.ma[i]+=a;
         return `<td class="mcelln fcst"><span class="h">${f?fmt(f):"·"}</span></td>`+varCell(f,a); }).join("");
-      const A=acc[p.type]||acc.employee; A.f+=rf; A.a+=ra; A.n++;
+      A.f+=rf; A.a+=ra; A.n++;
       const badge=p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
       const vpct = rf? `${ra-rf>0?"+":""}${Math.round((ra-rf)/rf*100)}%` : (ra?"—":"");
       body+=`<tr><td class="lbl">${esc(p.name)}${badge}<div class="muted" style="font-size:11px">${esc(p.role||"—")}</div></td>${tds}`+
@@ -1392,9 +1394,13 @@ function renderVariance(){
         `<td class="mcelln col-tot ${varClass(rf,ra)}"><span class="h">${vpct}</span></td></tr>`;
     });
   });
-  const footRow=(label,f,a,cls)=>{
+  const footRow=(label,f,a,cls,mf,ma)=>{
     const vpct = f? `${a-f>0?"+":""}${Math.round((a-f)/f*100)}%` : (a?"—":"");
-    return `<tr class="${cls||""}"><td class="lbl">${label}</td>`+CLOSED_MONTHS.map(()=>`<td class="fcst"></td><td></td>`).join("")+
+    // per-month tallies: forecast total plain, actual total with the same
+    // delta/% and shading the person cells use
+    const mtds=CLOSED_MONTHS.map((m,i)=>
+      `<td class="mcelln fcst"><span class="h">${mf[i]?fmt(mf[i]):"·"}</span></td>`+varCell(mf[i],ma[i])).join("");
+    return `<tr class="${cls||""}"><td class="lbl">${label}</td>${mtds}`+
       `<td class="mcelln col-tot fcst"><span class="h">${fmt(f)}</span></td>`+
       `<td class="mcelln col-tot"><span class="h">${fmt(a)}</span></td>`+
       varTotCell(f,a,"col-tot")+
@@ -1402,9 +1408,9 @@ function renderVariance(){
   };
   const totF=colF.reduce((s,x)=>s+x,0), totA=colA.reduce((s,x)=>s+x,0);
   const foot=`<tfoot>`+
-    (acc.employee.n? footRow(`Employees <span class="muted">· ${acc.employee.n}</span>`,acc.employee.f,acc.employee.a):"")+
-    (acc.contractor.n? footRow(`Contractors <span class="muted">· ${acc.contractor.n}</span>`,acc.contractor.f,acc.contractor.a):"")+
-    footRow("All shown",totF,totA,"grand")+`</tfoot>`;
+    (acc.employee.n? footRow(`Employees <span class="muted">· ${acc.employee.n}</span>`,acc.employee.f,acc.employee.a,"",acc.employee.mf,acc.employee.ma):"")+
+    (acc.contractor.n? footRow(`Contractors <span class="muted">· ${acc.contractor.n}</span>`,acc.contractor.f,acc.contractor.a,"",acc.contractor.mf,acc.contractor.ma):"")+
+    footRow("All shown",totF,totA,"grand",colF,colA)+`</tfoot>`;
   const range=CLOSED_MONTHS[0].label+"–"+CLOSED_MONTHS[CLOSED_MONTHS.length-1].label;
   document.getElementById("viewRoot").innerHTML=
     `<div class="panel"><div class="panel-hd"><h2>Forecast vs actual variance</h2>`+
