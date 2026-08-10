@@ -236,6 +236,8 @@
   table.pivot thead tr.subhd th{top:25px;font-size:9px;padding:3px 6px;}
   table.pivot td.fcst,table.pivot th.mgrp{border-left:1px solid var(--line-strong);}
   table.pivot td.fcst{color:var(--muted);}
+  table.pivot td.mtd .h{color:var(--ink-2);}
+  table.pivot td.mtd .pct{opacity:.6;}
   /* forecast-vs-actual variance shading: on-plan (green), over (amber), under (blue) */
   table.pivot td.v-on{background:var(--u-good);} table.pivot td.v-on .h{color:var(--u-good-ink);}
   table.pivot td.v-over{background:var(--u-orange);} table.pivot td.v-over .h{color:var(--u-orange-ink);}
@@ -1360,6 +1362,12 @@ function renderHiring(){
    the plan) and actuals (synced from Odoo). The current month is still open, so it
    is excluded until it closes. */
 const CLOSED_MONTHS = MONTHS.filter(m=>isPastMi(m.mi));
+/* The current month appears too, as a month-to-date column: actuals synced so far
+   vs the full-month forecast. Shown neutrally (a half-elapsed month judged against
+   a whole month's forecast would false-alarm) and kept OUT of the summary totals. */
+const MTD_MONTH = CURRENT_MI<12 ? MONTHS[CURRENT_MI] : null;
+const VAR_MONTHS = MTD_MONTH ? CLOSED_MONTHS.concat([MTD_MONTH]) : CLOSED_MONTHS;
+const isMTD = (m)=> MTD_MONTH && m.key===MTD_MONTH.key;
 /* Read forecast and actual RAW, not through alloc(): alloc() hides the plan behind
    actuals for past months, but variance needs the plan value that was forecast for
    that month (retained even after the month closed) alongside the actual. */
@@ -1394,34 +1402,43 @@ function varTotCell(f,a,extra){
   const d=a-f;
   return `<td class="mcelln ${varClass(f,a)}${extra?" "+extra:""}"><span class="h">${d>0?"+":""}${fmt(d)}</span></td>`;
 }
+/* Month-to-date cell: actuals so far this month next to the full-month forecast.
+   Neutral (no shading) — the month isn't over, so under-plan is expected. */
+function mtdCell(f,a){
+  const d=a-f;
+  const sub=(f||a)?`<span class="pct">${d>0?"+":""}${fmt(d)}h${f?` · ${d>0?"+":""}${Math.round(d/f*100)}%`:""}</span>`:"";
+  return `<td class="mcelln mtd" title="Month to date — actuals synced so far vs the full-month forecast"><span class="h">${a?fmt(a):"·"}</span>${sub}</td>`;
+}
 function renderVariance(){
-  if(!CLOSED_MONTHS.length){
+  if(!VAR_MONTHS.length){
     document.getElementById("viewRoot").innerHTML=
       `<div class="panel"><div class="panel-hd"><h2>Forecast vs actual</h2></div>`+
       `<div class="empty-body" style="padding:28px">No closed months yet. Variance appears once a month completes and its Odoo actuals are synced.</div></div>`;
     return;
   }
-  // Real people only (to-be-hired seats have no actuals to compare against), and
-  // only those with something to show in the closed period.
+  // Real people only (to-be-hired pools have no actuals to compare against), and
+  // only those with something to show in the covered months.
   const ppl=filteredPeople().filter(p=>p.type!=="tbh").filter(p=>
-    CLOSED_MONTHS.some(m=> personForecastMonth(p.id,m.key) || personActualMonth(p.id,m.key)));
+    VAR_MONTHS.some(m=> personForecastMonth(p.id,m.key) || personActualMonth(p.id,m.key)));
   const head=`<thead><tr class="mhd"><th class="lbl" rowspan="2">Person</th>`+
-    CLOSED_MONTHS.map(m=>`<th class="actual mgrp" colspan="2">${m.label}</th>`).join("")+
+    VAR_MONTHS.map(m=>`<th class="actual mgrp" colspan="2">${m.label}${isMTD(m)?" · MTD":""}</th>`).join("")+
     `<th class="col-tot mgrp" rowspan="2">Forecast</th><th class="col-tot" rowspan="2">Actual</th><th class="col-tot" rowspan="2">Variance</th><th class="col-tot" rowspan="2">Var %</th></tr>`+
-    `<tr class="subhd">`+CLOSED_MONTHS.map(()=>`<th class="actual mgrp">Fcst</th><th class="actual">Act</th>`).join("")+`</tr></thead>`;
+    `<tr class="subhd">`+VAR_MONTHS.map(()=>`<th class="actual mgrp">Fcst</th><th class="actual">Act</th>`).join("")+`</tr></thead>`;
   const byDept={}; ppl.forEach(p=>{ const d=p.dept||""; (byDept[d]=byDept[d]||[]).push(p); });
-  const mkAcc=()=>({f:0,a:0,n:0, mf:CLOSED_MONTHS.map(()=>0), ma:CLOSED_MONTHS.map(()=>0)});
+  const mkAcc=()=>({f:0,a:0,n:0, mf:VAR_MONTHS.map(()=>0), ma:VAR_MONTHS.map(()=>0)});
   const acc={employee:mkAcc(), contractor:mkAcc()};
-  const colF=CLOSED_MONTHS.map(()=>0), colA=CLOSED_MONTHS.map(()=>0);
+  const colF=VAR_MONTHS.map(()=>0), colA=VAR_MONTHS.map(()=>0);
   let body="";
   deptsInOrder(ppl).forEach(d=>{ if(!byDept[d]) return;
-    body+=`<tr class="grp"><td class="lbl">${deptLabel(d)}</td>`+CLOSED_MONTHS.map(()=>`<td class="fcst"></td><td></td>`).join("")+`<td class="col-tot fcst"></td><td class="col-tot"></td><td class="col-tot"></td><td class="col-tot"></td></tr>`;
+    body+=`<tr class="grp"><td class="lbl">${deptLabel(d)}</td>`+VAR_MONTHS.map(()=>`<td class="fcst"></td><td></td>`).join("")+`<td class="col-tot fcst"></td><td class="col-tot"></td><td class="col-tot"></td><td class="col-tot"></td></tr>`;
     byDept[d].forEach(p=>{
       let rf=0, ra=0;
       const A=acc[p.type]||acc.employee;
-      const tds=CLOSED_MONTHS.map((m,i)=>{ const f=personForecastMonth(p.id,m.key), a=personActualMonth(p.id,m.key);
-        rf+=f; ra+=a; colF[i]+=f; colA[i]+=a; A.mf[i]+=f; A.ma[i]+=a;
-        return `<td class="mcelln fcst"><span class="h">${f?fmt(f):"·"}</span></td>`+varCell(f,a); }).join("");
+      const tds=VAR_MONTHS.map((m,i)=>{ const f=personForecastMonth(p.id,m.key), a=personActualMonth(p.id,m.key);
+        colF[i]+=f; colA[i]+=a; A.mf[i]+=f; A.ma[i]+=a;
+        // the open month is display-only: it never counts toward the summary totals
+        if(!isMTD(m)){ rf+=f; ra+=a; }
+        return `<td class="mcelln fcst"><span class="h">${f?fmt(f):"·"}</span></td>`+(isMTD(m)? mtdCell(f,a) : varCell(f,a)); }).join("");
       A.f+=rf; A.a+=ra; A.n++;
       const badge=p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
       const vpct = rf? `${ra-rf>0?"+":""}${Math.round((ra-rf)/rf*100)}%` : (ra?"—":"");
@@ -1436,23 +1453,24 @@ function renderVariance(){
     const vpct = f? `${a-f>0?"+":""}${Math.round((a-f)/f*100)}%` : (a?"—":"");
     // per-month tallies: forecast total plain, actual total with the same
     // delta/% and shading the person cells use
-    const mtds=CLOSED_MONTHS.map((m,i)=>
-      `<td class="mcelln fcst"><span class="h">${mf[i]?fmt(mf[i]):"·"}</span></td>`+varCell(mf[i],ma[i])).join("");
+    const mtds=VAR_MONTHS.map((m,i)=>
+      `<td class="mcelln fcst"><span class="h">${mf[i]?fmt(mf[i]):"·"}</span></td>`+(isMTD(m)? mtdCell(mf[i],ma[i]) : varCell(mf[i],ma[i]))).join("");
     return `<tr class="${cls||""}"><td class="lbl">${label}</td>${mtds}`+
       `<td class="mcelln col-tot fcst"><span class="h">${fmt(f)}</span></td>`+
       `<td class="mcelln col-tot"><span class="h">${fmt(a)}</span></td>`+
       varTotCell(f,a,"col-tot")+
       `<td class="mcelln col-tot ${varClass(f,a)}"><span class="h">${vpct}</span></td></tr>`;
   };
-  const totF=colF.reduce((s,x)=>s+x,0), totA=colA.reduce((s,x)=>s+x,0);
+  // summary totals cover closed months only — the MTD column is display-only
+  const totF=VAR_MONTHS.reduce((s,m,i)=>s+(isMTD(m)?0:colF[i]),0), totA=VAR_MONTHS.reduce((s,m,i)=>s+(isMTD(m)?0:colA[i]),0);
   const foot=`<tfoot>`+
     (acc.employee.n? footRow(`Employees <span class="muted">· ${acc.employee.n}</span>`,acc.employee.f,acc.employee.a,"",acc.employee.mf,acc.employee.ma):"")+
     (acc.contractor.n? footRow(`Contractors <span class="muted">· ${acc.contractor.n}</span>`,acc.contractor.f,acc.contractor.a,"",acc.contractor.mf,acc.contractor.ma):"")+
     footRow("All shown",totF,totA,"grand",colF,colA)+`</tfoot>`;
-  const range=CLOSED_MONTHS[0].label+"–"+CLOSED_MONTHS[CLOSED_MONTHS.length-1].label;
+  const range=CLOSED_MONTHS.length? CLOSED_MONTHS[0].label+"–"+CLOSED_MONTHS[CLOSED_MONTHS.length-1].label : "none closed yet";
   document.getElementById("viewRoot").innerHTML=
     `<div class="panel"><div class="panel-hd"><h2>Forecast vs actual variance</h2>`+
-    `<span class="hint">closed months (${range}) · two columns per month: <b>Fcst</b> = retained forecast · <b>Act</b> = Odoo actual with actual − forecast beneath · ${ppl.length} people</span></div>`+
+    `<span class="hint">closed months (${range})${MTD_MONTH?` + <b>${MTD_MONTH.label} month-to-date</b> (neutral, excluded from totals)`:""} · <b>Fcst</b> = retained forecast · <b>Act</b> = Odoo actual with actual − forecast beneath · ${ppl.length} people</span></div>`+
     `<div class="scroll"><table class="pivot">${head}<tbody>${body}</tbody>${foot}</table></div>`+
     `<div class="legend"><span>Variance = Actual − Forecast</span>`+
     `<span class="sw"><span class="box v-on"></span>on plan (±5%)</span>`+
