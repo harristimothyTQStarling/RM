@@ -190,6 +190,12 @@
      read-only text — same look as a locked past input, but text not an input. */
   .a-inputs .dcell{border-left:1px solid var(--line);background:var(--surface-3);color:var(--muted);font-style:italic;
     display:flex;align-items:center;justify-content:center;font-size:11.5px;font-variant-numeric:tabular-nums;padding:6px 2px;overflow:hidden;white-space:nowrap;}
+  /* sticky per-month totals row at the bottom of the Allocate grids */
+  .grid-totrow{position:sticky;bottom:0;z-index:6;}
+  .grid-totrow .p-head{background:var(--surface-2);border-top:2px solid var(--line-strong);}
+  .grid-totrow .p-ident,.grid-totrow .mcell{background:var(--surface-2);}
+  .grid-totrow .mcell .h{font-weight:700;}
+  .grid-totrow .p-ident{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:650;align-items:center;}
   /* proposed-hire name per (TBA pool × project) */
   .prophire input{width:150px;border:1px dashed var(--line-strong);border-radius:5px;background:var(--surface);color:var(--ink);
     font:inherit;font-size:11px;padding:2px 6px;margin-top:3px;font-weight:400;}
@@ -819,8 +825,35 @@ function monthHeadRow(extraClass){
     `<div class="mcell tot">Total</div></div>`;
 }
 
+/* Sticky bottom row on both Allocate grids: per-month totals (hours or dollars,
+   following the toggle) over exactly what's rendered, so filters/search apply. */
+let LAST_ALLOC_PPL=[], LAST_PROJ_LIST=[];
+function totalsRowHtml(label, perMonth, grand){
+  const cells=MONTHS.map((m,i)=>`<div class="mcell tot" data-coltot="${m.key}"><span class="h">${perMonth[i].h?fmtHD(perMonth[i].h,perMonth[i].d):"·"}</span></div>`).join("");
+  return `<div class="p-row grid-totrow"><div class="p-head">`+
+    `<div class="p-ident">${label}</div>`+
+    `<div class="mgrid p-meta">${cells}<div class="mcell tot" data-coltot-yr><span class="h">${grand.h?fmtHD0(grand.h,grand.d):"·"}</span></div></div>`+
+  `</div></div>`;
+}
+function allocTotals(ppl){
+  const perMonth=MONTHS.map(m=>{ let h=0,d=0; ppl.forEach(p=>{ h+=personMonthTotal(p.id,m.key); d+=personMonthDollars(p.id,m.key); }); return {h,d}; });
+  return { perMonth, grand: perMonth.reduce((g,x)=>({h:g.h+x.h,d:g.d+x.d}),{h:0,d:0}) };
+}
+function projTotals(projs){
+  const perMonth=MONTHS.map(m=>{ let h=0,d=0; projs.forEach(pr=>{ h+=projMonthTotal(pr.id,m.key); d+=projMonthDollars(pr.id,m.key); }); return {h,d}; });
+  return { perMonth, grand: perMonth.reduce((g,x)=>({h:g.h+x.h,d:g.d+x.d}),{h:0,d:0}) };
+}
+function refreshGridTotals(){
+  if(!document.querySelector("[data-coltot]")) return;
+  const t = VIEW==="byProj" ? projTotals(LAST_PROJ_LIST) : allocTotals(LAST_ALLOC_PPL);
+  MONTHS.forEach((m,i)=>{ const c=document.querySelector(`[data-coltot="${m.key}"] .h`);
+    if(c) c.textContent = t.perMonth[i].h? fmtHD(t.perMonth[i].h,t.perMonth[i].d) : "·"; });
+  const y=document.querySelector("[data-coltot-yr] .h");
+  if(y) y.textContent = t.grand.h? fmtHD0(t.grand.h,t.grand.d) : "·";
+}
 function renderAllocate(){
   const ppl=filteredPeople();
+  LAST_ALLOC_PPL=ppl;
   let html=`<div class="panel"><div class="panel-hd">`+
     `<div style="display:flex;align-items:center;gap:12px"><h2>Allocate hours</h2>`+
     `<button class="btn" id="btnBulk" style="padding:5px 11px"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> Bulk allocate</button></div>`+
@@ -832,6 +865,7 @@ function renderAllocate(){
     monthHeadRow()+`</div>`;
   if(!ppl.length) html+=`<div class="empty-body" style="padding:24px">No people match the current filters.</div>`;
   ppl.forEach(p=>{ html+=personRow(p); });
+  if(ppl.length){ const t=allocTotals(ppl); html+=totalsRowHtml(`Total · ${ppl.length} people`, t.perMonth, t.grand); }
   html+=`</div></div>`;
   html+=legend();
   html+=`</div>`;
@@ -935,6 +969,7 @@ function refreshPersonSummary(pid){
   });
   const yr=MKEYS.reduce((s,k)=>s+personMonthTotal(pid,k),0);
   const yc=document.querySelector(`[data-yr="${pid}"]`); if(yc) yc.textContent=yr?fmtHD0(yr,personDollars(pid)):"·";
+  refreshGridTotals();
 }
 function refreshRowTotal(pid,projid){
   const rt=MKEYS.reduce((s,k)=>s+alloc(pid,projid,k),0);
@@ -1091,6 +1126,7 @@ function byPersonOrder(a,b){ return deptRank(a.dept||"")-deptRank(b.dept||"")||a
 function renderByProj(){
   const q=(F.search||"").toLowerCase();
   const projs=sortedProjects().filter(pr=> !q || projLabel(pr).toLowerCase().includes(q) || (pr.client||"").toLowerCase().includes(q));
+  LAST_PROJ_LIST=projs;
   const nPrj=projs.filter(p=>p.src==="PRJ").length, nCrm=projs.length-nPrj;
   let html=`<div class="panel"><div class="panel-hd">`+
     `<div style="display:flex;align-items:center;gap:12px"><h2>Allocate by project</h2>`+
@@ -1102,6 +1138,7 @@ function renderByProj(){
     monthHeadRow()+`</div>`;
   if(!projs.length) html+=`<div class="empty-body" style="padding:24px">No projects match the search.</div>`;
   projs.forEach(pr=>{ html+=projectRow(pr); });
+  if(projs.length){ const t=projTotals(projs); html+=totalsRowHtml(`Total · ${projs.length} projects`, t.perMonth, t.grand); }
   html+=`</div></div></div>`;
   document.getElementById("viewRoot").innerHTML=html;
 }
@@ -1165,6 +1202,7 @@ function refreshProjSummary(projid){
   const yr=MKEYS.reduce((s,k)=>s+projMonthTotal(projid,k),0);
   const yrD=MKEYS.reduce((s,k)=>s+projMonthDollars(projid,k),0);
   const y=document.querySelector(`[data-pyr="${projid}"]`); if(y) y.textContent=yr?(isD()?money(yrD):fmt0(yr)):"·";
+  refreshGridTotals();
 }
 
 /* ============================ PIVOT: BY CUSTOMER ============================ */
