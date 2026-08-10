@@ -223,6 +223,13 @@
   table.pivot td.mcelln .pct{display:block;font-size:9.5px;font-weight:500;opacity:.72;letter-spacing:.01em;white-space:nowrap;}
   /* month-over-month change in utilization (percentage points) */
   table.pivot td.mcelln .dlt{font-style:normal;font-size:8.5px;font-weight:700;margin-left:2px;opacity:.85;}
+  /* variance tab: two columns per month (Fcst | Act) under a grouped header.
+     Both header rows are sticky; the sub-row offsets by the first row's fixed
+     height so they stack instead of overlapping. */
+  table.pivot thead tr.mhd th{padding:5px 8px;line-height:14px;}
+  table.pivot thead tr.subhd th{top:25px;font-size:9px;padding:3px 6px;}
+  table.pivot td.fcst,table.pivot th.mgrp{border-left:1px solid var(--line-strong);}
+  table.pivot td.fcst{color:var(--muted);}
   /* forecast-vs-actual variance shading: on-plan (green), over (amber), under (blue) */
   table.pivot td.v-on{background:var(--u-good);} table.pivot td.v-on .h{color:var(--u-good-ink);}
   table.pivot td.v-over{background:var(--u-orange);} table.pivot td.v-over .h{color:var(--u-orange-ink);}
@@ -1360,24 +1367,26 @@ function renderVariance(){
   // only those with something to show in the closed period.
   const ppl=filteredPeople().filter(p=>p.type!=="tbh").filter(p=>
     CLOSED_MONTHS.some(m=> personForecastMonth(p.id,m.key) || personActualMonth(p.id,m.key)));
-  const head=`<thead><tr><th class="lbl">Person</th>`+
-    CLOSED_MONTHS.map(m=>`<th class="actual">${m.label}</th>`).join("")+
-    `<th class="col-tot">Forecast</th><th class="col-tot">Actual</th><th class="col-tot">Variance</th><th class="col-tot">Var %</th></tr></thead>`;
+  const head=`<thead><tr class="mhd"><th class="lbl" rowspan="2">Person</th>`+
+    CLOSED_MONTHS.map(m=>`<th class="actual mgrp" colspan="2">${m.label}</th>`).join("")+
+    `<th class="col-tot mgrp" rowspan="2">Forecast</th><th class="col-tot" rowspan="2">Actual</th><th class="col-tot" rowspan="2">Variance</th><th class="col-tot" rowspan="2">Var %</th></tr>`+
+    `<tr class="subhd">`+CLOSED_MONTHS.map(()=>`<th class="actual mgrp">Fcst</th><th class="actual">Act</th>`).join("")+`</tr></thead>`;
   const byDept={}; ppl.forEach(p=>{ const d=p.dept||""; (byDept[d]=byDept[d]||[]).push(p); });
   const acc={employee:{f:0,a:0,n:0}, contractor:{f:0,a:0,n:0}};
   const colF=CLOSED_MONTHS.map(()=>0), colA=CLOSED_MONTHS.map(()=>0);
   let body="";
   deptsInOrder(ppl).forEach(d=>{ if(!byDept[d]) return;
-    body+=`<tr class="grp"><td class="lbl">${deptLabel(d)}</td>`+CLOSED_MONTHS.map(()=>`<td></td>`).join("")+`<td class="col-tot"></td><td class="col-tot"></td><td class="col-tot"></td><td class="col-tot"></td></tr>`;
+    body+=`<tr class="grp"><td class="lbl">${deptLabel(d)}</td>`+CLOSED_MONTHS.map(()=>`<td class="fcst"></td><td></td>`).join("")+`<td class="col-tot fcst"></td><td class="col-tot"></td><td class="col-tot"></td><td class="col-tot"></td></tr>`;
     byDept[d].forEach(p=>{
       let rf=0, ra=0;
       const tds=CLOSED_MONTHS.map((m,i)=>{ const f=personForecastMonth(p.id,m.key), a=personActualMonth(p.id,m.key);
-        rf+=f; ra+=a; colF[i]+=f; colA[i]+=a; return varCell(f,a); }).join("");
+        rf+=f; ra+=a; colF[i]+=f; colA[i]+=a;
+        return `<td class="mcelln fcst"><span class="h">${f?fmt(f):"·"}</span></td>`+varCell(f,a); }).join("");
       const A=acc[p.type]||acc.employee; A.f+=rf; A.a+=ra; A.n++;
       const badge=p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
       const vpct = rf? `${ra-rf>0?"+":""}${Math.round((ra-rf)/rf*100)}%` : (ra?"—":"");
       body+=`<tr><td class="lbl">${esc(p.name)}${badge}<div class="muted" style="font-size:11px">${esc(p.role||"—")}</div></td>${tds}`+
-        `<td class="mcelln col-tot"><span class="h">${fmt(rf)}</span></td>`+
+        `<td class="mcelln col-tot fcst"><span class="h">${fmt(rf)}</span></td>`+
         `<td class="mcelln col-tot"><span class="h">${fmt(ra)}</span></td>`+
         varTotCell(rf,ra,"col-tot")+
         `<td class="mcelln col-tot ${varClass(rf,ra)}"><span class="h">${vpct}</span></td></tr>`;
@@ -1385,8 +1394,8 @@ function renderVariance(){
   });
   const footRow=(label,f,a,cls)=>{
     const vpct = f? `${a-f>0?"+":""}${Math.round((a-f)/f*100)}%` : (a?"—":"");
-    return `<tr class="${cls||""}"><td class="lbl">${label}</td>`+CLOSED_MONTHS.map(()=>`<td></td>`).join("")+
-      `<td class="mcelln col-tot"><span class="h">${fmt(f)}</span></td>`+
+    return `<tr class="${cls||""}"><td class="lbl">${label}</td>`+CLOSED_MONTHS.map(()=>`<td class="fcst"></td><td></td>`).join("")+
+      `<td class="mcelln col-tot fcst"><span class="h">${fmt(f)}</span></td>`+
       `<td class="mcelln col-tot"><span class="h">${fmt(a)}</span></td>`+
       varTotCell(f,a,"col-tot")+
       `<td class="mcelln col-tot ${varClass(f,a)}"><span class="h">${vpct}</span></td></tr>`;
@@ -1399,7 +1408,7 @@ function renderVariance(){
   const range=CLOSED_MONTHS[0].label+"–"+CLOSED_MONTHS[CLOSED_MONTHS.length-1].label;
   document.getElementById("viewRoot").innerHTML=
     `<div class="panel"><div class="panel-hd"><h2>Forecast vs actual variance</h2>`+
-    `<span class="hint">closed months (${range}) · cell = actual hours; beneath = actual − forecast · ${ppl.length} people</span></div>`+
+    `<span class="hint">closed months (${range}) · two columns per month: <b>Fcst</b> = retained forecast · <b>Act</b> = Odoo actual with actual − forecast beneath · ${ppl.length} people</span></div>`+
     `<div class="scroll"><table class="pivot">${head}<tbody>${body}</tbody>${foot}</table></div>`+
     `<div class="legend"><span>Variance = Actual − Forecast</span>`+
     `<span class="sw"><span class="box v-on"></span>on plan (±5%)</span>`+
