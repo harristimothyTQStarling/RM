@@ -9,7 +9,8 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const { open } = require("../src/db");
-const { normalizeTbaPools, roleSlug, tbaName, normShore } = require("../src/store");
+const { normalizeTbaPools, moveTbaTarget, roleSlug, tbaName, normShore } = require("../src/store");
+const U = { upn: "tim@tqstarling.com" };
 
 const seedSeat = (db, key, name, role, opts = {}) =>
   db.run("INSERT INTO tbh (scenario,tbh_key,name,role,dept,shore,start_month,capacity,updated_by,updated_at,version) VALUES ('baseline',?,?,?,?,?,?,?,'x','2026-01-01',1)",
@@ -88,4 +89,43 @@ test("no rates -> onshore; blank role pools as Unassigned", async () => {
     { tbh_key: "tba-solutions-architect-onshore", name: "TBA - Solutions Architect (Onshore)" },
     { tbh_key: "tba-unassigned-onshore", name: "TBA - Unassigned (Onshore)" },
   ]);
+});
+
+test("moveTbaTarget: one project moves to the other-shore pool, rest stays", async () => {
+  const db = open({ driver: "sqlite", file: ":memory:" });
+  seedSeat(db, "tba-technical-consultant-onshore", "TBA - Technical Consultant (Onshore)", "Technical Consultant", { shore: "onshore", dept: "Delivery" });
+  seedAlloc(db, "tbh:tba-technical-consultant-onshore", "crm:301", "2026-09", 40);   // Digital Front Door-style line
+  seedAlloc(db, "tbh:tba-technical-consultant-onshore", "crm:301", "2026-10", 160);
+  seedAlloc(db, "tbh:tba-technical-consultant-onshore", "prj:101", "2026-09", 100);  // stays
+  seedRate(db, "tbh:tba-technical-consultant-onshore", "crm:301", 50);
+  db.run("INSERT INTO proposed_hire (scenario,resource_key,target_key,name,updated_by,updated_at) VALUES ('baseline','tbh:tba-technical-consultant-onshore','crm:301','Rohan Panwar','x','2026-01-01')");
+
+  const r = await moveTbaTarget(db, U, { tbhKey: "tba-technical-consultant-onshore", targetKey: "crm:301", shore: "offshore" });
+  assert.deepEqual({ moved: r.moved, destKey: r.destKey }, { moved: 2, destKey: "tba-technical-consultant-offshore" });
+
+  const dest = db.get("SELECT name, role, dept, shore, start_month, capacity FROM tbh WHERE tbh_key='tba-technical-consultant-offshore'");
+  assert.deepEqual(dest, { name: "TBA - Technical Consultant (Offshore)", role: "Technical Consultant", dept: "Delivery", shore: "offshore", start_month: null, capacity: null }, "twin pool created demand-only");
+
+  const offA = db.all("SELECT target_key, hours FROM allocation WHERE resource_key='tbh:tba-technical-consultant-offshore' ORDER BY month");
+  assert.deepEqual(offA.map(a => [a.target_key, a.hours]), [["crm:301", 40], ["crm:301", 160]], "the project's hours moved");
+  const onA = db.all("SELECT target_key, hours FROM allocation WHERE resource_key='tbh:tba-technical-consultant-onshore'");
+  assert.deepEqual(onA.map(a => [a.target_key, a.hours]), [["prj:101", 100]], "other projects untouched");
+
+  const rate = db.get("SELECT rate FROM bill_rate WHERE resource_key='tbh:tba-technical-consultant-offshore' AND target_key='crm:301'");
+  assert.equal(rate.rate, 50, "pair rate moved");
+  const prop = db.get("SELECT name FROM proposed_hire WHERE resource_key='tbh:tba-technical-consultant-offshore' AND target_key='crm:301'");
+  assert.equal(prop.name, "Rohan Panwar", "proposed hire moved");
+});
+
+test("moveTbaTarget: merging into an existing pool sums collisions; same-shore move rejected", async () => {
+  const db = open({ driver: "sqlite", file: ":memory:" });
+  seedSeat(db, "tba-senior-qa-onshore", "TBA - Senior QA (Onshore)", "Senior QA", { shore: "onshore" });
+  seedSeat(db, "tba-senior-qa-offshore", "TBA - Senior QA (Offshore)", "Senior QA", { shore: "offshore" });
+  seedAlloc(db, "tbh:tba-senior-qa-onshore", "prj:103", "2026-09", 30);
+  seedAlloc(db, "tbh:tba-senior-qa-offshore", "prj:103", "2026-09", 20);
+  const r = await moveTbaTarget(db, U, { tbhKey: "tba-senior-qa-onshore", targetKey: "prj:103", shore: "offshore" });
+  assert.deepEqual({ moved: r.moved, merged: r.merged }, { moved: 1, merged: 1 });
+  const cell = db.get("SELECT hours FROM allocation WHERE resource_key='tbh:tba-senior-qa-offshore'");
+  assert.equal(cell.hours, 50, "30 + 20 summed");
+  await assert.rejects(() => moveTbaTarget(db, U, { tbhKey: "tba-senior-qa-offshore", targetKey: "prj:103", shore: "offshore" }), /already in the offshore pool/);
 });

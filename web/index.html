@@ -1298,8 +1298,11 @@ function tbaDrill(t){
     let tot=0;
     const tds=months(k=>{ const h=byProj[proj][k]||0; tot+=h; const v=isD()? (h?money(h*rate):"") : (h?fmt(h):"");
       return cell(v||"·"); });
+    const otherShore = t.shore==="offshore" ? "onshore" : "offshore";
     html+=`<tr><td class="lbl" title="${pr?esc(projLabel(pr)):esc(proj)}">${pr?esc(projLabel(pr)):esc(proj)}${rate?`<div class="muted" style="font-size:10.5px">$${fmt(rate)}/hr</div>`:""}`+
-      `<div class="prophire"><input type="text" data-proposed="${t.id}|${esc(String(proj))}" value="${esc(proposedFor(t.id,proj))}" placeholder="proposed hire…" title="Candidate you have in mind for this role on this project — free text, shared with everyone"></div></td>${tds}`+
+      `<div class="prophire"><input type="text" data-proposed="${t.id}|${esc(String(proj))}" value="${esc(proposedFor(t.id,proj))}" placeholder="proposed hire…" title="Candidate you have in mind for this role on this project — free text, shared with everyone"></div>`+
+      (canEdit()?`<div><button class="btn" data-shoremv="${t.id}|${esc(String(proj))}" data-shoreto="${otherShore}" style="font-size:10px;padding:2px 7px;margin-top:3px" title="Move this project's demand to the ${otherShore} ${esc(t.role||"")} pool (created if needed) — hours, rate and proposed hire go with it">⇄ Move to ${otherShore==="offshore"?"Offshore":"Onshore"}</button></div>`:"")+
+      `</td>${tds}`+
       `<td class="mcelln col-tot">${isD()? money(tot*rate) : fmt0(tot)}</td></tr>`;
   });
   // pool demand total + role availability, employees vs contractors
@@ -1638,6 +1641,14 @@ document.getElementById("viewRoot").addEventListener("click",e=>{
   if(rm){ const [pid,projid]=rm.dataset.rmproj.split("|"); if(state.alloc[pid]) delete state.alloc[pid][projid];
     if(pairRate(pid,projid)){ setPairRateLocal(pid,projid,0); pushRate(pid,projid,0); }
     /*saved via API*/ keepScroll(renderAllocate); renderKpis(); return; }
+  const smv=e.target.closest("[data-shoremv]");   // To Be Assigned: move one project to the other-shore pool
+  if(smv){ if(!canEdit()) return;
+    const [tid,proj]=smv.dataset.shoremv.split("|"); const shore=smv.dataset.shoreto;
+    smv.disabled=true; smv.textContent="Moving…";
+    api("POST","/api/tbh/move",{tbhKey:String(tid).replace(/^tbh-/,""),targetKey:tgtKey(proj),shore})
+      .then(r=>{ toast(`Moved ${r.moved} month${r.moved===1?"":"s"} to the ${shore} pool${r.merged?` (${r.merged} merged)`:""}.`); tbaOpen.add("tbh-"+r.destKey); return bootstrap(); })
+      .catch(err=>{ toast("Move failed: "+err.message); smv.disabled=false; });
+    return; }
   const tba=e.target.closest("[data-tbaopen]");   // To Be Assigned: drill into a role pool
   if(tba){ const id=String(tba.dataset.tbaopen); if(tbaOpen.has(id)) tbaOpen.delete(id); else tbaOpen.add(id); renderHiring(); return; }
   const sh=e.target.closest("[data-shifttbh]");   // move a role pool's forecast to the assigned person

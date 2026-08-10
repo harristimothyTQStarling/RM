@@ -425,6 +425,60 @@ async function normalizeTbaPools(db) {
   });
 }
 
+/* ------------------------------------------ move one project between pools -- */
+/**
+ * Reclassify ONE project's demand to the role's other-shore pool: everything for
+ * (pool × project) — allocations (all months, history included), the pair's bill
+ * rate and proposed-hire note — moves to the role's pool of the given shore,
+ * which is created on the fly if it doesn't exist. Collisions sum; every moved
+ * cell is audited. The rest of the source pool is untouched.
+ */
+async function moveTbaTarget(db, user, { tbhKey, targetKey, shore, scenario = "baseline" }) {
+  const src = await db.get("SELECT id, role, dept, shore FROM tbh WHERE scenario=? AND tbh_key=?", [scenario, tbhKey]);
+  if (!src) { const e = new Error("no such TBA pool"); e.code = "bad_request"; throw e; }
+  const destShore = normShore(shore);
+  const destSlug = roleSlug(src.role, destShore);
+  if (destSlug === tbhKey) { const e = new Error("that project is already in the " + destShore + " pool"); e.code = "bad_request"; throw e; }
+  const fromKey = `tbh:${tbhKey}`, toKey = `tbh:${destSlug}`;
+  return db.tx(async () => {
+    const dest = await db.get("SELECT id FROM tbh WHERE scenario=? AND tbh_key=?", [scenario, destSlug]);
+    if (!dest) {
+      await db.run("INSERT INTO tbh (scenario, tbh_key, name, role, dept, shore, start_month, capacity, updated_by, updated_at, version) VALUES (?,?,?,?,?,?,NULL,NULL,?,?,1)",
+        [scenario, destSlug, tbaName(src.role, destShore), src.role, src.dept || "", destShore, user.upn, nowIso()]);
+      await audit(db, user.upn, "tbh", `${scenario}|${destSlug}`, "insert", null, tbaName(src.role, destShore));
+    }
+    let moved = 0, merged = 0;
+    const rows = await db.all("SELECT id, month, hours FROM allocation WHERE scenario=? AND resource_key=? AND target_key=?", [scenario, fromKey, targetKey]);
+    for (const r of rows) {
+      const dst = await db.get("SELECT id, hours FROM allocation WHERE scenario=? AND resource_key=? AND target_key=? AND month=?",
+        [scenario, toKey, targetKey, r.month]);
+      const key = `${scenario}|${toKey}|${targetKey}|${String(r.month).slice(0, 7)}`;
+      if (dst) {
+        await db.run("UPDATE allocation SET hours=?, updated_by=?, updated_at=?, version=version+1 WHERE id=?", [Number(dst.hours) + Number(r.hours), user.upn, nowIso(), dst.id]);
+        await db.run("DELETE FROM allocation WHERE id=?", [r.id]);
+        merged++;
+      } else {
+        await db.run("UPDATE allocation SET resource_key=?, updated_by=?, updated_at=?, version=version+1 WHERE id=?", [toKey, user.upn, nowIso(), r.id]);
+      }
+      await audit(db, user.upn, "allocation", key, "shore-move", fromKey, toKey);
+      moved++;
+    }
+    const rate = await db.get("SELECT id FROM bill_rate WHERE scenario=? AND resource_key=? AND target_key=?", [scenario, fromKey, targetKey]);
+    if (rate) {
+      const dstRate = await db.get("SELECT id FROM bill_rate WHERE scenario=? AND resource_key=? AND target_key=?", [scenario, toKey, targetKey]);
+      if (!dstRate) await db.run("UPDATE bill_rate SET resource_key=? WHERE id=?", [toKey, rate.id]);
+      else await db.run("DELETE FROM bill_rate WHERE id=?", [rate.id]);
+    }
+    const prop = await db.get("SELECT id FROM proposed_hire WHERE scenario=? AND resource_key=? AND target_key=?", [scenario, fromKey, targetKey]);
+    if (prop) {
+      const dstProp = await db.get("SELECT id FROM proposed_hire WHERE scenario=? AND resource_key=? AND target_key=?", [scenario, toKey, targetKey]);
+      if (!dstProp) await db.run("UPDATE proposed_hire SET resource_key=? WHERE id=?", [toKey, prop.id]);
+      else await db.run("DELETE FROM proposed_hire WHERE id=?", [prop.id]);
+    }
+    return { moved, merged, destKey: destSlug };
+  });
+}
+
 /* ------------------------------------------------- TBH -> employee handover -- */
 /**
  * The person was hired: move a TBH seat's forecast onto the real employee.
@@ -523,4 +577,4 @@ async function putImportMap(db, user, m) {
   return { ok: true };
 }
 
-module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, mapOpportunityToProject, putCapacity, putRate, putTbh, deleteTbh, shiftTbhForecast, normalizeTbaPools, roleSlug, tbaName, normShore, putImportMap, putProposedHire, Conflict, PastMonth, monthKey, currentMonthStart };
+module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, mapOpportunityToProject, putCapacity, putRate, putTbh, deleteTbh, shiftTbhForecast, moveTbaTarget, normalizeTbaPools, roleSlug, tbaName, normShore, putImportMap, putProposedHire, Conflict, PastMonth, monthKey, currentMonthStart };

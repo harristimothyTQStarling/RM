@@ -91,6 +91,12 @@ async function handle(db, req) {
     if (method === "DELETE" && path.startsWith("/api/tbh/")) {
       return json(200, await store.deleteTbh(db, user, decodeURIComponent(path.slice("/api/tbh/".length)), scenario));
     }
+    if (method === "POST" && path === "/api/tbh/move") {
+      // Reclassify one project of a TBA pool to the role's other-shore pool.
+      if (!body.tbhKey || !/^(prj|crm):\d+$/.test(String(body.targetKey || ""))) return json(400, { error: "tbhKey and targetKey (prj:<id>|crm:<id>) required" });
+      if (!["onshore", "offshore"].includes(body.shore)) return json(400, { error: "shore must be onshore or offshore" });
+      return json(200, await store.moveTbaTarget(db, user, { tbhKey: body.tbhKey, targetKey: body.targetKey, shore: body.shore, scenario }));
+    }
     if (method === "POST" && path === "/api/tbh/shift") {
       // The hire happened: move a TBH seat's forecast onto real employee(s).
       const moves = Array.isArray(body.moves) ? body.moves : null;
@@ -134,7 +140,7 @@ async function handle(db, req) {
       // 409 carries the winning value so the UI can say what it lost to.
       return json(409, { error: "conflict", current: e.current });
     }
-    if (e && e.code === "past_month") {
+    if (e && (e.code === "past_month" || e.code === "bad_request")) {
       return json(400, { error: e.message });
     }
     throw e;
