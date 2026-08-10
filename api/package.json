@@ -4,13 +4,16 @@
   "private": true,
   "description": "TQStarling Resource Planner — shared multi-user plan on Railway. Postgres stores the plan; Odoo is read-only.",
   "main": "src/server.js",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node src/server.js",
     "dev": "node src/server.js",
     "test": "node --test \"test/*.test.js\""
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.116.0",
     "jose": "^6.2.4",
     "pg": "^8.22.0"
   }

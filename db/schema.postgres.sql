@@ -127,6 +127,21 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 CREATE INDEX IF NOT EXISTS ix_audit_log_at ON audit_log (at DESC);
 
+-- Planner Assistant trail: every write the agent proposed and what the user
+-- decided. The data change itself is audited in audit_log by the stores (actor
+-- = the signed-in user); this table adds the "via assistant" attribution.
+CREATE TABLE IF NOT EXISTS agent_log (
+  id       BIGSERIAL PRIMARY KEY,
+  at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  actor    VARCHAR(128) NOT NULL,
+  tool     VARCHAR(64)  NOT NULL,
+  input    VARCHAR(2000),
+  decision VARCHAR(16)  NOT NULL,    -- 'approved' | 'declined'
+  status   INT,                      -- HTTP status of the execution; NULL if declined
+  result   VARCHAR(2000)
+);
+CREATE INDEX IF NOT EXISTS ix_agent_log_at ON agent_log (at DESC);
+
 -- =============================================================================
 -- Odoo reference cache
 -- =============================================================================

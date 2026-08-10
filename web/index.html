@@ -382,6 +382,44 @@
   .scrollbox{max-height:230px;overflow:auto;border:1px solid var(--line);border-radius:8px;}
   ::-webkit-scrollbar{height:11px;width:11px;}
   ::-webkit-scrollbar-thumb{background:var(--line-strong);border-radius:6px;border:3px solid var(--surface);}
+  /* Planner Assistant */
+  #aiFab{position:fixed;right:22px;bottom:22px;z-index:90;display:flex;align-items:center;gap:8px;
+    background:var(--accent);color:#fff;border:none;border-radius:999px;padding:11px 18px;font-size:13px;font-weight:650;
+    box-shadow:var(--shadow);cursor:pointer;}
+  #aiFab:hover{filter:brightness(1.08);}
+  #aiFab svg{width:16px;height:16px;}
+  #aiPanel{position:fixed;right:22px;bottom:22px;z-index:95;width:min(420px,calc(100vw - 44px));
+    height:min(640px,calc(100vh - 60px));display:flex;flex-direction:column;background:var(--surface);
+    border:1px solid var(--line-strong);border-radius:14px;box-shadow:var(--shadow);overflow:hidden;}
+  .ai-hd{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line);background:var(--surface-2);}
+  .ai-hd .t{font-weight:680;font-size:13.5px;}
+  .ai-hd .s{font-size:11px;color:var(--muted);}
+  .ai-hd .sp{flex:1;}
+  .ai-hd button{background:transparent;border:none;color:var(--muted);font-size:12px;cursor:pointer;padding:4px 6px;border-radius:6px;}
+  .ai-hd button:hover{background:var(--surface-3);color:var(--ink);}
+  #aiLog{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px;font-size:13px;}
+  .ai-msg{max-width:88%;padding:9px 12px;border-radius:12px;line-height:1.45;white-space:pre-wrap;overflow-wrap:break-word;}
+  .ai-msg.you{align-self:flex-end;background:var(--accent-wash);border:1px solid var(--accent);color:var(--accent-ink);border-bottom-right-radius:4px;}
+  .ai-msg.ai{align-self:flex-start;background:var(--surface-2);border:1px solid var(--line);border-bottom-left-radius:4px;}
+  .ai-msg.sys{align-self:center;background:transparent;border:none;color:var(--muted);font-size:11.5px;text-align:center;}
+  .ai-busy{align-self:flex-start;color:var(--muted);font-size:12px;padding:2px 4px;}
+  .ai-busy::after{content:"…";animation:aiDots 1.2s infinite;}
+  @keyframes aiDots{0%{opacity:.2}50%{opacity:1}100%{opacity:.2}}
+  .ai-card{align-self:stretch;border:1px solid var(--accent);background:var(--accent-wash);border-radius:10px;padding:10px 12px;}
+  .ai-card .lbl{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--accent-ink);font-weight:700;margin-bottom:4px;}
+  .ai-card .sum{font-size:12.5px;color:var(--ink);margin-bottom:8px;line-height:1.4;}
+  .ai-card .acts{display:flex;gap:8px;}
+  .ai-card .acts button{border-radius:7px;padding:6px 14px;font-size:12px;font-weight:650;cursor:pointer;}
+  .ai-card .ok{background:var(--accent);border:1px solid var(--accent);color:#fff;}
+  .ai-card .no{background:transparent;border:1px solid var(--line-strong);color:var(--ink);}
+  .ai-card .decided{font-size:12px;font-weight:650;}
+  .ai-card.approved{border-color:var(--u-good-ink);background:var(--u-good);}
+  .ai-card.declined{opacity:.65;}
+  .ai-input{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line);background:var(--surface-2);}
+  .ai-input textarea{flex:1;resize:none;border:1px solid var(--line-strong);border-radius:9px;background:var(--surface);
+    color:var(--ink);padding:8px 10px;font:inherit;font-size:13px;}
+  .ai-input button{background:var(--accent);border:none;color:#fff;border-radius:9px;padding:0 16px;font-weight:650;cursor:pointer;}
+  .ai-input button:disabled{opacity:.5;cursor:default;}
 </style>
 
 <div class="wrap">
@@ -449,6 +487,27 @@
 <input type="file" id="xlsxInput" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" class="hidden">
 <div id="toast" role="status" aria-live="polite"></div>
 <div id="modalRoot"></div>
+
+<button id="aiFab" hidden title="Ask the Planner Assistant">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 4.9L19 9.7l-4.4 3.4 1.3 5.4L12 15.6l-3.9 2.9 1.3-5.4L5 9.7l5.2-1.8Z"/></svg>
+  Assistant
+</button>
+<div id="aiPanel" hidden>
+  <div class="ai-hd">
+    <div>
+      <div class="t">Planner Assistant</div>
+      <div class="s">Acts as you — changes need your approval</div>
+    </div>
+    <div class="sp"></div>
+    <button id="aiNew" title="Start a new conversation">New chat</button>
+    <button id="aiClose" title="Close">✕</button>
+  </div>
+  <div id="aiLog"></div>
+  <div class="ai-input">
+    <textarea id="aiText" rows="2" placeholder="Ask about the plan, or ask for a change…" aria-label="Message the assistant"></textarea>
+    <button id="aiSend">Send</button>
+  </div>
+</div>
 
 <script>
 /* ============================ SEED DATA (live Odoo snapshot 2026-07-13) ============================ */
@@ -2491,6 +2550,9 @@ async function bootstrap(){
 
   document.body.classList.toggle("viewer", !ME.canEdit);
   document.body.classList.toggle("noimport", !ME.canImport);   // forecast import is importer-only
+  // The Planner Assistant exists only when the server has an Anthropic key.
+  const fab = document.getElementById("aiFab");
+  if (fab) fab.hidden = !ME.agentEnabled || !document.getElementById("aiPanel").hidden;
   const who=document.getElementById("whoami");
   if(who) who.innerHTML = `${esc(ME.name||ME.upn)} · ${ME.canEdit?"editor":"view only"} · <a href="/auth/logout">sign out</a>`;
 
@@ -2505,6 +2567,112 @@ async function bootstrap(){
   status("Up to date");
   render();
 }
+
+/* ============================ PLANNER ASSISTANT ============================ */
+/* Chat client for /api/agent. The browser keeps the raw conversation (AI.api)
+   and echoes it on every request — the server is stateless and authority always
+   comes from the session cookie, never from this transcript. Write proposals
+   come back as pending cards; nothing is saved until Approve is clicked. */
+const AI = { msgs: [], api: [], pending: null, busy: false };
+
+function aiOpen(open){
+  document.getElementById("aiPanel").hidden = !open;
+  document.getElementById("aiFab").hidden = open || !(ME && ME.agentEnabled);
+  if (open){
+    if (!AI.msgs.length) AI.msgs.push({ who:"sys", text:"Ask about the plan (\"who is under-allocated in November?\") or ask for a change (\"move Jordan's October hours on Northwind to the offshore TC pool\")." });
+    aiRender();
+    document.getElementById("aiText").focus();
+  }
+}
+
+function aiReset(){
+  AI.msgs = []; AI.api = []; AI.pending = null; AI.busy = false;
+  aiOpen(true);
+}
+
+function aiRender(){
+  const log = document.getElementById("aiLog");
+  if (!log) return;
+  let h = AI.msgs.map(m => `<div class="ai-msg ${m.who}">${esc(m.text)}</div>`).join("");
+  if (AI.pending){
+    h += AI.pending.items.map(p => {
+      const cls = p.decision === true ? " approved" : p.decision === false ? " declined" : "";
+      const acts = p.decision == null
+        ? `<div class="acts"><button class="ok" data-aiok="${esc(p.id)}">Approve</button><button class="no" data-aino="${esc(p.id)}">Decline</button></div>`
+        : `<div class="decided">${p.decision ? "✓ Approved" : "✕ Declined"}</div>`;
+      return `<div class="ai-card${cls}"><div class="lbl">Proposed change</div><div class="sum">${esc(p.summary)}</div>${acts}</div>`;
+    }).join("");
+  }
+  if (AI.busy) h += `<div class="ai-busy">Thinking</div>`;
+  log.innerHTML = h;
+  log.scrollTop = log.scrollHeight;
+  const send = document.getElementById("aiSend");
+  if (send) send.disabled = AI.busy || !!AI.pending;
+}
+
+async function aiCall(payload){
+  AI.busy = true; aiRender();
+  try{
+    const r = await api("POST","/api/agent", payload);
+    AI.api = r.messages || AI.api;
+    if (r.awaitingApproval){
+      if (r.replySoFar) AI.msgs.push({ who:"ai", text:r.replySoFar });
+      AI.pending = { items:(r.pending||[]).map(p=>({ ...p, decision:null })), completed:r.completed||[] };
+    } else {
+      AI.pending = null;
+      AI.msgs.push({ who:"ai", text:r.reply || "(no reply)" });
+      if (r.executedWrites){
+        toast(`Assistant saved ${r.executedWrites} change${r.executedWrites>1?"s":""} — refreshing`);
+        bootstrap();                       // pull the updated shared plan into the grids
+      }
+    }
+  }catch(e){
+    AI.msgs.push({ who:"sys", text:"⚠ "+e.message });
+    AI.pending = null;
+  }
+  AI.busy = false; aiRender();
+}
+
+function aiSend(){
+  if (AI.busy || AI.pending) return;
+  const box = document.getElementById("aiText");
+  const text = box.value.trim();
+  if (!text) return;
+  box.value = "";
+  AI.msgs.push({ who:"you", text });
+  aiCall({ text, messages: AI.api });
+}
+
+function aiDecide(id, yes){
+  if (!AI.pending) return;
+  const p = AI.pending.items.find(x => x.id === id);
+  if (!p || p.decision != null) return;
+  p.decision = yes;
+  aiRender();
+  if (AI.pending.items.every(x => x.decision != null)){
+    const approved = AI.pending.items.filter(x => x.decision).length;
+    const declined = AI.pending.items.length - approved;
+    AI.msgs.push({ who:"sys", text:`${approved} approved · ${declined} declined` });
+    const decisions = {};
+    AI.pending.items.forEach(x => { decisions[x.id] = x.decision === true; });
+    const completed = AI.pending.completed;
+    AI.pending = null;
+    aiCall({ resume:{ messages: AI.api, completed, decisions } });
+  }
+}
+
+document.getElementById("aiFab").addEventListener("click", ()=>aiOpen(true));
+document.getElementById("aiClose").addEventListener("click", ()=>aiOpen(false));
+document.getElementById("aiNew").addEventListener("click", aiReset);
+document.getElementById("aiSend").addEventListener("click", aiSend);
+document.getElementById("aiText").addEventListener("keydown", e=>{
+  if (e.key === "Enter" && !e.shiftKey){ e.preventDefault(); aiSend(); }
+});
+document.getElementById("aiLog").addEventListener("click", e=>{
+  const ok = e.target.closest("[data-aiok]"), no = e.target.closest("[data-aino]");
+  if (ok) aiDecide(ok.dataset.aiok, true);
+  if (no) aiDecide(no.dataset.aino, false);
+});
 
 bootstrap().catch(e=>{
   document.getElementById("viewRoot").innerHTML =

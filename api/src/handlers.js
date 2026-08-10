@@ -19,7 +19,7 @@ async function handle(db, req) {
   const scenario = q.scenario || body.scenario || "baseline";
 
   if (path === "/api/me") {
-    return user ? json(200, { upn: user.upn, roles: user.roles, canEdit: canEdit(user), canImport: canImport(user) }) : UNAUTH;
+    return user ? json(200, { upn: user.upn, roles: user.roles, canEdit: canEdit(user), canImport: canImport(user), agentEnabled: require("./agent").enabled() }) : UNAUTH;
   }
   if (!user) return UNAUTH;
 
@@ -33,7 +33,7 @@ async function handle(db, req) {
   if (method === "GET" && path === "/api/bootstrap") {
     // One round-trip for page load: identity + reference + plan.
     const [reference, plan] = await Promise.all([store.getReference(db), store.getPlan(db, scenario)]);
-    return json(200, { me: { upn: user.upn, name: user.name, canEdit: canEdit(user), canImport: canImport(user) }, reference, plan });
+    return json(200, { me: { upn: user.upn, name: user.name, canEdit: canEdit(user), canImport: canImport(user), agentEnabled: require("./agent").enabled() }, reference, plan });
   }
   if (method === "GET" && path === "/api/audit") {
     const rows = await db.all("SELECT at, actor, entity, entity_key, action, old_value, new_value FROM audit_log ORDER BY at DESC, id DESC LIMIT 200");
@@ -53,6 +53,23 @@ async function handle(db, req) {
       return json(200, { ok: true, counts });
     } catch (e) {
       return json(502, { error: `Odoo sync failed: ${e.message}` });
+    }
+  }
+
+  if (method === "POST" && path === "/api/agent") {
+    // The Planner Assistant. Open to every signed-in user BEFORE the editor
+    // write-gate: viewers get read-only tools, and any write the agent executes
+    // goes back through handle() with this same user's headers, so the editor
+    // allowlist (and every other gate) still decides what actually happens.
+    const agent = require("./agent");
+    if (!agent.enabled()) return json(503, { error: "assistant is not configured (set ANTHROPIC_API_KEY)" });
+    try {
+      return json(200, await agent.runAgentTurn(db, user, req.headers || {}, body));
+    } catch (e) {
+      if (e && e.code === "rate_limited") return json(429, { error: e.message });
+      if (e && e.code === "bad_request") return json(400, { error: e.message });
+      console.error("agent error:", e);
+      return json(502, { error: `assistant failed: ${e.message}` });
     }
   }
 
