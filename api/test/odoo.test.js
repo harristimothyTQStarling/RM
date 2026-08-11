@@ -39,7 +39,19 @@ test("many2one fields decode to id + display name", () => {
   assert.equal(m2oId(false), null);
 });
 
-test("people are classified employee vs contractor by department", () => {
+test("people are classified by the HR record's Employee Type field", () => {
+  const out = shapePeople([
+    { id: 1, name: "Ken Sousa", role: "Engagement Manager", dept: "Delivery", employeeType: "employee" },
+    { id: 2, name: "Arvin Visco", role: "Technical Consultant", dept: "Delivery", employeeType: "contractor" },
+    { id: 3, name: "Sara Diaz", role: "Developer", dept: "Delivery", employeeType: "freelance" },
+    // employee_type wins over the historical Contractor-department rule
+    { id: 4, name: "Lee Ford", role: "QA", dept: "Contractor", employeeType: "employee" },
+  ]);
+  assert.deepEqual(out.map((p) => [p.id, p.type]),
+    [[1, "employee"], [2, "contractor"], [3, "contractor"], [4, "employee"]]);
+});
+
+test("without an employee_type field, classification falls back to the Contractor department", () => {
   const out = shapePeople([
     { id: 1, name: "Ken Sousa", role: "Engagement Manager", dept: "Delivery" },
     { id: 2, name: "Arvin Visco", role: "Technical Consultant", dept: "Contractor" },

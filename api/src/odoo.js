@@ -105,19 +105,22 @@ const isContractor = (dept) => String(dept || "").trim() === "Contractor";
  * Handles both field layouts (see the note at the top of this file).
  */
 async function readPeople(odoo) {
-  const avail = await odoo.hasFields("hr.employee", ["job_title", "department_id", "current_version_id"]);
+  const avail = await odoo.hasFields("hr.employee", ["job_title", "department_id", "current_version_id", "employee_type"]);
   const direct = avail.job_title && avail.department_id;
+  const typeField = avail.employee_type ? ["employee_type"] : [];
 
   if (direct) {
     const rows = await odoo.searchRead("hr.employee", [["active", "=", true]],
-      ["name", "job_title", "department_id"]);
+      ["name", "job_title", "department_id", ...typeField]);
     return shapePeople(rows.map((r) => ({
       id: r.id, name: r.name, role: r.job_title || "", dept: m2oName(r.department_id),
+      employeeType: r.employee_type || "",
     })));
   }
 
-  // Fallback: role/department live on the employee's current hr.version record.
-  const emps = await odoo.searchRead("hr.employee", [["active", "=", true]], ["name", "current_version_id"]);
+  // Fallback: role/department live on the employee's current hr.version record
+  // (employee_type stays on hr.employee itself).
+  const emps = await odoo.searchRead("hr.employee", [["active", "=", true]], ["name", "current_version_id", ...typeField]);
   const versionIds = emps.map((e) => m2oId(e.current_version_id)).filter(Boolean);
   const versions = versionIds.length
     ? await odoo.searchRead("hr.version", [["id", "in", versionIds]], ["job_title", "department_id"])
@@ -125,7 +128,7 @@ async function readPeople(odoo) {
   const byVersion = new Map(versions.map((v) => [v.id, v]));
   return shapePeople(emps.map((e) => {
     const v = byVersion.get(m2oId(e.current_version_id)) || {};
-    return { id: e.id, name: e.name, role: v.job_title || "", dept: m2oName(v.department_id) };
+    return { id: e.id, name: e.name, role: v.job_title || "", dept: m2oName(v.department_id), employeeType: e.employee_type || "" };
   }));
 }
 
@@ -133,7 +136,17 @@ function shapePeople(list) {
   return list
     .filter((p) => p.dept && !EXCLUDED_DEPTS.includes(p.dept))       // must have a department
     .filter((p) => !/^Template_|^OdooBot$/i.test(p.name))            // template/bot rows
-    .map((p) => ({ ...p, type: isContractor(p.dept) ? "contractor" : "employee", active: true }));
+    .map((p) => ({ ...p, type: personType(p), active: true }));
+}
+
+/** Employee vs contractor comes from the HR record's Employee Type selection
+ *  (hr.employee.employee_type: employee / contractor / freelance / …). Older
+ *  databases without that field fall back to the historical rule — membership
+ *  of the "Contractor" department. TBA pools are app-side and unaffected. */
+function personType(p) {
+  const t = String(p.employeeType || "").trim().toLowerCase();
+  if (t) return (t === "contractor" || t === "freelance") ? "contractor" : "employee";
+  return isContractor(p.dept) ? "contractor" : "employee";
 }
 
 /** Active delivery projects, excluding templates/test rows. */
