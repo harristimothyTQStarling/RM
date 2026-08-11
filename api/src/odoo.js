@@ -292,7 +292,8 @@ async function reconcileClosedCrm(db, odoo, projects, openOppIds) {
   for (const id of closedIds) {
     const opp = byId.get(id) || { id, name: `Closed opportunity #${id}`, client: "", stage: "Closed" };
     try {
-      const hit = bestProjectMatch({ name: opp.name, client: opp.client }, projects);
+      // Never migrate revenue forecast onto a non-billable/internal project.
+      const hit = bestProjectMatch({ name: opp.name, client: opp.client }, projects.filter((p) => p.billable !== false));
       if (hit) {
         await reassignAllocations(db, SYSTEM_USER, `crm:${id}`, `prj:${hit.project.id}`);
         result.migrated++;

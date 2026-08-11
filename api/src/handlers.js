@@ -159,8 +159,8 @@ async function handle(db, req) {
       const oppId = parseInt(body.oppId, 10);
       const projectId = parseInt(body.projectId, 10);
       if (!Number.isInteger(oppId) || !Number.isInteger(projectId)) return json(400, { error: "oppId and projectId are required" });
-      const proj = await db.get("SELECT id FROM ref_project WHERE id = ? AND active = 1", [projectId]);
-      if (!proj) return json(400, { error: "no such active project" });
+      const proj = await db.get("SELECT id FROM ref_project WHERE id = ? AND active = 1 AND billable = 1", [projectId]);
+      if (!proj) return json(400, { error: "no such active billable project" });
       return json(200, await store.mapOpportunityToProject(db, user, oppId, projectId));
     }
     if (method === "PUT" && path === "/api/proposed") {

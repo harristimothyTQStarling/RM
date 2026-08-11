@@ -31,13 +31,17 @@ const currentMonthStart = () => {
 
 /* ---------------------------------------------------------------- read plan -- */
 async function getPlan(db, scenario = "baseline") {
+  // Non-billable projects (internal/non-billable time buckets from Odoo) are
+  // hidden from the app entirely: rows that target one are filtered out of every
+  // read. The underlying data stays in the tables, so this is reversible.
+  const notNonBillable = "NOT EXISTS (SELECT 1 FROM ref_project np WHERE np.billable = 0 AND target_key = 'prj:' || np.id)";
   const [allocations, capacity, tbh, importMap, rates, proposed] = await Promise.all([
-    db.all("SELECT resource_key, target_key, month, hours, version, updated_by, updated_at FROM allocation WHERE scenario = ?", [scenario]),
+    db.all(`SELECT resource_key, target_key, month, hours, version, updated_by, updated_at FROM allocation WHERE scenario = ? AND ${notNonBillable}`, [scenario]),
     db.all("SELECT resource_key, hours_per_month, version FROM capacity_override WHERE scenario = ?", [scenario]),
     db.all("SELECT tbh_key, name, role, dept, shore, start_month, capacity, version FROM tbh WHERE scenario = ?", [scenario]),
     db.all("SELECT kind, source_name, target_key FROM import_map WHERE scenario = ?", [scenario]),
-    db.all("SELECT resource_key, target_key, rate, version FROM bill_rate WHERE scenario = ?", [scenario]),
-    db.all("SELECT resource_key, target_key, name FROM proposed_hire WHERE scenario = ?", [scenario]),
+    db.all(`SELECT resource_key, target_key, rate, version FROM bill_rate WHERE scenario = ? AND ${notNonBillable}`, [scenario]),
+    db.all(`SELECT resource_key, target_key, name FROM proposed_hire WHERE scenario = ? AND ${notNonBillable}`, [scenario]),
   ]);
   return {
     scenario,
@@ -95,11 +99,13 @@ async function putProposedHire(db, user, p) {
  * keeping them apart is what stops the plan being polluted with history.
  */
 async function getReference(db) {
+  // Non-billable projects (and their timesheet actuals) are hidden from the app
+  // — see getPlan. Their rows stay cached so the filter is reversible.
   const [people, projects, opportunities, actuals, sync] = await Promise.all([
     db.all("SELECT id, name, role, dept, type FROM ref_person WHERE active = 1 ORDER BY name"),
-    db.all("SELECT id, name, client, billable FROM ref_project WHERE active = 1 ORDER BY name"),
+    db.all("SELECT id, name, client, billable FROM ref_project WHERE active = 1 AND billable = 1 ORDER BY name"),
     db.all("SELECT id, name, client, stage, needs_project, expected_start, expected_months FROM ref_opportunity WHERE active = 1 ORDER BY name"),
-    db.all("SELECT employee_id, project_id, month, hours, bill_rate, revenue FROM ref_actual"),
+    db.all("SELECT employee_id, project_id, month, hours, bill_rate, revenue FROM ref_actual a WHERE NOT EXISTS (SELECT 1 FROM ref_project np WHERE np.billable = 0 AND np.id = a.project_id)"),
     db.all("SELECT source, synced_at, row_count, ok, message FROM sync_state"),
   ]);
   return {
