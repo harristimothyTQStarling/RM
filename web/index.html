@@ -594,7 +594,17 @@ function sortProjIds(ids){ return ids.slice().sort((a,b)=>{ const x=projById(a),
   if(!x||!y) return 0; return projRank(x)-projRank(y)||x.name.localeCompare(y.name); }); }
 
 
-const DEPTS = ["AI","Business Advisory","Delivery","Contractor"];
+/* Departments come from Odoo: DEPTS is rebuilt at load from the synced people
+   and TBA pools (Sync Odoo / nightly refreshes them). DEPT_ORDER only pins the
+   display order of familiar names; new Odoo departments append alphabetically
+   and vanished ones drop out automatically. */
+const DEPT_ORDER = ["AI","Business Advisory","Delivery","Contractor"];
+let DEPTS = DEPT_ORDER.slice();
+function rebuildDepts(){
+  const present=[...new Set([...PEOPLE.map(p=>p.dept), ...state.tbh.map(t=>t.dept)].filter(Boolean))];
+  DEPTS = [...DEPT_ORDER.filter(d=>present.includes(d)),
+           ...present.filter(d=>!DEPT_ORDER.includes(d)).sort((a,b)=>a.localeCompare(b))];
+}
 const DEFAULT_CAP = 160;
 
 
@@ -2549,6 +2559,15 @@ async function bootstrap(){
   // them here; without this state.importMap.people is undefined and the import
   // modal throws "Cannot use 'in' operator … in undefined" on the first row.
   state.importMap = { people:(plan.importMap&&plan.importMap.person)||{}, projects:(plan.importMap&&plan.importMap.project)||{}, v:MATCH_V };
+
+  // Departments now that the Odoo roster is loaded: rebuild the list and the
+  // filter dropdown, keeping the user's selection when it still exists.
+  rebuildDepts();
+  const fd = document.getElementById("fDept");
+  const curDept = F.dept;
+  fd.innerHTML = `<option value="all">All departments</option>`+DEPTS.map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join("")+`<option value="__none__">Unassigned</option>`;
+  fd.value = [...fd.options].some(o=>o.value===curDept) ? curDept : "all";
+  F.dept = fd.value;
 
   document.body.classList.toggle("viewer", !ME.canEdit);
   document.body.classList.toggle("noimport", !ME.canImport);   // forecast import is importer-only
