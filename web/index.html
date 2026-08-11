@@ -855,10 +855,17 @@ function filteredPeople(){
 
 /* ============================ KPIs ============================ */
 function renderKpis(){
-  const ppl=allPeople();
-  const emp=PEOPLE.filter(p=>p.type==="employee").length;
-  const con=PEOPLE.filter(p=>p.type==="contractor").length;
-  const tbh=state.tbh.length;
+  // KPIs follow the department dropdown: with a department selected, every
+  // card is computed over that department's people only (same semantics as the
+  // row filter, incl. "Unassigned"). "all" keeps the whole-company view.
+  const inDept=p=> F.dept==="all" ? true
+    : F.dept==="__none__" ? !(p.dept && DEPTS.includes(p.dept))
+    : p.dept===F.dept;
+  const deptTag=F.dept==="all" ? "" : " · "+(F.dept==="__none__" ? "Unassigned" : esc(F.dept));
+  const ppl=allPeople().filter(inDept);
+  const emp=PEOPLE.filter(p=>p.type==="employee").filter(inDept).length;
+  const con=PEOPLE.filter(p=>p.type==="contractor").filter(inDept).length;
+  const tbh=state.tbh.filter(inDept).length;
   const cur=CURRENT_KEY; const curM=MONTHS.find(m=>m.key===cur)||MONTHS[0];
   // allocated vs capacity, kept separate for employees and contractors (blending them distorts both)
   const sumFor=(type,mk)=>{ let a=0,c=0,ad=0;
@@ -873,12 +880,21 @@ function renderKpis(){
   const vsPrev = prevM? ` · vs ${prevM.label}` : "";
   // count over-allocated people this month
   let over=0; ppl.forEach(p=>{ const c=capOf(p,cur); if(c && personMonthTotal(p.id,cur)>c*1.10) over++; });
+  // Projects: company-wide by default; with a department selected, the distinct
+  // projects/opportunities that department's people are staffed on.
+  let projVal=ALL_PROJECTS.length, projMeta=PROJECTS.length+" PRJ · "+CRM_PROJECTS.length+" CRM pipeline";
+  if(F.dept!=="all"){
+    const ids=new Set();
+    ppl.forEach(p=>personProjects(p.id).forEach(id=>{ if(projById(id)) ids.add(String(id)); }));
+    const crm=[...ids].filter(x=>x.startsWith("crm-")).length;
+    projVal=ids.size; projMeta=`${ids.size-crm} PRJ · ${crm} CRM · staffed by this dept`;
+  }
   const kpi=[
-    {label:"People",val:emp+con+tbh,meta:emp+" emp · "+con+" contractor"+(tbh?" · "+tbh+" TBA":"")},
-    {label:"Projects",val:ALL_PROJECTS.length,meta:PROJECTS.length+" PRJ · "+CRM_PROJECTS.length+" CRM pipeline"},
-    {label:curM.label+" · employees",val:E.u+"%"+mom(E,Ep),cls:E.cls,meta:(isD()? money(E.ad)+" forecast · "+fmt0(E.a)+"h of "+fmt0(E.c)+"h" : fmt0(E.a)+"h of "+fmt0(E.c)+"h capacity")+vsPrev},
-    {label:curM.label+" · contractors",val:C.u+"%"+mom(C,Cp),cls:C.cls,meta:(isD()? money(C.ad)+" forecast · "+fmt0(C.a)+"h of "+fmt0(C.c)+"h" : fmt0(C.a)+"h of "+fmt0(C.c)+"h capacity")+vsPrev},
-    {label:"Attention",val:over,meta:over===1?"person over-allocated":"people over-allocated"},
+    {label:"People"+deptTag,val:emp+con+tbh,meta:emp+" emp · "+con+" contractor"+(tbh?" · "+tbh+" TBA":"")},
+    {label:"Projects"+deptTag,val:projVal,meta:projMeta},
+    {label:curM.label+" · employees"+deptTag,val:E.u+"%"+mom(E,Ep),cls:E.cls,meta:(isD()? money(E.ad)+" forecast · "+fmt0(E.a)+"h of "+fmt0(E.c)+"h" : fmt0(E.a)+"h of "+fmt0(E.c)+"h capacity")+vsPrev},
+    {label:curM.label+" · contractors"+deptTag,val:C.u+"%"+mom(C,Cp),cls:C.cls,meta:(isD()? money(C.ad)+" forecast · "+fmt0(C.a)+"h of "+fmt0(C.c)+"h" : fmt0(C.a)+"h of "+fmt0(C.c)+"h capacity")+vsPrev},
+    {label:"Attention"+deptTag,val:over,meta:over===1?"person over-allocated":"people over-allocated"},
   ];
   document.getElementById("kpis").innerHTML=kpi.map(k=>
     `<div class="kpi"><div class="label">${k.label}</div><div class="val tnum ${k.cls||""}">${k.val}${k.unit?` <small>${k.unit}</small>`:""}</div><div class="meta">${k.meta}</div></div>`).join("");
