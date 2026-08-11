@@ -51,6 +51,30 @@ test("people are classified by the HR record's Employee Type field", () => {
     [[1, "employee"], [2, "contractor"], [3, "contractor"], [4, "employee"]]);
 });
 
+test("hr.version layout: employee_type is read from the version record", async () => {
+  // TQStarling's Odoo keeps job_title, department AND employee_type on
+  // hr.version; hr.employee has none of them. readPeople must still classify
+  // from the payroll Employee Type, not the department.
+  const { readPeople } = require("../src/odoo");
+  const fakeOdoo = {
+    hasFields: async (model, names) => Object.fromEntries(names.map((n) => [n,
+      model === "hr.version" ? true : n === "current_version_id"])),
+    searchRead: async (model) => model === "hr.employee"
+      ? [
+          { id: 1, name: "Ken Sousa", current_version_id: [11, "v"] },
+          { id: 2, name: "Arvin Visco", current_version_id: [12, "v"] },
+        ]
+      : [
+          { id: 11, job_title: "Engagement Manager", department_id: [5, "Delivery"], employee_type: "employee" },
+          { id: 12, job_title: "Technical Consultant", department_id: [5, "Delivery"], employee_type: "contractor" },
+        ],
+  };
+  const out = await readPeople(fakeOdoo);
+  assert.deepEqual(out.map((p) => [p.name, p.type]),
+    [["Ken Sousa", "employee"], ["Arvin Visco", "contractor"]],
+    "types come from hr.version employee_type even though both share the Delivery department");
+});
+
 test("without an employee_type field, classification falls back to the Contractor department", () => {
   const out = shapePeople([
     { id: 1, name: "Ken Sousa", role: "Engagement Manager", dept: "Delivery" },

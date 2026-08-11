@@ -118,17 +118,20 @@ async function readPeople(odoo) {
     })));
   }
 
-  // Fallback: role/department live on the employee's current hr.version record
-  // (employee_type stays on hr.employee itself).
+  // Fallback: role/department live on the employee's current hr.version record —
+  // and in this layout (TQStarling's Odoo included) employee_type does too, so
+  // read it from whichever model actually has it.
+  const vAvail = await odoo.hasFields("hr.version", ["employee_type"]);
+  const vTypeField = vAvail.employee_type ? ["employee_type"] : [];
   const emps = await odoo.searchRead("hr.employee", [["active", "=", true]], ["name", "current_version_id", ...typeField]);
   const versionIds = emps.map((e) => m2oId(e.current_version_id)).filter(Boolean);
   const versions = versionIds.length
-    ? await odoo.searchRead("hr.version", [["id", "in", versionIds]], ["job_title", "department_id"])
+    ? await odoo.searchRead("hr.version", [["id", "in", versionIds]], ["job_title", "department_id", ...vTypeField])
     : [];
   const byVersion = new Map(versions.map((v) => [v.id, v]));
   return shapePeople(emps.map((e) => {
     const v = byVersion.get(m2oId(e.current_version_id)) || {};
-    return { id: e.id, name: e.name, role: v.job_title || "", dept: m2oName(v.department_id), employeeType: e.employee_type || "" };
+    return { id: e.id, name: e.name, role: v.job_title || "", dept: m2oName(v.department_id), employeeType: v.employee_type || e.employee_type || "" };
   }));
 }
 
