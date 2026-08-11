@@ -926,7 +926,10 @@ function refreshGridTotals(){
   if(y) y.textContent = t.grand.h? fmtHD0(t.grand.h,t.grand.d) : "·";
 }
 function renderAllocate(){
-  const ppl=filteredPeople();
+  // Employees first, then contractors, then TBA pools. Stable sort, so the
+  // existing department-then-name order is preserved within each group.
+  const typeRank=p=>p.type==="contractor"?1:p.type==="tbh"?2:0;
+  const ppl=filteredPeople().sort((a,b)=>typeRank(a)-typeRank(b));
   LAST_ALLOC_PPL=ppl;
   let html=`<div class="panel"><div class="panel-hd">`+
     `<div style="display:flex;align-items:center;gap:12px"><h2>Allocate hours</h2>`+
