@@ -425,6 +425,10 @@
     color:var(--ink);padding:8px 10px;font:inherit;font-size:13px;}
   .ai-input button{background:var(--accent);border:none;color:#fff;border-radius:9px;padding:0 16px;font-weight:650;cursor:pointer;}
   .ai-input button:disabled{opacity:.5;cursor:default;}
+  /* per-pool department select on the To Be Assigned tab */
+  .tba-dept{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);flex:none;}
+  .tba-dept select{font-size:12px;padding:4px 6px;border:1px solid var(--line-strong);border-radius:6px;background:var(--surface);color:var(--ink);max-width:180px;}
+  body.viewer .tba-dept{display:none!important;}
 </style>
 
 <div class="wrap">
@@ -604,6 +608,17 @@ function rebuildDepts(){
   const present=[...new Set([...PEOPLE.map(p=>p.dept), ...state.tbh.map(t=>t.dept)].filter(Boolean))];
   DEPTS = [...DEPT_ORDER.filter(d=>present.includes(d)),
            ...present.filter(d=>!DEPT_ORDER.includes(d)).sort((a,b)=>a.localeCompare(b))];
+}
+/* Rebuild DEPTS and refill the department filter dropdown, keeping the current
+   selection when it still exists. Called at bootstrap and whenever departments
+   change (e.g. a TBA pool is reassigned). */
+function refreshDeptFilter(){
+  rebuildDepts();
+  const fd=document.getElementById("fDept"); if(!fd) return;
+  const cur=F.dept;
+  fd.innerHTML=`<option value="all">All departments</option>`+DEPTS.map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join("")+`<option value="__none__">Unassigned</option>`;
+  fd.value=[...fd.options].some(o=>o.value===cur)?cur:"all";
+  F.dept=fd.value;
 }
 const DEFAULT_CAP = 160;
 
@@ -1420,6 +1435,13 @@ function renderHiring(){
   const pools=state.tbh.slice().sort((a,b)=>(a.role||"~").localeCompare(b.role||"~"));
   const roleOpts=[...new Set(PEOPLE.map(p=>p.role).filter(Boolean))].sort();
   const gaps=detectGaps();
+  // A pool's department stays editable after creation (unassigned included).
+  // A dept that no longer exists in Odoo still shows on its current pool.
+  const poolDeptOpts=(cur)=>{
+    const list=(!cur||DEPTS.includes(cur))?DEPTS:[...DEPTS,cur];
+    return `<option value=""${!cur?" selected":""}>— No department —</option>`+
+      list.map(d=>`<option value="${esc(d)}"${d===cur?" selected":""}>${esc(d)}</option>`).join("");
+  };
   let poolHtml = pools.length? pools.map(t=>{
     const yr=MKEYS.reduce((s,k)=>s+personMonthTotal(t.id,k),0);
     const fut=Object.values(tbhFutureByProject(t.id)).reduce((s,x)=>s+x,0);
@@ -1427,7 +1449,8 @@ function renderHiring(){
     return `<div class="tbh-item" style="flex-wrap:wrap">`+
       `<div class="avatar" style="background:${deptColor(t.dept)};cursor:pointer" data-tbaopen="${t.id}">${initials(t.role||"TB")}</div>`+
       `<div class="info" style="cursor:pointer" data-tbaopen="${t.id}"><div class="r">${esc(t.name)} <span class="muted" style="font-weight:400;font-size:11px">${open?"▾":"▸"} click to ${open?"collapse":"drill into projects & capacity"}</span></div>`+
-        `<div class="d">${esc(t.role||"—")} · ${t.shore==="offshore"?"Offshore":"Onshore"}${t.dept?` · ${deptLabel(t.dept)}`:""} · ${isD()? money(personDollars(t.id))+" planned" : fmt0(yr)+"h planned"}</div></div>`+
+        `<div class="d">${esc(t.role||"—")} · ${t.shore==="offshore"?"Offshore":"Onshore"} · ${isD()? money(personDollars(t.id))+" planned" : fmt0(yr)+"h planned"}</div></div>`+
+      `<label class="tba-dept" title="Department this pool is associated with — change it any time, or leave unassigned">Dept <select data-tbadept="${t.id}">${poolDeptOpts(t.dept)}</select></label>`+
       (fut>0?`<button class="btn primary" data-shifttbh="${t.id}" style="padding:5px 9px" title="Someone was hired/assigned — move this role's forecast onto the real person">Shift forecast → employee</button>`:"")+
       `<button class="btn" data-deltbh="${t.id}" style="padding:5px 9px">Remove</button>`+
       (open?`<div style="flex-basis:100%;min-width:0">${tbaDrill(t)}</div>`:"")+
@@ -1691,6 +1714,16 @@ document.getElementById("viewRoot").addEventListener("change",e=>{
     if(name) state.proposed[`${pid}|${projid}`]=name; else delete state.proposed[`${pid}|${projid}`];
     api("PUT","/api/proposed",{resourceKey:resKey(pid),targetKey:tgtKey(projid),name})
       .then(()=>status("Saved")).catch(err=>toast("Proposed hire not saved: "+err.message));
+    return;
+  }
+  if(el.dataset.tbadept!==undefined){ const t=state.tbh.find(x=>String(x.id)===String(el.dataset.tbadept));
+    if(!t) return;
+    if(!canEdit()){ el.value=t.dept||""; return; }
+    const dept=el.value;
+    api("PUT","/api/tbh",{ tbhKey:String(t.id).replace(/^tbh-/,""), name:t.name, role:t.role, dept, shore:t.shore, start:t.start, cap:t.cap })
+      .then(()=>{ t.dept=dept; status("Saved"); toast(dept?`${t.name} → ${dept}`:`${t.name} → no department`);
+        refreshDeptFilter(); keepScroll(renderHiring); renderKpis(); })
+      .catch(err=>{ el.value=t.dept||""; toast("Department not saved: "+err.message); });
     return;
   }
   if(el.dataset.transfer!==undefined && el.value){ const [tid,proj]=el.dataset.transfer.split("|"); const eid=el.value;
@@ -2581,12 +2614,7 @@ async function bootstrap(){
 
   // Departments now that the Odoo roster is loaded: rebuild the list and the
   // filter dropdown, keeping the user's selection when it still exists.
-  rebuildDepts();
-  const fd = document.getElementById("fDept");
-  const curDept = F.dept;
-  fd.innerHTML = `<option value="all">All departments</option>`+DEPTS.map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join("")+`<option value="__none__">Unassigned</option>`;
-  fd.value = [...fd.options].some(o=>o.value===curDept) ? curDept : "all";
-  F.dept = fd.value;
+  refreshDeptFilter();
 
   document.body.classList.toggle("viewer", !ME.canEdit);
   document.body.classList.toggle("noimport", !ME.canImport);   // forecast import is importer-only
