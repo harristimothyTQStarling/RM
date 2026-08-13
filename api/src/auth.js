@@ -72,4 +72,22 @@ function importerUpns() {
 const canImport = (user) =>
   canEdit(user) && importerUpns().includes(String((user && user.upn) || "").toLowerCase());
 
-module.exports = { getUser, canEdit, canImport, editorUpns, importerUpns, rolesFor, ROLE_EDITOR };
+/**
+ * Who may see COSTS AND PROFIT — fully loaded per-person cost from Gusto and
+ * the margin it implies. This is payroll data, so it is its own allowlist,
+ * independent of edit rights, following the IMPORTER_UPNS idiom:
+ *   unset        -> defaults to tim@tqstarling.com
+ *   empty string -> nobody (fail closed)
+ * Enforced server-side: /api/cost never returns data to anyone else, so the
+ * numbers are not merely hidden in the UI — they never reach the browser.
+ */
+function costingUpns() {
+  const raw = process.env.COSTING_UPNS;
+  return (raw == null ? "tim@tqstarling.com" : raw)
+    .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+}
+
+const canCost = (user) =>
+  !!user && costingUpns().includes(String(user.upn || "").toLowerCase());
+
+module.exports = { getUser, canEdit, canImport, canCost, editorUpns, importerUpns, costingUpns, rolesFor, ROLE_EDITOR };

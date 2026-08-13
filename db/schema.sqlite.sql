@@ -150,6 +150,18 @@ CREATE TABLE IF NOT EXISTS ref_actual (
   PRIMARY KEY (employee_id, project_id, month)
 );
 
+-- Fully loaded per-person monthly cost from Gusto (payroll: gross + employer
+-- taxes + employer benefit contributions; contractors: payments). Only served
+-- to the costing role (COSTING_UPNS). kind: 'actual' for closed months,
+-- 'standard' (trailing-average forward rate) for current and future months.
+CREATE TABLE IF NOT EXISTS ref_cost (
+  employee_id INTEGER NOT NULL,      -- Odoo person id (ref_person.id)
+  month       TEXT NOT NULL,         -- 'YYYY-MM-01'
+  cost        REAL NOT NULL,
+  kind        TEXT NOT NULL DEFAULT 'actual',
+  PRIMARY KEY (employee_id, month)
+);
+
 CREATE TABLE IF NOT EXISTS sync_state (
   source    TEXT PRIMARY KEY,
   synced_at TEXT NOT NULL,

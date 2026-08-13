@@ -162,6 +162,17 @@ function scheduleNightlySync() {
       } catch (e) {
         console.error(`[nightly-sync] FAILED (will retry tomorrow): ${e.message}`);
       }
+      // Costs refresh nightly too, independently of the Odoo outcome.
+      try {
+        const { Gusto, syncCosts } = require("./gusto");
+        const g = new Gusto();
+        if (g.configured) {
+          const c = await syncCosts(db, g);
+          console.log(`[nightly-sync] gusto ok ${JSON.stringify(c)}`);
+        }
+      } catch (e) {
+        console.error(`[nightly-sync] gusto FAILED (will retry tomorrow): ${e.message}`);
+      }
       arm();                                   // schedule the next night
     }, msUntilUtcHour(hour)).unref();          // never keeps a dying process alive
   };

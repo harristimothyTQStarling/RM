@@ -4,7 +4,7 @@
  * Azure Functions and the local dev server are both thin adapters over these,
  * so what runs in CI is what runs in Azure.
  */
-const { getUser, canEdit, canImport } = require("./auth");
+const { getUser, canEdit, canImport, canCost } = require("./auth");
 const store = require("./store");
 
 const json = (status, body) => ({ status, body });
@@ -19,7 +19,7 @@ async function handle(db, req) {
   const scenario = q.scenario || body.scenario || "baseline";
 
   if (path === "/api/me") {
-    return user ? json(200, { upn: user.upn, roles: user.roles, canEdit: canEdit(user), canImport: canImport(user), agentEnabled: require("./agent").enabled() }) : UNAUTH;
+    return user ? json(200, { upn: user.upn, roles: user.roles, canEdit: canEdit(user), canImport: canImport(user), canCost: canCost(user), agentEnabled: require("./agent").enabled() }) : UNAUTH;
   }
   if (!user) return UNAUTH;
 
@@ -33,7 +33,7 @@ async function handle(db, req) {
   if (method === "GET" && path === "/api/bootstrap") {
     // One round-trip for page load: identity + reference + plan.
     const [reference, plan] = await Promise.all([store.getReference(db), store.getPlan(db, scenario)]);
-    return json(200, { me: { upn: user.upn, name: user.name, canEdit: canEdit(user), canImport: canImport(user), agentEnabled: require("./agent").enabled() }, reference, plan });
+    return json(200, { me: { upn: user.upn, name: user.name, canEdit: canEdit(user), canImport: canImport(user), canCost: canCost(user), agentEnabled: require("./agent").enabled() }, reference, plan });
   }
   if (method === "GET" && path === "/api/audit") {
     const rows = await db.all("SELECT at, actor, entity, entity_key, action, old_value, new_value FROM audit_log ORDER BY at DESC, id DESC LIMIT 200");
@@ -54,6 +54,36 @@ async function handle(db, req) {
     } catch (e) {
       return json(502, { error: `Odoo sync failed: ${e.message}` });
     }
+  }
+
+  // ---- costing (COSTING_UPNS only — payroll data never leaves the server
+  //      for anyone else; enforcement is here, not in the UI) ----
+  if (path === "/api/cost" || path === "/api/cost/sync") {
+    if (!canCost(user)) return json(403, { error: "costing role required" });
+    if (method === "GET" && path === "/api/cost") {
+      const [rows, sync] = await Promise.all([
+        db.all("SELECT employee_id, month, cost, kind FROM ref_cost"),
+        db.get("SELECT synced_at, row_count, ok, message FROM sync_state WHERE source = 'gusto'"),
+      ]);
+      let unmatched = [];
+      try { unmatched = (JSON.parse((sync && sync.message) || "{}").unmatched) || []; } catch { /* older format */ }
+      return json(200, {
+        costs: rows.map(r => ({ employeeId: r.employee_id, month: String(r.month).slice(0, 7), cost: Number(r.cost), kind: r.kind })),
+        synced: sync ? { at: String(sync.synced_at), rows: sync.row_count, ok: !!sync.ok } : null,
+        unmatched,
+      });
+    }
+    if (method === "POST" && path === "/api/cost/sync") {
+      const { Gusto, syncCosts } = require("./gusto");
+      const g = new Gusto();
+      if (!g.configured) return json(503, { error: "Gusto is not configured (GUSTO_API_TOKEN / GUSTO_COMPANY_ID)" });
+      try {
+        return json(200, { ok: true, counts: await syncCosts(db, g) });
+      } catch (e) {
+        return json(502, { error: `Gusto sync failed: ${e.message}` });
+      }
+    }
+    return json(404, { error: "no such route" });
   }
 
   if (method === "POST" && path === "/api/agent") {

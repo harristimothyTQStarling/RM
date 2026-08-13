@@ -472,6 +472,7 @@
       <button class="tab" role="tab" data-view="variance" aria-selected="false">Forecast vs Actual</button>
       <button class="tab" role="tab" data-view="crmCheck" aria-selected="false">CRM Mismatches</button>
       <button class="tab" role="tab" data-view="hiring" aria-selected="false">To Be Assigned</button>
+      <button class="tab" role="tab" data-view="costing" aria-selected="false" id="tabCosting" hidden>Cost &amp; Profit</button>
     </div>
     <div class="filters" id="filters">
       <div class="seg" id="modeSeg" role="group" aria-label="Show hours or dollars">
@@ -533,6 +534,7 @@ let PEOPLE = [], PROJECTS = [], CRM_PROJECTS = [], ALL_PROJECTS = [];
 let ACTUALS = new Map();          // "empId|projId|YYYY-MM" -> hours (closed months, read-only)
 let ACT_PERSON_PROJ = new Map();  // "empId" -> Set of projId (strings) they logged actuals on
 let ACT_RATES = new Map();        // "empId|projId|YYYY-MM" -> actual realized $/hr from Odoo (billable rev / billable hrs)
+let ACT_REV = new Map();          // "empId|projId|YYYY-MM" -> actual billable revenue $ from Odoo (costing tab)
 let SYNC = [];                    // ref_* freshness, shown in the footer
 function rebuildProjects(){ ALL_PROJECTS = PROJECTS.concat(CRM_PROJECTS); }
 function projRank(p){ return p.src==="CRM" ? 1 : 0; }                       // PRJ first, CRM second
@@ -1661,10 +1663,101 @@ function render(){
   else if(VIEW==="variance") renderVariance();
   else if(VIEW==="crmCheck") renderCrmCheck();
   else if(VIEW==="hiring") renderHiring();
+  else if(VIEW==="costing") renderCosting();
 }
 function setView(v){ VIEW=v;
   document.querySelectorAll(".tab").forEach(t=>t.setAttribute("aria-selected", t.dataset.view===v));
   render();
+}
+
+/* ============================ VIEW: COST & PROFIT (costing role) ============================ */
+/* Payroll-derived data: fetched lazily from /api/cost the first time the tab
+   opens, and ONLY for the costing role — the server 403s everyone else, so
+   these numbers never reach other users' browsers. */
+const COST={ rows:null, map:new Map(), synced:null, unmatched:[], loading:false, err:null, mode:"profit" };
+async function loadCost(force){
+  if(COST.loading || (COST.rows && !force)) return;
+  COST.loading=true; COST.err=null;
+  try{
+    const r=await api("GET","/api/cost");
+    COST.rows=r.costs||[]; COST.synced=r.synced; COST.unmatched=r.unmatched||[];
+    COST.map=new Map(); COST.rows.forEach(c=>COST.map.set(`${c.employeeId}|${c.month}`,c));
+  }catch(e){ COST.err=e.message; }
+  COST.loading=false;
+  if(VIEW==="costing") renderCosting();
+}
+/* Revenue per person per month: closed months use actual billable revenue from
+   Odoo; the current month onward uses forecast hours × bill rate. */
+function personMonthRevenue(pid,m){
+  if(isPastMi(m.mi)){
+    let s=0; const ap=ACT_PERSON_PROJ.get(String(pid));
+    if(ap) ap.forEach(pr=>{ s+=ACT_REV.get(`${pid}|${pr}|${m.key}`)||0; });
+    return s;
+  }
+  return personMonthDollars(pid,m.key);
+}
+function costCell(rev,cost,kind,extra){
+  if(!(rev>0)&&!(cost>0)) return `<td class="mcelln ${extra||""}"></td>`;
+  const profit=rev-cost;
+  const val= COST.mode==="revenue"?rev : COST.mode==="cost"?cost : profit;
+  const cls= COST.mode==="profit" ? (profit<-0.5?"v-over":profit>0.5?"v-on":"") : "";
+  const margin= rev>0? Math.round(profit/rev*100)+"%" : "";
+  const tip=`revenue ${money(rev)} · cost ${money(cost)}${kind?` (${kind})`:""} · profit ${money(profit)}${margin?` · ${margin} margin`:""}`;
+  return `<td class="mcelln ${cls} ${extra||""}" title="${esc(tip)}"><span class="h">${money(val)}</span><span class="pct">${COST.mode==="profit"?margin:""}</span></td>`;
+}
+function renderCosting(){
+  if(!ME||!ME.canCost){
+    document.getElementById("viewRoot").innerHTML=`<div class="panel"><div class="panel-hd"><h2>Restricted</h2></div><div style="padding:18px" class="muted">Cost data is limited to the costing role.</div></div>`;
+    return;
+  }
+  const head=(bodyHtml)=>`<div class="panel"><div class="panel-hd">`+
+    `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><h2>Cost &amp; profit by person × month</h2>`+
+    `<div class="seg" role="group" aria-label="Metric">`+
+      ["profit","revenue","cost"].map(mo=>`<button type="button" data-costmode="${mo}" aria-pressed="${COST.mode===mo}">${mo[0].toUpperCase()+mo.slice(1)}</button>`).join("")+
+    `</div>`+
+    `<button class="btn" id="btnCostSync" title="Refresh fully loaded costs from Gusto now">Sync Gusto</button></div>`+
+    `<span class="hint">fully loaded cost from Gusto (salary + bonus + employer taxes + benefits) vs revenue · closed months actual, current month onward at the standard rate</span></div>${bodyHtml}</div>`;
+  const root=document.getElementById("viewRoot");
+  if(COST.err){ root.innerHTML=head(`<div style="padding:18px"><p>⚠ ${esc(COST.err)}</p><p class="muted">Retry from the Sync Gusto button, or check GUSTO_API_TOKEN / GUSTO_COMPANY_ID on the server.</p></div>`); return; }
+  if(!COST.rows){ loadCost(); root.innerHTML=head(`<div style="padding:18px" class="muted">Loading cost data…</div>`); return; }
+
+  const typeRank=p=>p.type==="contractor"?1:0;
+  const ppl=filteredPeople().filter(p=>p.type!=="tbh").sort((a,b)=>typeRank(a)-typeRank(b));
+  const mkAcc=()=>({rev:MKEYS.map(()=>0),cost:MKEYS.map(()=>0),n:0});
+  const acc={employee:mkAcc(),contractor:mkAcc(),team:mkAcc()};
+  let body="";
+  ppl.forEach(p=>{
+    const cells=MONTHS.map(m=>{
+      const ce=COST.map.get(`${p.id}|${m.key}`);
+      return { rev:personMonthRevenue(p.id,m), cost:ce?ce.cost:0, kind:ce?ce.kind:"" };
+    });
+    if(!cells.some(c=>c.rev>0||c.cost>0)) return;      // nothing to show for this person
+    const a=acc[p.type]||acc.employee; a.n++; acc.team.n++;
+    let rrev=0,rcost=0;
+    const tds=cells.map((c,i)=>{ rrev+=c.rev; rcost+=c.cost;
+      a.rev[i]+=c.rev; a.cost[i]+=c.cost; acc.team.rev[i]+=c.rev; acc.team.cost[i]+=c.cost;
+      return costCell(c.rev,c.cost,c.kind,"");
+    }).join("");
+    const badge=p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
+    body+=`<tr><td class="lbl">${esc(p.name)}${badge}<div class="muted" style="font-size:11px">${esc(p.role||"—")}</div></td>${tds}${costCell(rrev,rcost,"","col-tot")}</tr>`;
+  });
+  const footRow=(label,a,cls)=>{
+    const tds=a.rev.map((r,i)=>costCell(r,a.cost[i],"","")).join("");
+    const gr=a.rev.reduce((s,x)=>s+x,0), gc=a.cost.reduce((s,x)=>s+x,0);
+    return `<tr class="${cls||""}"><td class="lbl">${label}</td>${tds}${costCell(gr,gc,"","col-tot")}</tr>`;
+  };
+  const foot=`<tfoot>`+
+    (acc.employee.n?footRow(`Employees <span class="muted">· ${acc.employee.n}</span>`,acc.employee):"")+
+    (acc.contractor.n?footRow(`Contractors <span class="muted">· ${acc.contractor.n}</span>`,acc.contractor):"")+
+    footRow("Team total",acc.team,"grand")+`</tfoot>`;
+  const never=!COST.synced;
+  const note=`<div class="legend" style="margin-top:6px"><span>`+
+    (never? `<b>No Gusto cost data yet.</b> Click Sync Gusto (needs GUSTO_API_TOKEN / GUSTO_COMPANY_ID on the server). `
+          : `Gusto last synced ${esc(String(COST.synced.at).slice(0,16).replace("T"," "))} · ${COST.rows.length} cost rows. `)+
+    `Standard rate = average of the last up-to-3 closed months of fully loaded cost. Revenue: closed months are actual billable revenue from Odoo; from the current month it is forecast hours × bill rate.`+
+    (COST.unmatched.length? ` <b>Unmatched in Gusto:</b> ${COST.unmatched.map(esc).join(", ")} — name doesn't match the Odoo roster, so their cost is excluded.`:"")+
+    `</span></div>`;
+  root.innerHTML=head(`<div class="scroll"><table class="pivot">${pivotHead("Person")}<tbody>${body||`<tr><td class="lbl muted" style="padding:14px">No people with cost or revenue match the current filters.</td></tr>`}</tbody>${foot}</table></div>${note}`);
 }
 
 /* ============================ EVENTS ============================ */
@@ -1753,7 +1846,18 @@ function keepScroll(fn){
   const sc2=document.querySelector("#viewRoot .scroll");
   if(sc2){ sc2.scrollTop=t; sc2.scrollLeft=l; }
 }
-document.getElementById("viewRoot").addEventListener("click",e=>{
+document.getElementById("viewRoot").addEventListener("click",async e=>{
+  const cmBtn=e.target.closest("[data-costmode]");
+  if(cmBtn){ COST.mode=cmBtn.dataset.costmode; renderCosting(); return; }
+  if(e.target.closest("#btnCostSync")){
+    const b=e.target.closest("#btnCostSync"); b.disabled=true; b.textContent="Syncing…";
+    try{
+      const r=await api("POST","/api/cost/sync");
+      toast(`Gusto sync: ${r.counts.rows} cost rows · ${r.counts.matched} matched · ${r.counts.unmatched} unmatched`);
+      await loadCost(true);
+    }catch(err){ toast("Gusto sync failed: "+err.message); COST.err=null; renderCosting(); }
+    return;
+  }
   if(e.target.closest("#btnBulk")){ openBulkModal(); return; }
   const rp=e.target.closest("[data-rp]");            // By Role: practice → people
   if(rp){ const k=rp.getAttribute("data-rp"); if(rpOpen.has(k)) rpOpen.delete(k); else rpOpen.add(k); keepScroll(renderByRole); return; }
@@ -2580,10 +2684,11 @@ async function bootstrap(){
   rebuildProjects();
   SYNC = reference.sync || [];
 
-  ACTUALS = new Map(); ACT_PERSON_PROJ = new Map(); ACT_RATES = new Map();
+  ACTUALS = new Map(); ACT_PERSON_PROJ = new Map(); ACT_RATES = new Map(); ACT_REV = new Map();
   reference.actuals.forEach(a=>{
     ACTUALS.set(`${a.employeeId}|${a.projectId}|${a.month}`, a.hours);
     if(a.billRate) ACT_RATES.set(`${a.employeeId}|${a.projectId}|${a.month}`, a.billRate);
+    if(a.revenue) ACT_REV.set(`${a.employeeId}|${a.projectId}|${a.month}`, a.revenue);
     const k=String(a.employeeId);
     if(!ACT_PERSON_PROJ.has(k)) ACT_PERSON_PROJ.set(k, new Set());
     ACT_PERSON_PROJ.get(k).add(String(a.projectId));
@@ -2621,6 +2726,10 @@ async function bootstrap(){
   // The Planner Assistant exists only when the server has an Anthropic key.
   const btnAI = document.getElementById("btnAI");
   if (btnAI) btnAI.hidden = !ME.agentEnabled;
+  // Cost & Profit tab only for the costing role; refetch cost data on reload.
+  const tabCost = document.getElementById("tabCosting");
+  if (tabCost) tabCost.hidden = !ME.canCost;
+  COST.rows = null;
   const who=document.getElementById("whoami");
   if(who) who.innerHTML = `${esc(ME.name||ME.upn)} · ${ME.canEdit?"editor":"view only"} · <a href="/auth/logout">sign out</a>`;
 
