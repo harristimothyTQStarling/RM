@@ -162,6 +162,17 @@ CREATE TABLE IF NOT EXISTS ref_cost (
   PRIMARY KEY (employee_id, month)
 );
 
+-- Gusto OAuth token pair (single row). Access tokens are short-lived and the
+-- refresh token is single-use, so every refresh rewrites this row.
+CREATE TABLE IF NOT EXISTS gusto_auth (
+  id            INTEGER PRIMARY KEY CHECK (id = 1),
+  access_token  TEXT NOT NULL,
+  refresh_token TEXT NOT NULL,
+  expires_at    TEXT NOT NULL,
+  company_uuid  TEXT NOT NULL DEFAULT '',
+  updated_at    TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sync_state (
   source    TEXT PRIMARY KEY,
   synced_at TEXT NOT NULL,

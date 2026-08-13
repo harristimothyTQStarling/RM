@@ -80,6 +80,25 @@ const server = http.createServer(async (req, res) => {
       const { cookies, location } = oidc.logout();
       return redirect(location, cookies);
     }
+    // Gusto connect (costing role only): consent redirect + OAuth callback.
+    if (p === "/auth/gusto" || p === "/auth/gusto/callback") {
+      const { canCost } = require("./auth");
+      const gusto = require("./gusto");
+      const u = getUser(req.headers);
+      if (!u || !canCost(u)) return json(403, { error: "costing role required" });
+      try {
+        if (p === "/auth/gusto") {
+          const { location, cookie } = gusto.beginConnect();
+          return redirect(location, [cookie]);
+        }
+        const q = Object.fromEntries(url.searchParams);
+        const { location, cookie } = await gusto.completeConnect(db, q, req.headers);
+        return redirect(location, [cookie]);
+      } catch (e) {
+        res.writeHead(502, { "content-type": "text/html; charset=utf-8" });
+        return res.end(`<h1>Gusto connect failed</h1><p>${escapeHtml(e.message)}</p><p><a href="/auth/gusto">Try again</a> · <a href="/">Back to the planner</a></p>`);
+      }
+    }
 
     const user = getUser(req.headers);
 

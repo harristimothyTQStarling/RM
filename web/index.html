@@ -1680,7 +1680,7 @@ async function loadCost(force){
   COST.loading=true; COST.err=null;
   try{
     const r=await api("GET","/api/cost");
-    COST.rows=r.costs||[]; COST.synced=r.synced; COST.unmatched=r.unmatched||[];
+    COST.rows=r.costs||[]; COST.synced=r.synced; COST.unmatched=r.unmatched||[]; COST.gusto=r.gusto||{};
     COST.map=new Map(); COST.rows.forEach(c=>COST.map.set(`${c.employeeId}|${c.month}`,c));
   }catch(e){ COST.err=e.message; }
   COST.loading=false;
@@ -1715,7 +1715,9 @@ function renderCosting(){
     `<div class="seg" role="group" aria-label="Metric">`+
       ["profit","revenue","cost"].map(mo=>`<button type="button" data-costmode="${mo}" aria-pressed="${COST.mode===mo}">${mo[0].toUpperCase()+mo.slice(1)}</button>`).join("")+
     `</div>`+
-    `<button class="btn" id="btnCostSync" title="Refresh fully loaded costs from Gusto now">Sync Gusto</button></div>`+
+    (COST.gusto && COST.gusto.oauthConfigured && !COST.gusto.connected
+      ? `<a class="btn primary" href="/auth/gusto" title="Authorize the planner to read payroll cost data from Gusto (one time)">Connect Gusto</a>`
+      : `<button class="btn" id="btnCostSync" title="Refresh fully loaded costs from Gusto now">Sync Gusto</button>`)+`</div>`+
     `<span class="hint">fully loaded cost from Gusto (salary + bonus + employer taxes + benefits) vs revenue · closed months actual, current month onward at the standard rate</span></div>${bodyHtml}</div>`;
   const root=document.getElementById("viewRoot");
   if(COST.err){ root.innerHTML=head(`<div style="padding:18px"><p>⚠ ${esc(COST.err)}</p><p class="muted">Retry from the Sync Gusto button, or check GUSTO_API_TOKEN / GUSTO_COMPANY_ID on the server.</p></div>`); return; }
@@ -1751,8 +1753,11 @@ function renderCosting(){
     (acc.contractor.n?footRow(`Contractors <span class="muted">· ${acc.contractor.n}</span>`,acc.contractor):"")+
     footRow("Team total",acc.team,"grand")+`</tfoot>`;
   const never=!COST.synced;
+  const g=COST.gusto||{};
   const note=`<div class="legend" style="margin-top:6px"><span>`+
-    (never? `<b>No Gusto cost data yet.</b> Click Sync Gusto (needs GUSTO_API_TOKEN / GUSTO_COMPANY_ID on the server). `
+    (never? (!g.oauthConfigured? `<b>Gusto is not configured.</b> Set GUSTO_CLIENT_ID / GUSTO_CLIENT_SECRET on the server, then Connect Gusto. `
+            : !g.connected? `<b>Not connected to Gusto yet.</b> Click Connect Gusto (one-time authorization; tokens are then managed automatically). `
+            : `<b>No Gusto cost data yet.</b> Click Sync Gusto to pull this year's payroll costs. `)
           : `Gusto last synced ${esc(String(COST.synced.at).slice(0,16).replace("T"," "))} · ${COST.rows.length} cost rows. `)+
     `Standard rate = average of the last up-to-3 closed months of fully loaded cost. Revenue: closed months are actual billable revenue from Odoo; from the current month it is forecast hours × bill rate.`+
     (COST.unmatched.length? ` <b>Unmatched in Gusto:</b> ${COST.unmatched.map(esc).join(", ")} — name doesn't match the Odoo roster, so their cost is excluded.`:"")+
@@ -2730,6 +2735,15 @@ async function bootstrap(){
   const tabCost = document.getElementById("tabCosting");
   if (tabCost) tabCost.hidden = !ME.canCost;
   COST.rows = null;
+  // Back from the Gusto consent screen: land on the tab and run the first sync.
+  if (ME.canCost && new URLSearchParams(location.search).get("gusto") === "connected") {
+    history.replaceState(null, "", "/");
+    toast("Gusto connected — running the first cost sync…");
+    setView("costing");
+    api("POST", "/api/cost/sync")
+      .then(r => { toast(`Gusto sync: ${r.counts.rows} cost rows · ${r.counts.matched} matched · ${r.counts.unmatched} unmatched`); return loadCost(true); })
+      .catch(e => { toast("Gusto sync failed: " + e.message); });
+  }
   const who=document.getElementById("whoami");
   if(who) who.innerHTML = `${esc(ME.name||ME.upn)} · ${ME.canEdit?"editor":"view only"} · <a href="/auth/logout">sign out</a>`;
 

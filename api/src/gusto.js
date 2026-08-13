@@ -19,22 +19,76 @@
  * preferred first names both tried). Unmatched names are reported, never
  * silently dropped.
  *
- * Config (Railway variables): GUSTO_API_TOKEN (bearer), GUSTO_COMPANY_ID
- * (company uuid), optional GUSTO_API_BASE (default https://api.gusto.com).
+ * Auth (Gusto uses OAuth2 with SHORT-LIVED access tokens + single-use rotating
+ * refresh tokens — there is no long-lived static key):
+ *   Railway variables: GUSTO_CLIENT_ID + GUSTO_CLIENT_SECRET from the Gusto
+ *   developer-portal application, whose Redirect URI must be exactly
+ *   `${PUBLIC_URL}/auth/gusto/callback`. The costing user clicks Connect Gusto
+ *   once; tokens are persisted in gusto_auth and refreshed automatically from
+ *   then on. The company uuid is discovered from /v1/token_info at connect.
+ *   (A static GUSTO_API_TOKEN + GUSTO_COMPANY_ID pair still works for tests
+ *   and short-lived experiments, and wins when set.)
  */
+const crypto = require("node:crypto");
 const { currentMonthStart } = require("./store");
+const { parseCookies } = require("./oidc");
 
 class GustoError extends Error {
   constructor(msg, status) { super(msg); this.status = status; }
 }
 
+const publicUrl = () => (process.env.PUBLIC_URL || "").replace(/\/+$/, "");
+const redirectUri = () => `${publicUrl()}/auth/gusto/callback`;
+const STATE_COOKIE = "tqsp_gusto";
+
 class Gusto {
   constructor(cfg = {}) {
     this.base = (cfg.base || process.env.GUSTO_API_BASE || "https://api.gusto.com").replace(/\/+$/, "");
+    this.clientId = cfg.clientId || process.env.GUSTO_CLIENT_ID || "";
+    this.clientSecret = cfg.clientSecret || process.env.GUSTO_CLIENT_SECRET || "";
     this.token = cfg.token || process.env.GUSTO_API_TOKEN || "";
     this.company = cfg.company || process.env.GUSTO_COMPANY_ID || "";
   }
-  get configured() { return !!(this.token && this.company); }
+  get oauthConfigured() { return !!(this.clientId && this.clientSecret && publicUrl()); }
+  /** Can a sync possibly run (perhaps after Connect)? */
+  get configured() { return this.oauthConfigured || !!(process.env.GUSTO_API_TOKEN && process.env.GUSTO_COMPANY_ID); }
+
+  /** Resolve a usable access token: static env pair, or the stored OAuth pair —
+   *  refreshed (and re-persisted, since refresh tokens are single-use) when the
+   *  access token is at or near expiry. */
+  async prepare(db) {
+    if (process.env.GUSTO_API_TOKEN && process.env.GUSTO_COMPANY_ID) {
+      this.token = process.env.GUSTO_API_TOKEN;
+      this.company = process.env.GUSTO_COMPANY_ID;
+      return this;
+    }
+    if (!this.oauthConfigured) throw new GustoError("Gusto is not configured (GUSTO_CLIENT_ID / GUSTO_CLIENT_SECRET / PUBLIC_URL)", 0);
+    const row = await db.get("SELECT access_token, refresh_token, expires_at, company_uuid FROM gusto_auth WHERE id = 1");
+    if (!row) { const e = new GustoError("Gusto is not connected yet — click Connect Gusto on the Cost & Profit tab", 0); e.code = "not_connected"; throw e; }
+    let { access_token, refresh_token, company_uuid } = row;
+    if (new Date(String(row.expires_at)).getTime() - Date.now() < 120e3) {
+      const t = await this.tokenRequest({ grant_type: "refresh_token", refresh_token });
+      access_token = t.access_token;
+      refresh_token = t.refresh_token || refresh_token;
+      await saveAuth(db, access_token, refresh_token, t.expires_in, company_uuid);
+    }
+    this.token = access_token;
+    this.company = company_uuid;
+    return this;
+  }
+
+  async tokenRequest(params) {
+    const res = await fetch(`${this.base}/oauth/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+      body: new URLSearchParams({ client_id: this.clientId, client_secret: this.clientSecret, redirect_uri: redirectUri(), ...params }).toString(),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new GustoError(`Gusto token endpoint ${res.status}: ${body.slice(0, 300)}`, res.status);
+    }
+    return res.json();
+  }
 
   async get(path, params = {}) {
     const url = new URL(this.base + path);
@@ -46,6 +100,55 @@ class Gusto {
     }
     return res.json();
   }
+}
+
+/* ------------------------------------------------------- token persistence -- */
+async function saveAuth(db, accessToken, refreshToken, expiresInSec, companyUuid) {
+  const expiresAt = new Date(Date.now() + (Number(expiresInSec) || 7200) * 1000).toISOString();
+  await db.run(
+    `INSERT INTO gusto_auth (id, access_token, refresh_token, expires_at, company_uuid, updated_at)
+     VALUES (1, ?, ?, ?, ?, ?)
+     ON CONFLICT (id) DO UPDATE SET
+       access_token = excluded.access_token, refresh_token = excluded.refresh_token,
+       expires_at = excluded.expires_at, company_uuid = excluded.company_uuid,
+       updated_at = excluded.updated_at`,
+    [accessToken, refreshToken, expiresAt, companyUuid || "", new Date().toISOString()]
+  );
+}
+
+const gustoConnected = async (db) => !!(await db.get("SELECT id FROM gusto_auth WHERE id = 1"));
+
+/* -------------------------------------------------------- connect (OAuth) -- */
+const cookie = (name, value, maxAge) =>
+  `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=${maxAge}`;
+
+/** Step 1: send the costing user to Gusto's consent screen. */
+function beginConnect() {
+  const g = new Gusto();
+  if (!g.oauthConfigured) throw new GustoError("set GUSTO_CLIENT_ID / GUSTO_CLIENT_SECRET (and PUBLIC_URL) first", 0);
+  const state = crypto.randomBytes(16).toString("hex");
+  const url = new URL(`${g.base}/oauth/authorize`);
+  url.searchParams.set("client_id", g.clientId);
+  url.searchParams.set("redirect_uri", redirectUri());
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("state", state);
+  return { location: url.toString(), cookie: cookie(STATE_COOKIE, state, 600) };
+}
+
+/** Step 2: Gusto redirected back with ?code — exchange it, discover the
+ *  company from token_info, persist the token pair. */
+async function completeConnect(db, query, headers) {
+  const state = parseCookies((headers || {}).cookie).tqsp_gusto;
+  if (!state || !query.state || state !== query.state) throw new GustoError("state mismatch — restart the connect flow", 0);
+  if (!query.code) throw new GustoError(`Gusto returned no code${query.error ? ` (${query.error})` : ""}`, 0);
+  const g = new Gusto();
+  const t = await g.tokenRequest({ grant_type: "authorization_code", code: query.code });
+  g.token = t.access_token;
+  const info = await g.get("/v1/token_info");
+  const company = (info && info.resource && info.resource.uuid) || "";
+  if (!company) throw new GustoError("could not determine the Gusto company from token_info", 0);
+  await saveAuth(db, t.access_token, t.refresh_token, t.expires_in, company);
+  return { location: "/?gusto=connected", cookie: cookie(STATE_COOKIE, "", 0) };
 }
 
 /* ------------------------------------------------------------- shaping ---- */
@@ -138,7 +241,7 @@ function buildCostRows(acc, people, current = currentMonthStart()) {
 
 /* ---------------------------------------------------------------- sync ---- */
 async function syncCosts(db, g = new Gusto()) {
-  if (!g.configured) throw new GustoError("Gusto is not configured (GUSTO_API_TOKEN / GUSTO_COMPANY_ID)", 0);
+  await g.prepare(db);                       // static env pair, or stored OAuth tokens (auto-refreshed)
   const year = new Date().getUTCFullYear();
   const from = `${year}-01-01`;
   const to = new Date().toISOString().slice(0, 10);
@@ -193,4 +296,4 @@ async function syncCosts(db, g = new Gusto()) {
   return { rows: rows.length, matched, unmatched: unmatched.length, payrolls: payrolls.length };
 }
 
-module.exports = { Gusto, GustoError, syncCosts, buildCostRows, employerCostOf, addPayroll, addContractorPayments, nameVariants };
+module.exports = { Gusto, GustoError, syncCosts, buildCostRows, employerCostOf, addPayroll, addContractorPayments, nameVariants, beginConnect, completeConnect, gustoConnected, saveAuth, redirectUri };

@@ -61,25 +61,30 @@ async function handle(db, req) {
   if (path === "/api/cost" || path === "/api/cost/sync") {
     if (!canCost(user)) return json(403, { error: "costing role required" });
     if (method === "GET" && path === "/api/cost") {
-      const [rows, sync] = await Promise.all([
+      const { Gusto, gustoConnected } = require("./gusto");
+      const [rows, sync, connected] = await Promise.all([
         db.all("SELECT employee_id, month, cost, kind FROM ref_cost"),
         db.get("SELECT synced_at, row_count, ok, message FROM sync_state WHERE source = 'gusto'"),
+        gustoConnected(db),
       ]);
       let unmatched = [];
       try { unmatched = (JSON.parse((sync && sync.message) || "{}").unmatched) || []; } catch { /* older format */ }
+      const g = new Gusto();
       return json(200, {
         costs: rows.map(r => ({ employeeId: r.employee_id, month: String(r.month).slice(0, 7), cost: Number(r.cost), kind: r.kind })),
         synced: sync ? { at: String(sync.synced_at), rows: sync.row_count, ok: !!sync.ok } : null,
         unmatched,
+        gusto: { oauthConfigured: g.oauthConfigured, connected: connected || !!(process.env.GUSTO_API_TOKEN && process.env.GUSTO_COMPANY_ID) },
       });
     }
     if (method === "POST" && path === "/api/cost/sync") {
       const { Gusto, syncCosts } = require("./gusto");
       const g = new Gusto();
-      if (!g.configured) return json(503, { error: "Gusto is not configured (GUSTO_API_TOKEN / GUSTO_COMPANY_ID)" });
+      if (!g.configured) return json(503, { error: "Gusto is not configured (set GUSTO_CLIENT_ID / GUSTO_CLIENT_SECRET)" });
       try {
         return json(200, { ok: true, counts: await syncCosts(db, g) });
       } catch (e) {
+        if (e.code === "not_connected") return json(503, { error: e.message });
         return json(502, { error: `Gusto sync failed: ${e.message}` });
       }
     }
