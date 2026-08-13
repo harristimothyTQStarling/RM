@@ -1720,7 +1720,7 @@ function renderCosting(){
       : `<button class="btn" id="btnCostSync" title="Refresh fully loaded costs from Gusto now">Sync Gusto</button>`)+`</div>`+
     `<span class="hint">fully loaded cost from Gusto (salary + bonus + employer taxes + benefits) vs revenue · closed months actual, current month onward at the standard rate</span></div>${bodyHtml}</div>`;
   const root=document.getElementById("viewRoot");
-  if(COST.err){ root.innerHTML=head(`<div style="padding:18px"><p>⚠ ${esc(COST.err)}</p><p class="muted">Retry from the Sync Gusto button, or check GUSTO_API_TOKEN / GUSTO_COMPANY_ID on the server.</p></div>`); return; }
+  if(COST.err){ root.innerHTML=head(`<div style="padding:18px"><p>⚠ ${esc(COST.err)}</p><p class="muted">Retry from the Sync Gusto button, check GUSTO_CLIENT_ID / GUSTO_CLIENT_SECRET on the server, or <a href="/auth/gusto">reconnect Gusto</a>.</p></div>`); return; }
   if(!COST.rows){ loadCost(); root.innerHTML=head(`<div style="padding:18px" class="muted">Loading cost data…</div>`); return; }
 
   const typeRank=p=>p.type==="contractor"?1:0;
@@ -1761,6 +1761,7 @@ function renderCosting(){
           : `Gusto last synced ${esc(String(COST.synced.at).slice(0,16).replace("T"," "))} · ${COST.rows.length} cost rows. `)+
     `Standard rate = average of the last up-to-3 closed months of fully loaded cost. Revenue: closed months are actual billable revenue from Odoo; from the current month it is forecast hours × bill rate.`+
     (COST.unmatched.length? ` <b>Unmatched in Gusto:</b> ${COST.unmatched.map(esc).join(", ")} — name doesn't match the Odoo roster, so their cost is excluded.`:"")+
+    (g.oauthConfigured && g.connected? ` If a sync ever fails with an authentication error, <a href="/auth/gusto">reconnect Gusto</a>.`:"")+
     `</span></div>`;
   root.innerHTML=head(`<div class="scroll"><table class="pivot">${pivotHead("Person")}<tbody>${body||`<tr><td class="lbl muted" style="padding:14px">No people with cost or revenue match the current filters.</td></tr>`}</tbody>${foot}</table></div>${note}`);
 }
