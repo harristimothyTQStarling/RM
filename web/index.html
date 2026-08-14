@@ -1680,7 +1680,7 @@ async function loadCost(force){
   COST.loading=true; COST.err=null;
   try{
     const r=await api("GET","/api/cost");
-    COST.rows=r.costs||[]; COST.synced=r.synced; COST.unmatched=r.unmatched||[]; COST.gusto=r.gusto||{};
+    COST.rows=r.costs||[]; COST.synced=r.synced;
     COST.map=new Map(); COST.rows.forEach(c=>COST.map.set(`${c.employeeId}|${c.month}`,c));
   }catch(e){ COST.err=e.message; }
   COST.loading=false;
@@ -1715,12 +1715,10 @@ function renderCosting(){
     `<div class="seg" role="group" aria-label="Metric">`+
       ["profit","revenue","cost"].map(mo=>`<button type="button" data-costmode="${mo}" aria-pressed="${COST.mode===mo}">${mo[0].toUpperCase()+mo.slice(1)}</button>`).join("")+
     `</div>`+
-    (COST.gusto && COST.gusto.oauthConfigured && !COST.gusto.connected
-      ? `<a class="btn primary" href="/auth/gusto" title="Authorize the planner to read payroll cost data from Gusto (one time)">Connect Gusto</a>`
-      : `<button class="btn" id="btnCostSync" title="Refresh fully loaded costs from Gusto now">Sync Gusto</button>`)+`</div>`+
-    `<span class="hint">fully loaded cost from Gusto (salary + bonus + employer taxes + benefits) vs revenue · closed months actual, current month onward at the standard rate</span></div>${bodyHtml}</div>`;
+    `<button class="btn primary" id="btnCostImport" title="Paste fully loaded monthly costs (from Gusto reporting) — replaces the current cost data">Import costs…</button></div>`+
+    `<span class="hint">fully loaded cost (salary + bonus + employer taxes + benefits, from Gusto reporting) vs revenue · closed months actual, current month onward at the standard rate</span></div>${bodyHtml}</div>`;
   const root=document.getElementById("viewRoot");
-  if(COST.err){ root.innerHTML=head(`<div style="padding:18px"><p>⚠ ${esc(COST.err)}</p><p class="muted">Retry from the Sync Gusto button, check GUSTO_CLIENT_ID / GUSTO_CLIENT_SECRET on the server, or <a href="/auth/gusto">reconnect Gusto</a>.</p></div>`); return; }
+  if(COST.err){ root.innerHTML=head(`<div style="padding:18px"><p>⚠ ${esc(COST.err)}</p></div>`); return; }
   if(!COST.rows){ loadCost(); root.innerHTML=head(`<div style="padding:18px" class="muted">Loading cost data…</div>`); return; }
 
   const typeRank=p=>p.type==="contractor"?1:0;
@@ -1753,17 +1751,71 @@ function renderCosting(){
     (acc.contractor.n?footRow(`Contractors <span class="muted">· ${acc.contractor.n}</span>`,acc.contractor):"")+
     footRow("Team total",acc.team,"grand")+`</tfoot>`;
   const never=!COST.synced;
-  const g=COST.gusto||{};
   const note=`<div class="legend" style="margin-top:6px"><span>`+
-    (never? (!g.oauthConfigured? `<b>Gusto is not configured.</b> Set GUSTO_CLIENT_ID / GUSTO_CLIENT_SECRET on the server, then Connect Gusto. `
-            : !g.connected? `<b>Not connected to Gusto yet.</b> Click Connect Gusto (one-time authorization; tokens are then managed automatically). `
-            : `<b>No Gusto cost data yet.</b> Click Sync Gusto to pull this year's payroll costs. `)
-          : `Gusto last synced ${esc(String(COST.synced.at).slice(0,16).replace("T"," "))} · ${COST.rows.length} cost rows. `)+
-    `Standard rate = average of the last up-to-3 closed months of fully loaded cost. Revenue: closed months are actual billable revenue from Odoo; from the current month it is forecast hours × bill rate.`+
-    (COST.unmatched.length? ` <b>Unmatched in Gusto:</b> ${COST.unmatched.map(esc).join(", ")} — name doesn't match the Odoo roster, so their cost is excluded.`:"")+
-    (g.oauthConfigured && g.connected? ` If a sync ever fails with an authentication error, <a href="/auth/gusto">reconnect Gusto</a>.`:"")+
+    (never? `<b>No cost data yet.</b> Use Import costs to paste fully loaded monthly costs from Gusto reporting. `
+          : `Costs last imported ${esc(String(COST.synced.at).slice(0,16).replace("T"," "))}${COST.synced.by?` by ${esc(COST.synced.by)}`:""} · ${COST.rows.length} rows. `)+
+    `Standard rate = average of the last up-to-3 closed months of fully loaded cost, projected forward automatically. Revenue: closed months are actual billable revenue from Odoo; from the current month it is forecast hours × bill rate.`+
     `</span></div>`;
   root.innerHTML=head(`<div class="scroll"><table class="pivot">${pivotHead("Person")}<tbody>${body||`<tr><td class="lbl muted" style="padding:14px">No people with cost or revenue match the current filters.</td></tr>`}</tbody>${foot}</table></div>${note}`);
+}
+
+/* Cost import modal: paste "Name (or Odoo id), YYYY-MM, cost" lines — commas
+   or tabs (Excel paste). Names resolve against the roster; the server replaces
+   the whole cost dataset and projects forward months automatically. */
+function openCostImport(){
+  document.getElementById("modalRoot").innerHTML=
+    `<div class="backdrop" id="ciBackdrop"><div class="modal" style="width:min(640px,100%)">`+
+    `<div class="modal-hd"><h2>Import fully loaded costs</h2>`+
+    `<p>One line per person per month: <b>Name, 2026-01, 21000</b> (commas or tabs — pasting from Excel works). `+
+    `Numbers are total employer cost for the month: salary + bonus + employer taxes + benefits. This <b>replaces</b> all existing cost data.</p></div>`+
+    `<div class="modal-bd">`+
+    `<textarea id="ciText" rows="12" style="width:100%;font:12px/1.5 ui-monospace,monospace;border:1px solid var(--line-strong);border-radius:8px;background:var(--surface);color:var(--ink);padding:10px" placeholder="Alex Rivera, 2026-01, 21450\nAlex Rivera, 2026-02, 20980\nJordan Lee\t2026-01\t16500"></textarea>`+
+    `<label style="display:flex;align-items:center;gap:8px;font-size:12.5px"><input type="checkbox" id="ciForward" checked> Project current and future months automatically (trailing 3-month average per person)</label>`+
+    `<div id="ciPreview" class="muted" style="font-size:12px"></div>`+
+    `</div>`+
+    `<div class="modal-ft"><span class="muted" style="font-size:11.5px">Only the costing role can see or import this data.</span>`+
+    `<div style="display:flex;gap:8px"><button class="btn" id="ciCancel">Cancel</button><button class="btn primary" id="ciApply">Import</button></div></div>`+
+    `</div></div>`;
+  const close=()=>{ document.getElementById("modalRoot").innerHTML=""; };
+  const parse=()=>{
+    const roster=allPeople().filter(p=>p.type!=="tbh");
+    const byNorm=new Map(roster.map(p=>[String(p.name).toLowerCase().replace(/[^a-z0-9]+/g,""),p.id]));
+    const rows=[], unmatched=new Set(); let bad=0;
+    document.getElementById("ciText").value.split(/\r?\n/).forEach(line=>{
+      const t=line.trim(); if(!t) return;
+      const parts=(t.includes("\t")?t.split("\t"):t.split(",")).map(s=>s.trim()).filter(s=>s!=="");
+      if(parts.length<3){ bad++; return; }
+      const cost=Number(parts[parts.length-1].replace(/[$,\s]/g,""));
+      const month=parts[parts.length-2].slice(0,7);
+      const who=parts.slice(0,parts.length-2).join(" ");
+      if(!/^\d{4}-\d{2}$/.test(month)||!Number.isFinite(cost)||cost<0){ bad++; return; }
+      const id=/^\d+$/.test(who)? Number(who) : byNorm.get(who.toLowerCase().replace(/[^a-z0-9]+/g,""));
+      if(id==null){ unmatched.add(who); return; }
+      rows.push({ employeeId:id, month, cost });
+    });
+    return { rows, unmatched:[...unmatched], bad };
+  };
+  const preview=()=>{
+    const {rows,unmatched,bad}=parse();
+    document.getElementById("ciPreview").innerHTML=
+      `${rows.length} row${rows.length===1?"":"s"} for ${new Set(rows.map(r=>r.employeeId)).size} people ready.`+
+      (unmatched.length?` <b>Not in the roster (skipped):</b> ${unmatched.map(esc).join(", ")}.`:"")+
+      (bad?` ${bad} malformed line${bad===1?"":"s"} ignored.`:"");
+    return rows;
+  };
+  document.getElementById("ciText").addEventListener("input",preview);
+  document.getElementById("ciCancel").addEventListener("click",close);
+  document.getElementById("ciBackdrop").addEventListener("click",e=>{ if(e.target.id==="ciBackdrop") close(); });
+  document.getElementById("ciApply").addEventListener("click",async ()=>{
+    const rows=preview();
+    if(!rows.length){ toast("Nothing to import — check the format"); return; }
+    const btn=document.getElementById("ciApply"); btn.disabled=true; btn.textContent="Importing…";
+    try{
+      const r=await api("POST","/api/cost/import",{ rows, fillForward:document.getElementById("ciForward").checked });
+      toast(`Costs imported: ${r.provided} provided + ${r.projected} projected months`);
+      close(); await loadCost(true);
+    }catch(err){ toast("Import failed: "+err.message); btn.disabled=false; btn.textContent="Import"; }
+  });
 }
 
 /* ============================ EVENTS ============================ */
@@ -1855,15 +1907,7 @@ function keepScroll(fn){
 document.getElementById("viewRoot").addEventListener("click",async e=>{
   const cmBtn=e.target.closest("[data-costmode]");
   if(cmBtn){ COST.mode=cmBtn.dataset.costmode; renderCosting(); return; }
-  if(e.target.closest("#btnCostSync")){
-    const b=e.target.closest("#btnCostSync"); b.disabled=true; b.textContent="Syncing…";
-    try{
-      const r=await api("POST","/api/cost/sync");
-      toast(`Gusto sync: ${r.counts.rows} cost rows · ${r.counts.matched} matched · ${r.counts.unmatched} unmatched`);
-      await loadCost(true);
-    }catch(err){ toast("Gusto sync failed: "+err.message); COST.err=null; renderCosting(); }
-    return;
-  }
+  if(e.target.closest("#btnCostImport")){ openCostImport(); return; }
   if(e.target.closest("#btnBulk")){ openBulkModal(); return; }
   const rp=e.target.closest("[data-rp]");            // By Role: practice → people
   if(rp){ const k=rp.getAttribute("data-rp"); if(rpOpen.has(k)) rpOpen.delete(k); else rpOpen.add(k); keepScroll(renderByRole); return; }
@@ -2736,15 +2780,6 @@ async function bootstrap(){
   const tabCost = document.getElementById("tabCosting");
   if (tabCost) tabCost.hidden = !ME.canCost;
   COST.rows = null;
-  // Back from the Gusto consent screen: land on the tab and run the first sync.
-  if (ME.canCost && new URLSearchParams(location.search).get("gusto") === "connected") {
-    history.replaceState(null, "", "/");
-    toast("Gusto connected — running the first cost sync…");
-    setView("costing");
-    api("POST", "/api/cost/sync")
-      .then(r => { toast(`Gusto sync: ${r.counts.rows} cost rows · ${r.counts.matched} matched · ${r.counts.unmatched} unmatched`); return loadCost(true); })
-      .catch(e => { toast("Gusto sync failed: " + e.message); });
-  }
   const who=document.getElementById("whoami");
   if(who) who.innerHTML = `${esc(ME.name||ME.upn)} · ${ME.canEdit?"editor":"view only"} · <a href="/auth/logout">sign out</a>`;
 

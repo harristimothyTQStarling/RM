@@ -203,27 +203,16 @@ CREATE TABLE IF NOT EXISTS ref_actual (
 ALTER TABLE ref_actual ADD COLUMN IF NOT EXISTS bill_rate NUMERIC(8,2) NOT NULL DEFAULT 0;
 ALTER TABLE ref_actual ADD COLUMN IF NOT EXISTS revenue NUMERIC(12,2) NOT NULL DEFAULT 0;
 
--- Fully loaded per-person monthly cost from Gusto (payroll: gross + employer
--- taxes + employer benefit contributions; contractors: payments). Only served
--- to the costing role (COSTING_UPNS). kind: 'actual' for closed months,
--- 'standard' (trailing-average forward rate) for current and future months.
+-- Fully loaded per-person monthly cost (salary + bonus + employer taxes +
+-- benefits), imported from Gusto reporting by the costing role. Only served to
+-- COSTING_UPNS. kind: 'actual' for closed months, 'standard' (trailing-average
+-- forward rate) for current and future months.
 CREATE TABLE IF NOT EXISTS ref_cost (
   employee_id INT           NOT NULL,   -- odoo person id (ref_person.id)
   month       DATE          NOT NULL,   -- always the 1st of the month
   cost        NUMERIC(12,2) NOT NULL,
   kind        VARCHAR(16)   NOT NULL DEFAULT 'actual',
   PRIMARY KEY (employee_id, month)
-);
-
--- Gusto OAuth token pair (single row). Access tokens are short-lived and the
--- refresh token is single-use, so every refresh rewrites this row.
-CREATE TABLE IF NOT EXISTS gusto_auth (
-  id            INT PRIMARY KEY CHECK (id = 1),
-  access_token  TEXT        NOT NULL,
-  refresh_token TEXT        NOT NULL,
-  expires_at    TIMESTAMPTZ NOT NULL,
-  company_uuid  VARCHAR(64) NOT NULL DEFAULT '',
-  updated_at    TIMESTAMPTZ NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS sync_state (

@@ -56,37 +56,66 @@ async function handle(db, req) {
     }
   }
 
-  // ---- costing (COSTING_UPNS only — payroll data never leaves the server
-  //      for anyone else; enforcement is here, not in the UI) ----
-  if (path === "/api/cost" || path === "/api/cost/sync") {
+  // ---- costing (COSTING_UPNS only — payroll-derived data never leaves the
+  //      server for anyone else; enforcement is here, not in the UI) ----
+  if (path === "/api/cost" || path === "/api/cost/import") {
     if (!canCost(user)) return json(403, { error: "costing role required" });
     if (method === "GET" && path === "/api/cost") {
-      const { Gusto, gustoConnected } = require("./gusto");
-      const [rows, sync, connected] = await Promise.all([
+      const [rows, sync] = await Promise.all([
         db.all("SELECT employee_id, month, cost, kind FROM ref_cost"),
-        db.get("SELECT synced_at, row_count, ok, message FROM sync_state WHERE source = 'gusto'"),
-        gustoConnected(db),
+        db.get("SELECT synced_at, row_count, ok, message FROM sync_state WHERE source = 'costs'"),
       ]);
-      let unmatched = [];
-      try { unmatched = (JSON.parse((sync && sync.message) || "{}").unmatched) || []; } catch { /* older format */ }
-      const g = new Gusto();
+      let by = "";
+      try { by = JSON.parse((sync && sync.message) || "{}").by || ""; } catch { /* older format */ }
       return json(200, {
         costs: rows.map(r => ({ employeeId: r.employee_id, month: String(r.month).slice(0, 7), cost: Number(r.cost), kind: r.kind })),
-        synced: sync ? { at: String(sync.synced_at), rows: sync.row_count, ok: !!sync.ok } : null,
-        unmatched,
-        gusto: { oauthConfigured: g.oauthConfigured, connected: connected || !!(process.env.GUSTO_API_TOKEN && process.env.GUSTO_COMPANY_ID) },
+        synced: sync ? { at: String(sync.synced_at), rows: sync.row_count, ok: !!sync.ok, by } : null,
       });
     }
-    if (method === "POST" && path === "/api/cost/sync") {
-      const { Gusto, syncCosts } = require("./gusto");
-      const g = new Gusto();
-      if (!g.configured) return json(503, { error: "Gusto is not configured (set GUSTO_CLIENT_ID / GUSTO_CLIENT_SECRET)" });
-      try {
-        return json(200, { ok: true, counts: await syncCosts(db, g) });
-      } catch (e) {
-        if (e.code === "not_connected") return json(503, { error: e.message });
-        return json(502, { error: `Gusto sync failed: ${e.message}` });
+    if (method === "POST" && path === "/api/cost/import") {
+      // Replace the whole cost dataset (fully loaded $ per person per month,
+      // sourced from Gusto reporting outside the app). kind is derived from
+      // the month: closed months are actuals, current-month-onward is the
+      // standard rate. fillForward (default on) projects each person's
+      // trailing 3-closed-month average across current..December where no
+      // explicit forward value was supplied.
+      const items = Array.isArray(body.rows) ? body.rows : null;
+      if (!items || !items.length) return json(400, { error: "rows[] required" });
+      if (items.length > 3000) return json(413, { error: "too many rows" });
+      const current = store.currentMonthStart();
+      const year = current.slice(0, 4);
+      const norm = [];
+      for (const r of items) {
+        const id = Number(r.employeeId);
+        const month = String(r.month || "").slice(0, 7) + "-01";
+        const cost = Number(r.cost);
+        if (!Number.isInteger(id) || !/^\d{4}-\d{2}-01$/.test(month) || !Number.isFinite(cost) || cost < 0)
+          return json(400, { error: `bad row: ${JSON.stringify(r)}` });
+        norm.push({ id, month, cost: Math.round(cost * 100) / 100 });
       }
+      const byKey = new Map();                                       // last one wins per person×month
+      for (const r of norm) byKey.set(`${r.id}|${r.month}`, r);
+      const rows = [...byKey.values()].map(r => ({ ...r, kind: r.month < current ? "actual" : "standard" }));
+      if (body.fillForward !== false) {
+        const forward = [];
+        for (let m = Number(current.slice(5, 7)); m <= 12; m++) forward.push(`${year}-${String(m).padStart(2, "0")}-01`);
+        const byPerson = new Map();
+        rows.forEach(r => { (byPerson.get(r.id) || byPerson.set(r.id, []).get(r.id)).push(r); });
+        for (const [id, list] of byPerson) {
+          const closed = list.filter(r => r.kind === "actual" && r.cost > 0).sort((a, b) => a.month.localeCompare(b.month)).slice(-3);
+          if (!closed.length) continue;
+          const rate = Math.round(closed.reduce((s, r) => s + r.cost, 0) / closed.length * 100) / 100;
+          for (const m of forward) if (!byKey.has(`${id}|${m}`)) rows.push({ id, month: m, cost: rate, kind: "standard" });
+        }
+      }
+      await db.tx(async () => {
+        await db.run("DELETE FROM ref_cost");
+        for (const r of rows) await db.run("INSERT INTO ref_cost (employee_id, month, cost, kind) VALUES (?,?,?,?)", [r.id, r.month, r.cost, r.kind]);
+        await db.run("DELETE FROM sync_state WHERE source = 'costs'");
+        await db.run("INSERT INTO sync_state (source, synced_at, row_count, ok, message) VALUES ('costs', ?, ?, 1, ?)",
+          [new Date().toISOString(), rows.length, JSON.stringify({ by: user.upn })]);
+      });
+      return json(200, { ok: true, rows: rows.length, provided: byKey.size, projected: rows.length - byKey.size });
     }
     return json(404, { error: "no such route" });
   }
