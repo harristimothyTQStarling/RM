@@ -470,7 +470,7 @@
       <button class="tab" role="tab" data-view="byRole" aria-selected="false">By Role × Month</button>
       <button class="tab" role="tab" data-view="byCust" aria-selected="false">By Customer × Month</button>
       <button class="tab" role="tab" data-view="variance" aria-selected="false">Forecast vs Actual</button>
-      <button class="tab" role="tab" data-view="crmCheck" aria-selected="false">CRM Mismatches</button>
+      <button class="tab" role="tab" data-view="crmCheck" aria-selected="false">Mismatches</button>
       <button class="tab" role="tab" data-view="hiring" aria-selected="false">To Be Assigned</button>
       <button class="tab" role="tab" data-view="costing" aria-selected="false" id="tabCosting" hidden>Cost &amp; Profit</button>
     </div>
@@ -1631,16 +1631,45 @@ function renderCrmCheck(){
     `<td class="mcelln ${m.lenFlag||m.missingFlag?"v-over":""}">${m.fLen||"—"}</td>`+
     `<td class="mcelln col-tot">${m.fHours?fmt0(m.fHours):"—"}</td>`+
   `</tr>`).join("");
+  // ---- missing rates: line items with open-month forecast hours but no bill
+  //      rate on the pair — their dollars silently show as $0 in every $ view.
+  const missing=[];
+  Object.keys(state.alloc).forEach(rid=>{
+    const person=allPeople().find(p=>String(p.id)===String(rid)); if(!person) return;
+    Object.keys(state.alloc[rid]).forEach(jid=>{
+      const pr=projById(jid); if(!pr) return;
+      let open=0; MONTHS.forEach(m=>{ if(!isPastMi(m.mi)) open+=alloc(rid,jid,m.key)||0; });
+      if(open>0 && !pairRate(rid,jid)) missing.push({person,pr,open});
+    });
+  });
+  const missRows=missing
+    .filter(x=> !q || x.pr.name.toLowerCase().includes(q) || (x.pr.client||"").toLowerCase().includes(q) || x.person.name.toLowerCase().includes(q))
+    .sort((a,b)=> a.pr.name.localeCompare(b.pr.name) || a.person.name.localeCompare(b.person.name));
+  const missBody=missRows.map(x=>`<tr>`+
+    `<td class="lbl"><span class="badge ${x.pr.src==="CRM"?"crm":"prj"}">${x.pr.src}</span> ${esc(x.pr.name)}<div class="muted" style="font-size:11px">${esc(x.pr.client||"—")}</div></td>`+
+    `<td class="lbl">${esc(x.person.name)}${x.person.type==="tbh"?" <span class='badge tbh'>TBA</span>":x.person.type==="contractor"?" <span class='badge contractor'>Con</span>":""}<div class="muted" style="font-size:11px">${esc(x.person.role||"—")}</div></td>`+
+    `<td style="text-align:left"><span class="badge np">Missing Rate</span></td>`+
+    `<td class="mcelln col-tot">${fmt0(x.open)}</td>`+
+  `</tr>`).join("");
+  const sec=(title,count)=>`<div style="padding:12px 16px 2px"><h3 style="font-size:13px">${title} <span class="muted" style="font-weight:400;font-size:11.5px">· ${count} flagged</span></h3></div>`;
+
   document.getElementById("viewRoot").innerHTML=
-    `<div class="panel"><div class="panel-hd"><h2>CRM mismatches — forecast vs opportunity window</h2>`+
-    `<span class="hint">${rows.length} flagged · start = forecast begins in a different month than the CRM expected start · length = months with forecast hours ≠ CRM projected months (both clipped to CY${String(YEAR).slice(2)}) · missing forecast = Propose/Negotiate with nothing staffed</span></div>`+
+    `<div class="panel"><div class="panel-hd"><h2>Mismatches</h2>`+
+    `<span class="hint">CRM window checks (forecast vs opportunity start/length, missing forecasts) plus forecast line items with no bill rate</span></div>`+
+    sec("CRM window checks",rows.length)+
     (rows.length?
       `<div class="scroll"><table class="pivot"><thead><tr><th class="lbl">Opportunity</th><th style="text-align:left">Flags</th>`+
       `<th>CRM start</th><th>Expected start (CY${String(YEAR).slice(2)})</th><th>Forecast start</th>`+
       `<th>CRM months</th><th>Expected (CY${String(YEAR).slice(2)})</th><th>Forecast months</th><th class="col-tot">Forecast hrs</th></tr></thead>`+
       `<tbody>${body}</tbody></table></div>`+
-      `<div class="legend"><span>Window checks skip opportunities with no CRM start date / projected months. Unstaffed opportunities are only flagged from Propose/Negotiate onward.</span></div>`
-      :`<div class="empty-body" style="padding:28px">No mismatches — every forecast on a CRM opportunity agrees with its expected start date and projected length, and every Propose/Negotiate opportunity has a forecast${CRM_PROJECTS.some(p=>p.expectedStart)?"":" (CRM planning fields not synced yet — run Sync Odoo)"}.</div>`)+
+      `<div class="legend"><span>start = forecast begins in a different month than the CRM expected start · length = months with forecast hours ≠ CRM projected months (both clipped to CY${String(YEAR).slice(2)}) · missing forecast = Propose/Negotiate with nothing staffed. Window checks skip opportunities with no CRM start date / projected months.</span></div>`
+      :`<div class="muted" style="padding:6px 16px 14px;font-size:12.5px">None — every forecast on a CRM opportunity agrees with its expected window, and every Propose/Negotiate opportunity has a forecast${CRM_PROJECTS.some(p=>p.expectedStart)?"":" (CRM planning fields not synced yet — run Sync Odoo)"}.</div>`)+
+    sec("Missing rates",missRows.length)+
+    (missRows.length?
+      `<div class="scroll"><table class="pivot"><thead><tr><th class="lbl">Project</th><th class="lbl">Line item</th><th style="text-align:left">Flag</th><th class="col-tot">Open-month hrs</th></tr></thead>`+
+      `<tbody>${missBody}</tbody></table></div>`+
+      `<div class="legend"><span>These line items have forecast hours from the current month onward but no $/hr bill rate on the pair, so they contribute $0 to every dollar view. Set the rate in the line's $/hr box on either Allocate tab.</span></div>`
+      :`<div class="muted" style="padding:6px 16px 16px;font-size:12.5px">None — every line item with open-month forecast hours has a bill rate.</div>`)+
     `</div>`;
 }
 
