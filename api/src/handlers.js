@@ -77,8 +77,9 @@ async function handle(db, req) {
       // sourced from Gusto reporting outside the app). kind is derived from
       // the month: closed months are actuals, current-month-onward is the
       // standard rate. fillForward (default on) projects each person's
-      // trailing 3-closed-month average across current..December where no
-      // explicit forward value was supplied.
+      // trailing 3-closed-month average across every month from the current
+      // one through December of NEXT year (the planner's two-year horizon)
+      // where no explicit forward value was supplied.
       const items = Array.isArray(body.rows) ? body.rows : null;
       if (!items || !items.length) return json(400, { error: "rows[] required" });
       if (items.length > 3000) return json(413, { error: "too many rows" });
@@ -98,7 +99,10 @@ async function handle(db, req) {
       const rows = [...byKey.values()].map(r => ({ ...r, kind: r.month < current ? "actual" : "standard" }));
       if (body.fillForward !== false) {
         const forward = [];
-        for (let m = Number(current.slice(5, 7)); m <= 12; m++) forward.push(`${year}-${String(m).padStart(2, "0")}-01`);
+        for (let y = Number(year), m = Number(current.slice(5, 7)); y <= Number(year) + 1; m++) {
+          if (m > 12) { m = 1; y++; if (y > Number(year) + 1) break; }
+          forward.push(`${y}-${String(m).padStart(2, "0")}-01`);
+        }
         const byPerson = new Map();
         rows.forEach(r => { (byPerson.get(r.id) || byPerson.set(r.id, []).get(r.id)).push(r); });
         for (const [id, list] of byPerson) {

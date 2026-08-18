@@ -57,6 +57,7 @@ test("import: kind derives from the month; fillForward projects the trailing ave
   const standards = got.costs.filter(c => c.kind === "standard");
   assert.equal(actuals.length, 3, "closed months are actuals");
   assert.ok(standards.length >= 1 && standards.every(c => c.cost === 1100), "standard = avg of last 3 closed months");
+  assert.ok(standards.some(c => c.month === `${new Date().getFullYear() + 1}-12`), "projection covers the full horizon through Dec of next year");
   assert.equal(got.synced.by, "tim@tqstarling.com", "import attributed to the importer");
 
   // Re-import replaces everything.
