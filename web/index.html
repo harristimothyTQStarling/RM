@@ -1162,12 +1162,16 @@ function refreshPairRate(pid,projid){
    percentage points embedded next to it (pu = previous month's utilization %, or null). */
 /* dh: pre-summed dollar equivalent for the group (display only, from per-project rates).
    Utilization % and shading always come from hours vs capacity, whichever mode is shown. */
-function hpCell(h,c,cls,extra,pu,dh){
+function hpCell(h,c,cls,extra,pu,dh,pctFirst){
   const u = c ? Math.round(h/c*100) : null;
   const d = (h && u!==null && pu!==null && pu!==undefined) ? u-Math.round(pu) : 0;
   const dlt = d ? `<em class="dlt">${d>0?"▲":"▼"}${Math.abs(d)}</em>` : "";
   const shown = isD()? money(dh||0) : fmt(h);
-  const inner = h ? `<span class="h">${shown}</span><span class="pct">${u!==null?u+"%":""}${dlt}</span>` : "";
+  // pctFirst (By Employee): utilization % is the primary metric, hours/$ second,
+  // month-over-month change third. Cells with no capacity fall back to hours.
+  const inner = !h ? "" : (pctFirst && u!==null)
+    ? `<span class="h">${u}%</span><span class="pct">${shown}</span>${dlt?`<span class="pct">${dlt}</span>`:""}`
+    : `<span class="h">${shown}</span><span class="pct">${u!==null?u+"%":""}${dlt}</span>`;
   const tip = (isD()? `${money(dh||0)} · ${fmt0(h)}h of ${fmt0(c)}h capacity` : `${fmt0(h)}h of ${fmt0(c)}h capacity`) + (d? ` · ${d>0?"+":""}${d} pts vs previous month` : "");
   return `<td class="mcelln ${cls||""}${extra?" "+extra:""}" title="${tip}">${inner}</td>`;
 }
@@ -1197,19 +1201,19 @@ function renderByEmp(){
       const tds=MONTHS.map((m,i)=>{ const h=personMonthTotal(p.id,m.key), c=capOf(p,m.key), dol=personMonthDollars(p.id,m.key);
         rt+=h; rcap+=c; rd+=dol; rT.push(h); rC.push(c); rD.push(dol);
         colTot[i]+=h; colCap[i]+=c; colD[i]+=dol; a.t[i]+=h; a.c[i]+=c; a.d[i]+=dol;
-        const cell=hpCell(h,c,utilClass(h,c),"",pu,dol); pu=utilPct(h,c);   // carry this month's % into the next
+        const cell=hpCell(h,c,utilClass(h,c),"",pu,dol,true); pu=utilPct(h,c);   // carry this month's % into the next
         return cell;
       });
       grand+=rt; grandCap+=rcap; grandD+=rd; a.g+=rt; a.gc+=rcap; a.gd+=rd;
-      const ytds=YIDX.map(ix=>hpCell(sumIdx(rT,ix),sumIdx(rC,ix),"","col-tot",null,sumIdx(rD,ix)));
+      const ytds=YIDX.map(ix=>hpCell(sumIdx(rT,ix),sumIdx(rC,ix),"","col-tot",null,sumIdx(rD,ix),true));
       const badge=p.type==="tbh"?" <span class='badge tbh'>TBA</span>":p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
-      body+=`<tr><td class="lbl">${p.name}${badge}<div class="muted" style="font-size:11px">${p.role||"—"}</div></td>`+withYearCols(tds,ytds)+`${hpCell(rt,rcap,"","col-tot",null,rd)}</tr>`;
+      body+=`<tr><td class="lbl">${p.name}${badge}<div class="muted" style="font-size:11px">${p.role||"—"}</div></td>`+withYearCols(tds,ytds)+`${hpCell(rt,rcap,"","col-tot",null,rd,true)}</tr>`;
     });
   });
   const footRow=(label,a,cls)=>{ let pu=null;
-    const tds=a.t.map((t,i)=>{ const cell=hpCell(t,a.c[i],"","",pu,a.d[i]); pu=utilPct(t,a.c[i]); return cell; });
-    const ytds=YIDX.map(ix=>hpCell(sumIdx(a.t,ix),sumIdx(a.c,ix),"","col-tot",null,sumIdx(a.d,ix)));
-    return `<tr class="${cls||""}"><td class="lbl">${label}</td>`+withYearCols(tds,ytds)+`${hpCell(a.g,a.gc,"","col-tot",null,a.gd)}</tr>`; };
+    const tds=a.t.map((t,i)=>{ const cell=hpCell(t,a.c[i],"","",pu,a.d[i],true); pu=utilPct(t,a.c[i]); return cell; });
+    const ytds=YIDX.map(ix=>hpCell(sumIdx(a.t,ix),sumIdx(a.c,ix),"","col-tot",null,sumIdx(a.d,ix),true));
+    return `<tr class="${cls||""}"><td class="lbl">${label}</td>`+withYearCols(tds,ytds)+`${hpCell(a.g,a.gc,"","col-tot",null,a.gd,true)}</tr>`; };
   const foot=`<tfoot>`+
     (acc.employee.n? footRow(`Employees <span class="muted">· ${acc.employee.n}</span>`,acc.employee):"")+
     (acc.contractor.n? footRow(`Contractors <span class="muted">· ${acc.contractor.n}</span>`,acc.contractor):"")+
@@ -1217,7 +1221,7 @@ function renderByEmp(){
     footRow("All shown",{t:colTot,c:colCap,d:colD,g:grand,gc:grandCap,gd:grandD},"grand")+
     `</tfoot>`;
   document.getElementById("viewRoot").innerHTML=
-    `<div class="panel"><div class="panel-hd"><h2>Allocated ${isD()?"dollars":"hours"} by employee × month</h2><span class="hint">${isD()?"dollars (hours × per-project bill rate)":"hours"} + utilization % · shaded vs. capacity · ${ppl.length} people</span></div>`+
+    `<div class="panel"><div class="panel-hd"><h2>Allocated ${isD()?"dollars":"hours"} by employee × month</h2><span class="hint">utilization % first, then ${isD()?"dollars (hours × per-project bill rate)":"hours"}, then the change vs. the prior month · shaded vs. capacity · ${ppl.length} people</span></div>`+
     `<div class="scroll"><table class="pivot">${pivotHead("Employee")}<tbody>${body}</tbody>${foot}</table></div>${legend()}</div>`;
 }
 
