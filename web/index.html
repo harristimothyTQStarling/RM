@@ -895,12 +895,19 @@ function fmtHD0(h,d){ return isD()? money(d) : fmt0(h); }
 
 /* ============================ FILTERS ============================ */
 const F={search:"",dept:"all",type:"all"};
-function passFilter(p){
+/* Department + employee-type only — the project/customer views use this so their
+   search box can keep filtering projects/customers while people are filtered. */
+function passDeptType(p){
   if(F.type!=="all" && p.type!==F.type) return false;
   if(F.dept!=="all"){
     if(F.dept==="__none__"){ if(p.dept && DEPTS.includes(p.dept)) return false; }  // Unassigned = blank or unlisted dept
     else if(p.dept!==F.dept) return false;
   }
+  return true;
+}
+const deptTypeActive=()=> F.dept!=="all" || F.type!=="all";
+function passFilter(p){
+  if(!passDeptType(p)) return false;
   if(F.search){ const s=F.search.toLowerCase(); if(!(p.name.toLowerCase().includes(s)||(p.role||"").toLowerCase().includes(s)||(p.dept||"").toLowerCase().includes(s))) return false; }
   return true;
 }
@@ -1296,8 +1303,10 @@ function renderByRole(){
 
 /* ============================ PIVOT: BY PROJECT ============================ */
 /* ---- Allocate by project: project → resources → monthly hours (PRJ first, then CRM) ---- */
-function projMonthTotal(projid,mkey){ let t=0; allPeople().forEach(p=>{ t+=alloc(p.id,projid,mkey); }); return t; }
-function projMonthDollars(projid,mkey){ let t=0; allPeople().forEach(p=>{ t+=alloc(p.id,projid,mkey)*rateAt(p.id,projid,mkey); }); return t; }
+/* Project-scope sums respect the department / employee-type dropdowns, so the
+   Allocate·Project and By Customer views show only the filtered people's hours. */
+function projMonthTotal(projid,mkey){ let t=0; allPeople().forEach(p=>{ if(passDeptType(p)) t+=alloc(p.id,projid,mkey); }); return t; }
+function projMonthDollars(projid,mkey){ let t=0; allPeople().forEach(p=>{ if(passDeptType(p)) t+=alloc(p.id,projid,mkey)*rateAt(p.id,projid,mkey); }); return t; }
 // project-scope display value for the current mode
 function projV(projid,mkey){ return isD()? projMonthDollars(projid,mkey) : projMonthTotal(projid,mkey); }
 function fmtProj(projid,mkey){ const h=projMonthTotal(projid,mkey); if(!h) return ""; return isD()? money(projMonthDollars(projid,mkey)) : fmt(h); }
@@ -1305,18 +1314,20 @@ function fmtProj(projid,mkey){ const h=projMonthTotal(projid,mkey); if(!h) retur
    logged actuals on it. Mirrors personProjects(): actuals live in an overlay, not in
    the plan, so without the union a project whose hours are all actuals showed
    "0 resources" while its month totals (which sum through alloc()) showed the hours. */
+function onProject(p,projid){
+  if(state.alloc[p.id] && state.alloc[p.id][projid]!==undefined) return true;
+  const ap=ACT_PERSON_PROJ.get(String(p.id)); return !!(ap && ap.has(String(projid)));
+}
 function projPeople(projid){
-  const pj=String(projid);
-  return allPeople().filter(p=>{
-    if(state.alloc[p.id] && state.alloc[p.id][projid]!==undefined) return true;
-    const ap=ACT_PERSON_PROJ.get(String(p.id)); return !!(ap && ap.has(pj));
-  });
+  return allPeople().filter(p=>passDeptType(p) && onProject(p,projid));
 }
 function byPersonOrder(a,b){ return deptRank(a.dept||"")-deptRank(b.dept||"")||a.name.localeCompare(b.name); }
 
 function renderByProj(){
   const q=(F.search||"").toLowerCase();
-  const projs=sortedProjects().filter(pr=> !q || projLabel(pr).toLowerCase().includes(q) || (pr.client||"").toLowerCase().includes(q));
+  let projs=sortedProjects().filter(pr=> !q || projLabel(pr).toLowerCase().includes(q) || (pr.client||"").toLowerCase().includes(q));
+  // With a department / type filter active, hide projects none of those people touch.
+  if(deptTypeActive()) projs=projs.filter(pr=>projPeople(pr.id).length>0);
   LAST_PROJ_LIST=projs;
   const nPrj=projs.filter(p=>p.src==="PRJ").length, nCrm=projs.length-nPrj;
   let html=`<div class="panel"><div class="panel-hd">`+
@@ -1361,9 +1372,10 @@ function projectRow(pr){
 function projectBody(pr){
   const people=projPeople(pr.id).sort(byPersonOrder);
   const rows= people.length? people.map(p=>resLine(p,pr)).join("")
-    : `<div class="empty-body">No resources yet — add one below.</div>`;
-  const have=people.map(p=>String(p.id));
-  const avail=allPeople().filter(p=>!have.includes(String(p.id))).sort(byPersonOrder);
+    : `<div class="empty-body">No resources${deptTypeActive()?" match the department / type filter":" yet — add one below"}.</div>`;
+  // Membership check is UNfiltered: someone hidden by the dept/type filter is
+  // still on the project and must not be offered in the add list again.
+  const avail=allPeople().filter(p=>!onProject(p,pr.id)).sort(byPersonOrder);
   const opts=avail.map(p=>`<option value="${p.id}">${esc(p.name)}${p.type==="tbh"?" (TBA)":""} · ${esc(p.role||deptLabel(p.dept))}</option>`).join("");
   const mapBanner=(pr.needsProject && canEdit())? npMapBanner(pr) : "";
   return mapBanner+rows+`<div class="addproj"><select data-addres="${String(pr.id)}"><option value="">+ Add resource…</option>${opts}</select></div>`;
@@ -1421,10 +1433,14 @@ function renderByCust(){
   const fV=v=> v? (isD()? money(v):fmt(v)) : "";
   const fV0=v=> v? (isD()? money(v):fmt0(v)) : "";
   let rows=Object.keys(custs).map(c=>{
-    const projs=custs[c];
+    let projs=custs[c];
+    // With a department / type filter active, keep only projects (and hours)
+    // belonging to the filtered people; customers left with nothing disappear.
+    if(deptTypeActive()) projs=projs.filter(pr=>MKEYS.some(k=>projMonthTotal(pr.id,k)>0));
     const per=MKEYS.map(k=> projs.reduce((s,pr)=>s+projV(pr.id,k),0));
     return {c, projs, per, tot:per.reduce((a,b)=>a+b,0)};
   });
+  if(deptTypeActive()) rows=rows.filter(r=>r.projs.length>0);
   if(q) rows=rows.filter(r=> r.c.toLowerCase().includes(q) || r.projs.some(pr=>projLabel(pr).toLowerCase().includes(q)));
   rows.sort((a,b)=> b.tot-a.tot || a.c.localeCompare(b.c));   // busiest customers first
 
@@ -1781,10 +1797,14 @@ function render(){
   renderKpis();
   const showFilters = VIEW!=="hiring";
   document.getElementById("filters").style.visibility = showFilters? "visible":"hidden";
-  const personFilters = VIEW!=="byProj" && VIEW!=="byCust" && VIEW!=="crmCheck";   // these views search projects/customers, not people
+  // crmCheck searches projects and has no people dimension; every other view
+  // takes the department / employee-type dropdowns (project views filter the
+  // PEOPLE whose hours are counted, while their search box filters projects).
+  const personFilters = VIEW!=="crmCheck";
+  const personSearch = VIEW!=="byProj" && VIEW!=="byCust" && VIEW!=="crmCheck";
   document.getElementById("fDept").style.display = personFilters? "":"none";
   document.getElementById("fType").style.display = personFilters? "":"none";
-  document.getElementById("fSearch").placeholder = personFilters ? "Search name / role…"
+  document.getElementById("fSearch").placeholder = personSearch ? "Search name / role…"
     : (VIEW==="byCust" ? "Search customer / project…" : "Search project / client…");
   if(VIEW==="allocate") renderAllocate();
   else if(VIEW==="byEmp") renderByEmp();
