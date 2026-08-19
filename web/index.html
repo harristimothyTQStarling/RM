@@ -156,8 +156,10 @@
   .np-map select{max-width:340px;}
   .avatar{width:28px;height:28px;border-radius:50%;flex:0 0 auto;display:grid;place-items:center;font-size:11px;font-weight:650;color:#fff;}
 
-  .mgrid{display:grid;grid-template-columns:repeat(12,minmax(46px,1fr)) 58px repeat(12,minmax(46px,1fr)) 58px 62px;}
-  /* $ view: dollar figures run wider than hours (totals reach 6–7 digits), so
+  /* Column minimums are sized for the TOTALS row, not just the per-person cells:
+     hours totals reach "2,200.8" (7 chars), so months need ≥56px. */
+  .mgrid{display:grid;grid-template-columns:repeat(12,minmax(56px,1fr)) 68px repeat(12,minmax(56px,1fr)) 68px 76px;}
+  /* $ view: dollar figures run wider still (totals reach 6–7 digits), so
      give every column a larger minimum — the grid scrolls horizontally anyway. */
   body.dollars .mgrid{grid-template-columns:repeat(12,minmax(64px,1fr)) 76px repeat(12,minmax(64px,1fr)) 76px 84px;}
   body.dollars .a-inputs{grid-template-columns:repeat(12,minmax(64px,1fr)) 76px repeat(12,minmax(64px,1fr)) 76px 84px;}
@@ -189,7 +191,7 @@
   .a-proj>div:first-child{flex:1 1 100%;min-width:0;}
   .a-proj .pn{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .a-proj .cl{font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .a-inputs{display:grid;grid-template-columns:repeat(12,minmax(46px,1fr)) 58px repeat(12,minmax(46px,1fr)) 58px 62px;}
+  .a-inputs{display:grid;grid-template-columns:repeat(12,minmax(56px,1fr)) 68px repeat(12,minmax(56px,1fr)) 68px 76px;}
   .a-inputs input{width:100%;height:100%;border:none;border-left:1px solid var(--line);background:transparent;
     text-align:center;font-size:12.5px;color:var(--ink);font-variant-numeric:tabular-nums;padding:6px 2px;-moz-appearance:textfield;}
   .a-inputs input::-webkit-outer-spin-button,.a-inputs input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
