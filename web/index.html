@@ -161,7 +161,9 @@
   .mcell{padding:7px 4px;text-align:center;border-left:1px solid var(--line);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;}
   .mcell .h{font-weight:640;font-size:12.5px;}
   .mcell .u{font-size:9.5px;opacity:.8;}
-  .mcell.tot{background:var(--surface-2);font-weight:680;border-left:1px solid var(--line-strong);}
+  /* Same size as the month values (.mcell .h), just bold — the annual totals
+     render bare text, so without this they inherit the larger base size. */
+  .mcell.tot{background:var(--surface-2);font-weight:680;border-left:1px solid var(--line-strong);font-size:12.5px;}
   .u-none{background:var(--u-none);color:var(--u-none-ink);}
   .u-under{background:var(--u-under);color:var(--u-under-ink);}
   .u-good{background:var(--u-good);color:var(--u-good-ink);}
