@@ -1962,8 +1962,9 @@ function renderCosting(){
    Odoo; open months use forecast hours × forecast pair rate. Costing role only. */
 let pmOpen=new Set();
 /* Toggle: hide person-lines whose hours have no hourly cost behind them (and
-   drop their hours from the project sums) — or show everything, flagged. */
-let PM_HIDENC=false; try{ PM_HIDENC=localStorage.getItem("tqs-rm-pm-hidenc")==="1"; }catch(e){}
+   drop their hours from the project sums) — or show everything, flagged.
+   Defaults ON; an explicit opt-out ("0") is remembered. */
+let PM_HIDENC=true; try{ PM_HIDENC=localStorage.getItem("tqs-rm-pm-hidenc")!=="0"; }catch(e){}
 function pmCell(rev,cost,extra,flag){
   if(!(rev>0)&&!(cost>0)) return `<td class="mcelln ${extra||""}"></td>`;
   const profit=rev-cost, pct= rev>0? Math.round(profit/rev*100) : null;
