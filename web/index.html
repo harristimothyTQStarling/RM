@@ -2000,6 +2000,8 @@ function renderProjMargin(){
       MONTHS.forEach((m,i)=>{ const x=pmPersonMonth(p.id,pr.id,m);
         prev[i]=x.rev; pcost[i]=x.cost; ph+=x.h;
         rev[i]+=x.rev; cost[i]+=x.cost;
+        // The "no cost" flag exists only where uncosted HOURS are assigned —
+        // a person with no hours and no cost is simply not a margin problem.
         if(x.h>0 && x.missing){ missing=true; pMissing=true; } });
       return {p, rev:prev, cost:pcost, hours:ph, missing:pMissing};
     }).filter(x=>x.hours>0 || x.rev.some(v=>v>0));
@@ -2025,7 +2027,11 @@ function renderProjMargin(){
     it.people.forEach(x=>{
       const r=costRateOf(x.p.id), hc=r&&r.hourly!=null? r.hourly:null;
       const cbadge=x.p.type==="contractor"?" <span class='badge contractor'>Con</span>":x.p.type==="tbh"?" <span class='badge tbh'>TBA</span>":"";
-      const costNote= hc!=null? `$${fmt(hc)}/hr cost · ${fmt0(x.hours)}h` : `<span class="badge np">no hourly cost</span> · ${fmt0(x.hours)}h`;
+      // Badge only when this line actually has uncosted hours; fmt (not fmt0)
+      // so fractional hours never display as a misleading "0h" next to a flag.
+      const costNote= hc!=null? `$${fmt(hc)}/hr cost · ${fmt(x.hours)}h`
+        : x.missing? `<span class="badge np">no hourly cost</span> · ${fmt(x.hours)}h`
+        : `${fmt(x.hours)}h`;
       const ptds=MONTHS.map((m,i)=>pmCell(x.rev[i],x.cost[i],""));
       const pytds=YIDX.map(ix=>pmCell(sumIdx(x.rev,ix),sumIdx(x.cost,ix),"col-tot"));
       body+=`<tr class="lvl2"><td class="lbl lvl2i">${esc(x.p.name)}${cbadge}`+
