@@ -819,7 +819,7 @@ function capOf(p,mkey){
   const c=calFor(mkey);
   const workdays=c.days.length-c.hol.size;
   let avail=0;
-  for(const ds of c.days){ if(!c.hol.has(ds) && !(p.hireDate && ds<p.hireDate)) avail++; }
+  for(const ds of c.days){ if(!c.hol.has(ds) && !(p.hireDate && ds<p.hireDate) && !(p.endDate && ds>p.endDate)) avail++; }
   if(!avail) return 0;
   const ov=state.capacity[p.id];
   if(ov!==undefined&&ov!==null&&ov!==""){
@@ -1850,12 +1850,33 @@ async function loadCost(force){
    annual figure drives the monthly cost, the hourly is reference. */
 function costRateOf(pid){ return COST.rates? COST.rates.get(String(pid)) : null; }
 function costBasis(r){ return !r? "" : r.monthly!=null? "monthly" : r.annual!=null? "annual ÷12" : r.biweekly!=null? "bi-weekly ×26/12" : r.hourly!=null? "hourly × hours" : ""; }
+/* Fraction of a month's weekdays inside the person's Odoo employment window
+   (hire date … offboarding date). 0 before hire and after departure; partial
+   in the start/end months. Salary-like costs scale by this; holidays are paid,
+   so the plain weekday count is the right denominator here. */
+function employmentFactor(p,mkey){
+  if(!p || (!p.hireDate && !p.endDate)) return 1;
+  const days=calFor(mkey).days; if(!days.length) return 1;
+  let n=0;
+  for(const ds of days){ if(p.hireDate && ds<p.hireDate) continue; if(p.endDate && ds>p.endDate) continue; n++; }
+  return n/days.length;
+}
 function personMonthCost(pid,mkey){
   const r=costRateOf(pid); if(!r) return 0;
-  if(r.monthly!=null) return r.monthly;
-  if(r.annual!=null) return Math.round(r.annual/12*100)/100;
-  if(r.biweekly!=null) return Math.round(r.biweekly*26/12*100)/100;
-  if(r.hourly!=null) return Math.round(r.hourly*personMonthTotal(pid,mkey)*100)/100;
+  const f=employmentFactor(personById(pid),mkey);
+  if(f<=0) return 0;
+  const r2=n=>Math.round(n*100)/100;
+  if(r.monthly!=null) return r2(r.monthly*f);
+  if(r.annual!=null) return r2(r.annual/12*f);
+  if(r.biweekly!=null) return r2(r.biweekly*26/12*f);
+  // Hourly cost follows the hours: closed months use actual hours as logged,
+  // open months clip by the employment fraction (forecast hours don't know
+  // about a mid-month departure, actuals do).
+  if(r.hourly!=null){
+    const m=MONTHS.find(x=>x.key===mkey);
+    const clip=(m && !isPastMi(m.mi))? f : 1;
+    return r2(r.hourly*personMonthTotal(pid,mkey)*clip);
+  }
   return 0;
 }
 /* Revenue per person per month: closed months use actual billable revenue from
@@ -1925,7 +1946,8 @@ function renderCosting(){
   const note=`<div class="legend" style="margin-top:6px"><span>`+
     (COST.rates.size? `${COST.rates.size} ${COST.rates.size===1?"person has":"people have"} a cost rate. `
                     : `<b>No cost data yet.</b> Use Resource costs to enter each person's fully loaded cost. `)+
-    `A month's cost = the person's <b>monthly</b> rate if set, else <b>annual ÷ 12</b>, else <b>bi-weekly × 26 ÷ 12</b>, else <b>hourly × that month's hours</b> (actual hours for closed months, forecast onward). Revenue: closed months are actual billable revenue from Odoo; from the current month it is forecast hours × bill rate.`+
+    `A month's cost = the person's <b>monthly</b> rate if set, else <b>annual ÷ 12</b>, else <b>bi-weekly × 26 ÷ 12</b>, else <b>hourly × that month's hours</b> (actual hours for closed months, forecast onward). `+
+    `Costs are <b>prorated to the Odoo employment window</b>: nothing before the hire date or after the offboarding date, and the start/end months carry only the employed fraction. Revenue: closed months are actual billable revenue from Odoo; from the current month it is forecast hours × bill rate.`+
     `</span></div>`;
   root.innerHTML=head(`<div class="scroll"><table class="pivot">${pivotHead("Person")}<tbody>${body||`<tr><td class="lbl muted" style="padding:14px">No people with cost or revenue match the current filters.</td></tr>`}</tbody>${foot}</table></div>${note}`);
 }

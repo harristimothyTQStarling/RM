@@ -156,9 +156,11 @@ CREATE TABLE IF NOT EXISTS ref_person (
   dept      VARCHAR(128) NOT NULL DEFAULT '',
   type      VARCHAR(16)  NOT NULL DEFAULT 'employee',   -- employee | contractor
   active    SMALLINT     NOT NULL DEFAULT 1,
-  hire_date DATE                                 -- earliest hr_version.date_version
+  hire_date DATE,                                -- earliest hr_version.date_version
+  end_date  DATE                                 -- departure_date on the latest hr_version
 );
 ALTER TABLE ref_person ADD COLUMN IF NOT EXISTS hire_date DATE;
+ALTER TABLE ref_person ADD COLUMN IF NOT EXISTS end_date DATE;
 
 -- Company-wide public holidays (resource_calendar_leaves rows with no resource,
 -- time_type='leave'). Used to prorate monthly capacity, matching the board-pack

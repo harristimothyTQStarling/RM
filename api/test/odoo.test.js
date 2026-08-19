@@ -176,28 +176,39 @@ test("syncAll caches reference data and scopes actuals to the roster", async () 
   // The reference payload carries the capacity-proration inputs to the client.
   const ref = await require("../src/store").getReference(db);
   assert.deepEqual(ref.holidays, [{ name: "Independence Day", from: "2026-07-03", to: "2026-07-03" }]);
-  assert.ok(ref.people.every((p) => "hireDate" in p), "people expose hireDate (null when Odoo has no versions)");
+  assert.ok(ref.people.every((p) => "hireDate" in p && "endDate" in p), "people expose hireDate/endDate (null when Odoo has no versions)");
 });
 
 /* ---- capacity basis inputs: hire dates + company holidays (board-pack parity) ---- */
 
-test("hire date = earliest hr_version.date_version, matching the board pack", async () => {
+test("employment window from hr.version: earliest date_version hires, latest version's departure ends", async () => {
   const { readPeople } = require("../src/odoo");
   const fakeOdoo = {
     hasFields: async (model, names) => Object.fromEntries(names.map((n) => [n,
       model === "hr.version" ? true : n === "current_version_id"])),
     searchRead: async (model, domain, fields) => {
-      if (model === "hr.employee") return [{ id: 1, name: "Ken Sousa", current_version_id: [11, "v"] }];
-      if (fields.includes("date_version")) return [
-        { id: 21, employee_id: [1, "Ken"], date_version: "2025-06-01" },
-        { id: 11, employee_id: [1, "Ken"], date_version: "2024-03-15" },   // earliest wins
-        { id: 22, employee_id: [1, "Ken"], date_version: false },          // unset rows ignored
+      if (model === "hr.employee") return [
+        { id: 1, name: "Ken Sousa", current_version_id: [11, "v"] },
+        { id: 2, name: "Ian Brown", current_version_id: [31, "v"] },
       ];
-      return [{ id: 11, job_title: "Engagement Manager", department_id: [5, "Delivery"], employee_type: "employee" }];
+      if (fields.includes("date_version")) return [
+        { id: 21, employee_id: [1, "Ken"], date_version: "2025-06-01", departure_date: "2026-10-16" }, // latest -> offboarding
+        { id: 11, employee_id: [1, "Ken"], date_version: "2024-03-15", departure_date: false },        // earliest -> hire
+        { id: 22, employee_id: [1, "Ken"], date_version: false },                                      // unset rows ignored
+        // Rehire: an OLD version carries a departure, the newest does not -> no end date.
+        { id: 30, employee_id: [2, "Ian"], date_version: "2023-01-09", departure_date: "2024-05-31" },
+        { id: 31, employee_id: [2, "Ian"], date_version: "2025-02-03", departure_date: false },
+      ];
+      return [
+        { id: 11, job_title: "Engagement Manager", department_id: [5, "Delivery"], employee_type: "employee" },
+        { id: 31, job_title: "Consultant", department_id: [5, "Delivery"], employee_type: "employee" },
+      ];
     },
   };
   const out = await readPeople(fakeOdoo);
-  assert.equal(out[0].hire_date, "2024-03-15");
+  const ken = out.find((p) => p.id === 1), ian = out.find((p) => p.id === 2);
+  assert.deepEqual([ken.hire_date, ken.end_date], ["2024-03-15", "2026-10-16"]);
+  assert.deepEqual([ian.hire_date, ian.end_date], ["2023-01-09", null], "a rehire's stale departure is cleared by the current version");
 });
 
 test("readHolidays keeps only valid company-wide rows and normalises datetimes to dates", async () => {

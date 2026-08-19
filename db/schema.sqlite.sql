@@ -118,7 +118,8 @@ CREATE TABLE IF NOT EXISTS ref_person (
   dept      TEXT NOT NULL DEFAULT '',
   type      TEXT NOT NULL DEFAULT 'employee',
   active    INTEGER NOT NULL DEFAULT 1,
-  hire_date TEXT                             -- earliest hr_version.date_version (YYYY-MM-DD)
+  hire_date TEXT,                            -- earliest hr_version.date_version (YYYY-MM-DD)
+  end_date  TEXT                             -- departure_date on the latest hr_version
 );
 
 -- Company-wide public holidays (resource_calendar_leaves rows with no resource,
