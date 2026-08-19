@@ -4,7 +4,7 @@
  * Azure Functions and the local dev server are both thin adapters over these,
  * so what runs in CI is what runs in Azure.
  */
-const { getUser, canEdit, canImport, canCost } = require("./auth");
+const { getUser, canEdit, canImport, canCost, canCostEdit } = require("./auth");
 const store = require("./store");
 
 const json = (status, body) => ({ status, body });
@@ -19,7 +19,7 @@ async function handle(db, req) {
   const scenario = q.scenario || body.scenario || "baseline";
 
   if (path === "/api/me") {
-    return user ? json(200, { upn: user.upn, roles: user.roles, canEdit: canEdit(user), canImport: canImport(user), canCost: canCost(user), agentEnabled: require("./agent").enabled() }) : UNAUTH;
+    return user ? json(200, { upn: user.upn, roles: user.roles, canEdit: canEdit(user), canImport: canImport(user), canCost: canCost(user), canCostEdit: canCostEdit(user), agentEnabled: require("./agent").enabled() }) : UNAUTH;
   }
   if (!user) return UNAUTH;
 
@@ -33,7 +33,7 @@ async function handle(db, req) {
   if (method === "GET" && path === "/api/bootstrap") {
     // One round-trip for page load: identity + reference + plan.
     const [reference, plan] = await Promise.all([store.getReference(db), store.getPlan(db, scenario)]);
-    return json(200, { me: { upn: user.upn, name: user.name, canEdit: canEdit(user), canImport: canImport(user), canCost: canCost(user), agentEnabled: require("./agent").enabled() }, reference, plan });
+    return json(200, { me: { upn: user.upn, name: user.name, canEdit: canEdit(user), canImport: canImport(user), canCost: canCost(user), canCostEdit: canCostEdit(user), agentEnabled: require("./agent").enabled() }, reference, plan });
   }
   if (method === "GET" && path === "/api/audit") {
     const rows = await db.all("SELECT at, actor, entity, entity_key, action, old_value, new_value FROM audit_log ORDER BY at DESC, id DESC LIMIT 200");
@@ -77,6 +77,9 @@ async function handle(db, req) {
       });
     }
     if (method === "PUT" && path === "/api/cost/rate") {
+      // Editing the rate card is stricter than viewing it: COSTING_EDIT_UPNS
+      // (default tim@) — the rest of the costing role sees the tabs read-only.
+      if (!canCostEdit(user)) return json(403, { error: "cost editing is restricted" });
       const id = Number(body.employeeId);
       if (!Number.isInteger(id)) return json(400, { error: "employeeId required" });
       const num = (v) => {

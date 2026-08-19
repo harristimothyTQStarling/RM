@@ -1911,7 +1911,7 @@ function renderCosting(){
     `<div class="seg" role="group" aria-label="Metric">`+
       ["profit","revenue","cost"].map(mo=>`<button type="button" data-costmode="${mo}" aria-pressed="${COST.mode===mo}">${mo[0].toUpperCase()+mo.slice(1)}</button>`).join("")+
     `</div>`+
-    `<button class="btn primary" id="btnCostRates" title="Enter each person's fully loaded cost — bi-weekly, monthly or hourly. Only the costing role can see or edit.">Resource costs…</button></div>`+
+    (ME.canCostEdit? `<button class="btn primary" id="btnCostRates" title="Enter each person's fully loaded cost — annual, bi-weekly, monthly or hourly.">Resource costs…</button>`:"")+`</div>`+
     `<span class="hint">fully loaded cost (salary + bonus + employer taxes + benefits) vs revenue · costs entered in-app per person: monthly, annual ÷12, bi-weekly ×26/12, or hourly × hours</span></div>${bodyHtml}</div>`;
   const root=document.getElementById("viewRoot");
   if(COST.err){ root.innerHTML=head(`<div style="padding:18px"><p>⚠ ${esc(COST.err)}</p></div>`); return; }

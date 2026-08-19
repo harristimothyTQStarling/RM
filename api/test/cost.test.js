@@ -27,9 +27,14 @@ test("role gating: only the costing allowlist can see or edit cost rates", async
   assert.equal(ok.status, 200, "tim@ is in the default costing role");
   assert.deepEqual(ok.body.rates, []);
 
-  // Default allowlist covers the margin-tab group: tim, melissa, joe, peter.
-  for (const upn of ["melissa@tqstarling.com", "joe@tqstarling.com", "peter@tqstarling.com"])
+  // Default allowlist covers the margin-tab group: tim, melissa, joe, peter —
+  // read-only for everyone but tim, who alone may edit the rate card.
+  for (const upn of ["melissa@tqstarling.com", "joe@tqstarling.com", "peter@tqstarling.com"]) {
     assert.equal((await call(db, "GET", "/api/cost", null, as(upn))).status, 200, `${upn} has the costing role by default`);
+    assert.equal((await put(db, as(upn), { employeeId: 1, monthly: 20000 })).status, 403, `${upn} cannot edit the rate card`);
+    assert.equal((await call(db, "GET", "/api/me", null, as(upn))).body.canCostEdit, false);
+  }
+  assert.equal((await call(db, "GET", "/api/me", null, TIM)).body.canCostEdit, true, "tim edits by default");
 
   process.env.COSTING_UPNS = "";              // fail closed
   assert.equal((await call(db, "GET", "/api/cost", null, TIM)).status, 403, "empty allowlist denies everyone");

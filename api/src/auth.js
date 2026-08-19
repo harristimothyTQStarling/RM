@@ -91,4 +91,15 @@ function costingUpns() {
 const canCost = (user) =>
   !!user && costingUpns().includes(String(user.upn || "").toLowerCase());
 
-module.exports = { getUser, canEdit, canImport, canCost, editorUpns, importerUpns, costingUpns, rolesFor, ROLE_EDITOR };
+/** Who may EDIT the cost rate card (a stricter subset of the costing role —
+ *  the others see the margin tabs read-only). Same idiom: unset -> tim only,
+ *  empty -> nobody. Must also hold the costing role. */
+function costingEditUpns() {
+  const raw = process.env.COSTING_EDIT_UPNS;
+  return (raw == null ? "tim@tqstarling.com" : raw)
+    .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+}
+const canCostEdit = (user) =>
+  canCost(user) && costingEditUpns().includes(String(user.upn || "").toLowerCase());
+
+module.exports = { getUser, canEdit, canImport, canCost, canCostEdit, editorUpns, importerUpns, costingUpns, costingEditUpns, rolesFor, ROLE_EDITOR };
