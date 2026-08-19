@@ -10,10 +10,10 @@ const test = require("node:test");
 const assert = require("node:assert");
 const { as, ANON, fresh, call } = require("./helpers");
 
-process.env.EDITOR_UPNS = "tim@tqstarling.com,melissa@tqstarling.com";
-delete process.env.COSTING_UPNS;              // default: tim only
+process.env.EDITOR_UPNS = "tim@tqstarling.com,amy@tqstarling.com";
+delete process.env.COSTING_UPNS;              // default: tim, melissa, joe, peter
 const TIM = as("tim@tqstarling.com");
-const MELISSA = as("melissa@tqstarling.com"); // editor but NOT costing
+const AMY = as("amy@tqstarling.com");         // editor but NOT costing
 const JANE = as("jane@tqstarling.com");       // viewer
 
 const put = (db, headers, card) => call(db, "PUT", "/api/cost/rate", card, headers);
@@ -22,23 +22,29 @@ test("role gating: only the costing allowlist can see or edit cost rates", async
   const db = fresh();
   assert.equal((await call(db, "GET", "/api/cost", null, ANON)).status, 401);
   assert.equal((await call(db, "GET", "/api/cost", null, JANE)).status, 403, "viewers are refused");
-  assert.equal((await call(db, "GET", "/api/cost", null, MELISSA)).status, 403, "editors without the role are refused");
+  assert.equal((await call(db, "GET", "/api/cost", null, AMY)).status, 403, "editors without the role are refused");
   const ok = await call(db, "GET", "/api/cost", null, TIM);
-  assert.equal(ok.status, 200, "tim@ is the default costing role");
+  assert.equal(ok.status, 200, "tim@ is in the default costing role");
   assert.deepEqual(ok.body.rates, []);
+
+  // Default allowlist covers the margin-tab group: tim, melissa, joe, peter.
+  for (const upn of ["melissa@tqstarling.com", "joe@tqstarling.com", "peter@tqstarling.com"])
+    assert.equal((await call(db, "GET", "/api/cost", null, as(upn))).status, 200, `${upn} has the costing role by default`);
 
   process.env.COSTING_UPNS = "";              // fail closed
   assert.equal((await call(db, "GET", "/api/cost", null, TIM)).status, 403, "empty allowlist denies everyone");
+  process.env.COSTING_UPNS = "tim@tqstarling.com";  // explicit list overrides the default
+  assert.equal((await call(db, "GET", "/api/cost", null, as("melissa@tqstarling.com"))).status, 403, "explicit COSTING_UPNS wins over the default");
   delete process.env.COSTING_UPNS;
 
-  assert.equal((await put(db, MELISSA, { employeeId: 1, monthly: 20000 })).status, 403, "editors cannot write rates");
+  assert.equal((await put(db, AMY, { employeeId: 1, monthly: 20000 })).status, 403, "editors cannot write rates");
   assert.equal((await put(db, JANE, { employeeId: 1, monthly: 20000 })).status, 403);
 });
 
 test("me/bootstrap expose canCost to exactly the costing role", async () => {
   const db = fresh();
   assert.equal((await call(db, "GET", "/api/me", null, TIM)).body.canCost, true);
-  assert.equal((await call(db, "GET", "/api/me", null, MELISSA)).body.canCost, false);
+  assert.equal((await call(db, "GET", "/api/me", null, AMY)).body.canCost, false);
 });
 
 test("rate card round-trips: upsert, partial fields, attribution", async () => {
