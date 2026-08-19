@@ -156,12 +156,12 @@
   .np-map select{max-width:340px;}
   .avatar{width:28px;height:28px;border-radius:50%;flex:0 0 auto;display:grid;place-items:center;font-size:11px;font-weight:650;color:#fff;}
 
-  .mgrid{display:grid;grid-template-columns:repeat(24,minmax(46px,1fr)) 58px 58px 62px;}
+  .mgrid{display:grid;grid-template-columns:repeat(12,minmax(46px,1fr)) 58px repeat(12,minmax(46px,1fr)) 58px 62px;}
   .mgrid.head .mcell{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;font-weight:600;background:var(--surface-2);position:sticky;top:0;}
   .mcell{padding:7px 4px;text-align:center;border-left:1px solid var(--line);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;}
   .mcell .h{font-weight:640;font-size:12.5px;}
   .mcell .u{font-size:9.5px;opacity:.8;}
-  .mcell.tot{background:var(--surface-2);font-weight:680;}
+  .mcell.tot{background:var(--surface-2);font-weight:680;border-left:1px solid var(--line-strong);}
   .u-none{background:var(--u-none);color:var(--u-none-ink);}
   .u-under{background:var(--u-under);color:var(--u-under-ink);}
   .u-good{background:var(--u-good);color:var(--u-good-ink);}
@@ -183,7 +183,7 @@
   .a-proj>div:first-child{flex:1 1 100%;min-width:0;}
   .a-proj .pn{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .a-proj .cl{font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .a-inputs{display:grid;grid-template-columns:repeat(24,minmax(46px,1fr)) 58px 58px 62px;}
+  .a-inputs{display:grid;grid-template-columns:repeat(12,minmax(46px,1fr)) 58px repeat(12,minmax(46px,1fr)) 58px 62px;}
   .a-inputs input{width:100%;height:100%;border:none;border-left:1px solid var(--line);background:transparent;
     text-align:center;font-size:12.5px;color:var(--ink);font-variant-numeric:tabular-nums;padding:6px 2px;-moz-appearance:textfield;}
   .a-inputs input::-webkit-outer-spin-button,.a-inputs input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
@@ -214,7 +214,7 @@
   .mgrid.head .mcell.actual{color:var(--accent-ink);}
   .mgrid.head .mcell .actflag{font-size:7.5px;letter-spacing:.02em;opacity:.75;font-weight:600;text-transform:uppercase;line-height:1;}
   table.pivot thead th.actual{color:var(--accent-ink);}
-  .a-inputs .rowtot{border-left:1px solid var(--line);background:var(--surface-3);display:flex;align-items:center;justify-content:center;font-weight:640;font-size:12px;}
+  .a-inputs .rowtot{border-left:1px solid var(--line-strong);background:var(--surface-3);display:flex;align-items:center;justify-content:center;font-weight:640;font-size:12px;cursor:default;}
   .rm{margin-left:auto;border:none;background:transparent;color:var(--faint);padding:2px 4px;border-radius:5px;font-size:14px;line-height:1;}
   .rm:hover{color:var(--u-over-ink);background:var(--u-over);}
   .addproj{padding:8px 14px 10px 30px;}
@@ -645,6 +645,10 @@ const YIDX = YEARS.map(y=>MONTHS.filter(m=>m.year===y).map(m=>m.mi));
 const YKEYS = YEARS.map(y=>MONTHS.filter(m=>m.year===y).map(m=>m.key));
 const YLBL = YEARS.map(y=>"'"+String(y).slice(2));
 const sumIdx=(arr,idxs)=>idxs.reduce((s,i)=>s+(Number(arr[i])||0),0);
+/* Shared column order for every grid: Jan–Dec '26, the '26 total, Jan–Dec '27,
+   the '27 total, then the grand Total. Year totals are display-only summaries —
+   they are never inputs. Both args are arrays (24 month cells, 2 year cells). */
+const withYearCols=(monthCells,yearCells)=>YEARS.map((y,yi)=>YIDX[yi].map(i=>monthCells[i]).join("")+yearCells[yi]).join("");
 /* Index of the current month within the horizon; months before it are "past"
    (locked actuals). Clamped: before the horizon nothing is past, after it
    everything is. */
@@ -962,9 +966,9 @@ const custOpen=new Set();   // By Customer: expanded customers
 function chev(){ return `<svg class="twchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>`; }
 
 function monthHeadRow(extraClass){
-  return `<div class="mgrid head ${extraClass||""}">`+
-    MONTHS.map(m=>`<div class="mcell${isPastMi(m.mi)?" actual":""}">${m.label}${isPastMi(m.mi)?'<span class="actflag">actual</span>':''}</div>`).join("")+
-    YLBL.map(l=>`<div class="mcell tot">${l}</div>`).join("")+
+  const mc=MONTHS.map(m=>`<div class="mcell${isPastMi(m.mi)?" actual":""}">${m.label}${isPastMi(m.mi)?'<span class="actflag">actual</span>':''}</div>`);
+  const yc=YLBL.map(l=>`<div class="mcell tot" title="Annual total (read-only)">${l}</div>`);
+  return `<div class="mgrid head ${extraClass||""}">`+withYearCols(mc,yc)+
     `<div class="mcell tot">Total</div></div>`;
 }
 
@@ -972,12 +976,12 @@ function monthHeadRow(extraClass){
    following the toggle) over exactly what's rendered, so filters/search apply. */
 let LAST_ALLOC_PPL=[], LAST_PROJ_LIST=[];
 function totalsRowHtml(label, perMonth, grand){
-  const cells=MONTHS.map((m,i)=>`<div class="mcell tot" data-coltot="${m.key}"><span class="h">${perMonth[i].h?fmtHD(perMonth[i].h,perMonth[i].d):"·"}</span></div>`).join("");
-  const yr=(yi)=>{ const h=sumIdx(perMonth.map(x=>x.h),YIDX[yi]), d=sumIdx(perMonth.map(x=>x.d),YIDX[yi]);
-    return `<div class="mcell tot" data-coltot-y="${yi}"><span class="h">${h?fmtHD0(h,d):"·"}</span></div>`; };
+  const cells=MONTHS.map((m,i)=>`<div class="mcell tot" data-coltot="${m.key}"><span class="h">${perMonth[i].h?fmtHD(perMonth[i].h,perMonth[i].d):"·"}</span></div>`);
+  const yr=YEARS.map((y,yi)=>{ const h=sumIdx(perMonth.map(x=>x.h),YIDX[yi]), d=sumIdx(perMonth.map(x=>x.d),YIDX[yi]);
+    return `<div class="mcell tot" data-coltot-y="${yi}"><span class="h">${h?fmtHD0(h,d):"·"}</span></div>`; });
   return `<div class="p-row grid-totrow"><div class="p-head">`+
     `<div class="p-ident">${label}</div>`+
-    `<div class="mgrid p-meta">${cells}${yr(0)}${yr(1)}<div class="mcell tot" data-coltot-yr><span class="h">${grand.h?fmtHD0(grand.h,grand.d):"·"}</span></div></div>`+
+    `<div class="mgrid p-meta">`+withYearCols(cells,yr)+`<div class="mcell tot" data-coltot-yr><span class="h">${grand.h?fmtHD0(grand.h,grand.d):"·"}</span></div></div>`+
   `</div></div>`;
 }
 function allocTotals(ppl){
@@ -1027,13 +1031,13 @@ function personRow(p){
   const cells=MONTHS.map(m=>{
     const h=personMonthTotal(p.id,m.key), c=capOf(p,m.key);
     return `<div class="mcell ${utilClass(h,c)}" data-sum="${p.id}:${m.key}"><span class="h">${h?fmtHD(h,personMonthDollars(p.id,m.key)):"·"}</span><span class="u">${c?Math.round(h/c*100)+"%":""}</span></div>`;
-  }).join("");
+  });
   const yr=MKEYS.reduce((s,k)=>s+personMonthTotal(p.id,k),0);
   const yrD=personDollars(p.id);
   const yCells=YEARS.map((y,yi)=>{
     const h=YKEYS[yi].reduce((s,k)=>s+personMonthTotal(p.id,k),0);
     return `<div class="mcell tot" data-py="${p.id}:${yi}">${h?fmtHD0(h,personDollars(p.id,YKEYS[yi])):"·"}</div>`;
-  }).join("");
+  });
   const badge=p.type==="tbh"?`<span class="badge tbh">TBA</span>`:p.type==="contractor"?`<span class="badge contractor">Contractor</span>`:`<span class="badge emp">Employee</span>`;
   const rateBadge = isD()&&yr&&!yrD? ` <span class="badge tbh" title="No bill rates set on this person's project lines — dollars show $0">no rate</span>`:"";
   let body="";
@@ -1045,7 +1049,7 @@ function personRow(p){
         `<div class="avatar" style="background:${deptColor(p.dept)}">${initials(p.name)}</div>`+
         `<div style="min-width:0"><div class="p-name">${p.name} ${badge}${rateBadge}</div><div class="p-role">${p.role||"—"} · ${p.dept}</div></div>`+
       `</div>`+
-      `<div class="mgrid p-meta">${cells}${yCells}<div class="mcell tot" data-yr="${p.id}">${yr?fmtHD0(yr,yrD):"·"}</div></div>`+
+      `<div class="mgrid p-meta">`+withYearCols(cells,yCells)+`<div class="mcell tot" data-yr="${p.id}">${yr?fmtHD0(yr,yrD):"·"}</div></div>`+
     `</div>`+
     `<div class="p-body">${body}</div>`+
   `</div>`;
@@ -1091,12 +1095,12 @@ function actRateHint(pid,projid){
 }
 function allocLine(p,projid){
   const pr=projById(projid); if(!pr) return "";
-  const inputs=MONTHS.map(m=>lineCell(p.id,projid,m,pr.name)).join("");
+  const inputs=MONTHS.map(m=>lineCell(p.id,projid,m,pr.name));
   const rt=MKEYS.reduce((s,k)=>s+alloc(p.id,projid,k),0);
   const yTots=YEARS.map((y,yi)=>{
     const h=YKEYS[yi].reduce((s,k)=>s+alloc(p.id,projid,k),0);
-    return `<div class="rowtot" data-rty="${p.id}:${projid}:${yi}">${h?fmtHD0(h,lineDollars(p.id,projid,YKEYS[yi])):""}</div>`;
-  }).join("");
+    return `<div class="rowtot" data-rty="${p.id}:${projid}:${yi}" title="${YEARS[yi]} total (read-only)">${h?fmtHD0(h,lineDollars(p.id,projid,YKEYS[yi])):""}</div>`;
+  });
   const pr8=pairRate(p.id,projid);
   return `<div class="a-line" data-line="${p.id}:${projid}">`+
     `<div class="a-proj"><div style="min-width:0"><div class="pn" title="${esc(projLabel(pr))}${pr.client?" · "+esc(pr.client):""}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""}">${esc(projLabel(pr))}${npBadge(pr)}${mmBadge(pr)}</div>`+
@@ -1105,7 +1109,7 @@ function allocLine(p,projid){
       `<span class="prate" title="Forecast bill rate for ${esc(p.name)} on this project ($/hr) — closed months use the actual rate from Odoo">$<input type="number" min="0" step="1" placeholder="0" value="${pr8||""}" data-prate="${p.id}|${projid}">/hr</span>`+
       `<button class="btn" data-xfer="${p.id}|${projid}" style="font-size:10px;padding:2px 7px;margin-left:6px;flex:none" title="Transfer all or part of these hours to another person or TBA pool…">⇄</button>`+
       `<button class="rm" data-rmproj="${p.id}|${projid}" title="Remove project" aria-label="Remove">×</button></div>`+
-    `<div class="a-inputs">${inputs}${yTots}<div class="rowtot" data-rt="${p.id}:${projid}">${rt?fmtHD0(rt,lineDollars(p.id,projid)):""}</div></div>`+
+    `<div class="a-inputs">`+withYearCols(inputs,yTots)+`<div class="rowtot" data-rt="${p.id}:${projid}">${rt?fmtHD0(rt,lineDollars(p.id,projid)):""}</div></div>`+
   `</div>`;
 }
 function legend(){
@@ -1169,9 +1173,9 @@ function hpCell(h,c,cls,extra,pu,dh){
 }
 const utilPct=(h,c)=> c ? Math.round(h/c*100) : null;
 function pivotHead(firstLabel){
-  return `<thead><tr><th class="lbl">${firstLabel}</th>`+
-    MONTHS.map(m=>`<th class="${isPastMi(m.mi)?"actual":""}">${m.label}</th>`).join("")+
-    YLBL.map(l=>`<th class="col-tot">${l}</th>`).join("")+`<th class="col-tot">Total</th></tr></thead>`;
+  const mc=MONTHS.map(m=>`<th class="${isPastMi(m.mi)?"actual":""}">${m.label}</th>`);
+  const yc=YLBL.map(l=>`<th class="col-tot" title="Annual total (read-only)">${l}</th>`);
+  return `<thead><tr><th class="lbl">${firstLabel}</th>`+withYearCols(mc,yc)+`<th class="col-tot">Total</th></tr></thead>`;
 }
 function renderByEmp(){
   const ppl=filteredPeople();
@@ -1184,7 +1188,8 @@ function renderByEmp(){
   ppl.forEach(p=>{ const d=p.dept||""; (byDept[d]=byDept[d]||[]).push(p); });
   let body="";
   deptsInOrder(ppl).forEach(d=>{ if(!byDept[d]) return;
-    body+=`<tr class="grp"><td class="lbl">${deptLabel(d)}</td>`+MONTHS.map(()=>`<td></td>`).join("")+`<td class="col-tot"></td><td class="col-tot"></td><td class="col-tot"></td></tr>`;
+    body+=`<tr class="grp"><td class="lbl">${deptLabel(d)}</td>`+
+      withYearCols(MONTHS.map(()=>`<td></td>`), YLBL.map(()=>`<td class="col-tot"></td>`))+`<td class="col-tot"></td></tr>`;
     byDept[d].forEach(p=>{
       let rt=0, rcap=0, rd=0, pu=null;
       const rT=[], rC=[], rD=[];
@@ -1194,17 +1199,17 @@ function renderByEmp(){
         colTot[i]+=h; colCap[i]+=c; colD[i]+=dol; a.t[i]+=h; a.c[i]+=c; a.d[i]+=dol;
         const cell=hpCell(h,c,utilClass(h,c),"",pu,dol); pu=utilPct(h,c);   // carry this month's % into the next
         return cell;
-      }).join("");
+      });
       grand+=rt; grandCap+=rcap; grandD+=rd; a.g+=rt; a.gc+=rcap; a.gd+=rd;
-      const ytds=YIDX.map(ix=>hpCell(sumIdx(rT,ix),sumIdx(rC,ix),"","col-tot",null,sumIdx(rD,ix))).join("");
+      const ytds=YIDX.map(ix=>hpCell(sumIdx(rT,ix),sumIdx(rC,ix),"","col-tot",null,sumIdx(rD,ix)));
       const badge=p.type==="tbh"?" <span class='badge tbh'>TBA</span>":p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
-      body+=`<tr><td class="lbl">${p.name}${badge}<div class="muted" style="font-size:11px">${p.role||"—"}</div></td>${tds}${ytds}${hpCell(rt,rcap,"","col-tot",null,rd)}</tr>`;
+      body+=`<tr><td class="lbl">${p.name}${badge}<div class="muted" style="font-size:11px">${p.role||"—"}</div></td>`+withYearCols(tds,ytds)+`${hpCell(rt,rcap,"","col-tot",null,rd)}</tr>`;
     });
   });
   const footRow=(label,a,cls)=>{ let pu=null;
-    const tds=a.t.map((t,i)=>{ const cell=hpCell(t,a.c[i],"","",pu,a.d[i]); pu=utilPct(t,a.c[i]); return cell; }).join("");
-    const ytds=YIDX.map(ix=>hpCell(sumIdx(a.t,ix),sumIdx(a.c,ix),"","col-tot",null,sumIdx(a.d,ix))).join("");
-    return `<tr class="${cls||""}"><td class="lbl">${label}</td>${tds}${ytds}${hpCell(a.g,a.gc,"","col-tot",null,a.gd)}</tr>`; };
+    const tds=a.t.map((t,i)=>{ const cell=hpCell(t,a.c[i],"","",pu,a.d[i]); pu=utilPct(t,a.c[i]); return cell; });
+    const ytds=YIDX.map(ix=>hpCell(sumIdx(a.t,ix),sumIdx(a.c,ix),"","col-tot",null,sumIdx(a.d,ix)));
+    return `<tr class="${cls||""}"><td class="lbl">${label}</td>`+withYearCols(tds,ytds)+`${hpCell(a.g,a.gc,"","col-tot",null,a.gd)}</tr>`; };
   const foot=`<tfoot>`+
     (acc.employee.n? footRow(`Employees <span class="muted">· ${acc.employee.n}</span>`,acc.employee):"")+
     (acc.contractor.n? footRow(`Contractors <span class="muted">· ${acc.contractor.n}</span>`,acc.contractor):"")+
@@ -1236,9 +1241,9 @@ function renderByRole(){
       rT.push(dem); rC.push(cap); rD.push(dd);
       if(tally){ colTot[i]+=dem; colCap[i]+=cap; colD[i]+=dd; }
       const cell=hpCell(dem,cap,utilClass(dem,cap),"",pu,dd); pu=utilPct(dem,cap);
-      return cell; }).join("");
-    const ytds=YIDX.map(ix=>hpCell(sumIdx(rT,ix),sumIdx(rC,ix),"","col-tot",null,sumIdx(rD,ix))).join("");
-    return {tds:tds+ytds,rt,rcap,rd};
+      return cell; });
+    const ytds=YIDX.map(ix=>hpCell(sumIdx(rT,ix),sumIdx(rC,ix),"","col-tot",null,sumIdx(rD,ix)));
+    return {tds:withYearCols(tds,ytds),rt,rcap,rd};
   };
 
   let body="";
@@ -1273,8 +1278,9 @@ function renderByRole(){
   });
   let fpu=null;
   const foot=`<tfoot><tr class="grand"><td class="lbl">All roles</td>`+
-    colTot.map((t,i)=>{ const cell=hpCell(t,colCap[i],"","",fpu,colD[i]); fpu=utilPct(t,colCap[i]); return cell; }).join("")+
-    YIDX.map(ix=>hpCell(sumIdx(colTot,ix),sumIdx(colCap,ix),"","col-tot",null,sumIdx(colD,ix))).join("")+
+    withYearCols(
+      colTot.map((t,i)=>{ const cell=hpCell(t,colCap[i],"","",fpu,colD[i]); fpu=utilPct(t,colCap[i]); return cell; }),
+      YIDX.map(ix=>hpCell(sumIdx(colTot,ix),sumIdx(colCap,ix),"","col-tot",null,sumIdx(colD,ix))))+
     hpCell(grand,grandCap,"","col-tot",null,grandD)+`</tr></tfoot>`;
   document.getElementById("viewRoot").innerHTML=
     `<div class="panel"><div class="panel-hd"><h2>Allocated ${isD()?"dollars":"hours"} by role × month</h2>`+
@@ -1325,14 +1331,14 @@ function projectRow(pr){
   const id=String(pr.id), isOpen=projOpen.has(id), people=projPeople(pr.id);
   const cells=MONTHS.map(m=>{ const h=projMonthTotal(pr.id,m.key);
     return `<div class="mcell" data-psum="${id}:${m.key}"><span class="h">${h?fmtProj(pr.id,m.key):"·"}</span></div>`;
-  }).join("");
+  });
   const yr=MKEYS.reduce((s,k)=>s+projMonthTotal(pr.id,k),0);
   const yrD=MKEYS.reduce((s,k)=>s+projMonthDollars(pr.id,k),0);
   const yCells=YEARS.map((y,yi)=>{
     const h=YKEYS[yi].reduce((s,k)=>s+projMonthTotal(pr.id,k),0);
     const d=YKEYS[yi].reduce((s,k)=>s+projMonthDollars(pr.id,k),0);
     return `<div class="mcell tot" data-pyy="${id}:${yi}">${h?(isD()?money(d):fmt0(h)):"·"}</div>`;
-  }).join("");
+  });
   const badge=pr.src==="CRM"?`<span class="badge crm">CRM</span>`:`<span class="badge prj">PRJ</span>`;
   return `<div class="p-row ${isOpen?"open":""}">`+
     `<div class="p-head">`+
@@ -1341,7 +1347,7 @@ function projectRow(pr){
         `<div style="min-width:0"><div class="p-name" title="${esc(pr.name)}${pr.client?" · "+esc(pr.client):""}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""}">${badge} ${esc(pr.name)}${npBadge(pr)}${mmBadge(pr)}</div>`+
         `<div class="p-role">${esc(pr.client||"—")}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""} · ${people.length} resource${people.length===1?"":"s"}</div></div>`+
       `</div>`+
-      `<div class="mgrid p-meta">${cells}${yCells}<div class="mcell tot" data-pyr="${id}">${yr?(isD()?money(yrD):fmt0(yr)):"·"}</div></div>`+
+      `<div class="mgrid p-meta">`+withYearCols(cells,yCells)+`<div class="mcell tot" data-pyr="${id}">${yr?(isD()?money(yrD):fmt0(yr)):"·"}</div></div>`+
     `</div>`+
     `<div class="p-body">${isOpen?projectBody(pr):""}</div>`+
   `</div>`;
@@ -1367,12 +1373,12 @@ function npMapBanner(pr){
     `<button class="btn primary" data-mapopp="${esc(oppId)}">Map &amp; move forecast</button></div>`;
 }
 function resLine(p,pr){
-  const inputs=MONTHS.map(m=>lineCell(p.id,pr.id,m,esc(p.name))).join("");
+  const inputs=MONTHS.map(m=>lineCell(p.id,pr.id,m,esc(p.name)));
   const rt=MKEYS.reduce((s,k)=>s+alloc(p.id,pr.id,k),0);
   const yTots=YEARS.map((y,yi)=>{
     const h=YKEYS[yi].reduce((s,k)=>s+alloc(p.id,pr.id,k),0);
-    return `<div class="rowtot" data-rty="${p.id}:${pr.id}:${yi}">${h?fmtHD0(h,lineDollars(p.id,pr.id,YKEYS[yi])):""}</div>`;
-  }).join("");
+    return `<div class="rowtot" data-rty="${p.id}:${pr.id}:${yi}" title="${YEARS[yi]} total (read-only)">${h?fmtHD0(h,lineDollars(p.id,pr.id,YKEYS[yi])):""}</div>`;
+  });
   const pr8=pairRate(p.id,pr.id);
   const badge=p.type==="tbh"?" <span class='badge tbh'>TBA</span>":p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
   return `<div class="a-line">`+
@@ -1382,7 +1388,7 @@ function resLine(p,pr){
       `<span class="prate" title="Forecast bill rate for ${esc(p.name)} on ${esc(pr.name)} ($/hr) — closed months use the actual rate from Odoo">$<input type="number" min="0" step="1" placeholder="0" value="${pr8||""}" data-prate="${p.id}|${pr.id}">/hr</span>`+
       `<button class="btn" data-xfer="${p.id}|${pr.id}" style="font-size:10px;padding:2px 7px;margin-left:6px;flex:none" title="Transfer all or part of these hours to another person or TBA pool…">⇄</button>`+
       `<button class="rm" data-rmres="${p.id}|${pr.id}" title="Remove resource" aria-label="Remove">×</button></div>`+
-    `<div class="a-inputs">${inputs}${yTots}<div class="rowtot" data-rt="${p.id}:${pr.id}">${rt?fmtHD0(rt,lineDollars(p.id,pr.id)):""}</div></div>`+
+    `<div class="a-inputs">`+withYearCols(inputs,yTots)+`<div class="rowtot" data-rt="${p.id}:${pr.id}">${rt?fmtHD0(rt,lineDollars(p.id,pr.id)):""}</div></div>`+
   `</div>`;
 }
 function refreshProjSummary(projid){
@@ -1421,25 +1427,26 @@ function renderByCust(){
     r.per.forEach((h,i)=>colTot[i]+=h); grand+=r.tot;
     const isOpen=custOpen.has(r.c);
     const nPrj=r.projs.filter(p=>p.src==="PRJ").length, nCrm=r.projs.length-nPrj;
-    const yrCells=a=>YIDX.map(ix=>`<td class="mcelln col-tot">${fV0(sumIdx(a,ix))}</td>`).join("");
-    const tds=r.per.map(h=>`<td class="mcelln">${fV(h)}</td>`).join("");
+    const yrCells=a=>YIDX.map(ix=>`<td class="mcelln col-tot">${fV0(sumIdx(a,ix))}</td>`);
+    const tds=r.per.map(h=>`<td class="mcelln">${fV(h)}</td>`);
     body+=`<tr class="lvl1${isOpen?" open":""}" data-cust="${esc(r.c)}"><td class="lbl">`+
       `<span class="tw">${chev()}</span><b>${esc(r.c)}</b>`+
       `<div class="muted" style="font-size:11px;padding-left:18px">${nPrj} PRJ · ${nCrm} CRM</div></td>`+
-      `${tds}${yrCells(r.per)}<td class="mcelln col-tot">${fV0(r.tot)}</td></tr>`;
+      withYearCols(tds,yrCells(r.per))+`<td class="mcelln col-tot">${fV0(r.tot)}</td></tr>`;
     if(!isOpen) return;
     r.projs.slice().sort((a,b)=>projRank(a)-projRank(b)||a.name.localeCompare(b.name)).forEach(pr=>{
       const per=MKEYS.map(k=>projV(pr.id,k)), t=per.reduce((a,b)=>a+b,0);
       const badge=pr.src==="CRM"?`<span class="badge crm">CRM</span>`:`<span class="badge prj">PRJ</span>`;
-      const ptds=per.map(h=>`<td class="mcelln">${fV(h)}</td>`).join("");
+      const ptds=per.map(h=>`<td class="mcelln">${fV(h)}</td>`);
       body+=`<tr class="lvl2"><td class="lbl lvl2i">${badge} ${esc(pr.name)}${npBadge(pr)}`+
         `${pr.src==="CRM"&&pr.stage?` <span class="muted">· ${esc(pr.stage)}</span>`:""}</td>`+
-        `${ptds}${yrCells(per)}<td class="mcelln col-tot">${fV0(t)}</td></tr>`;
+        withYearCols(ptds,yrCells(per))+`<td class="mcelln col-tot">${fV0(t)}</td></tr>`;
     });
   });
   const foot=`<tfoot><tr><td class="lbl">All customers</td>`+
-    colTot.map(t=>`<td class="mcelln">${fV0(t)}</td>`).join("")+
-    YIDX.map(ix=>`<td class="mcelln col-tot">${fV0(sumIdx(colTot,ix))}</td>`).join("")+
+    withYearCols(
+      colTot.map(t=>`<td class="mcelln">${fV0(t)}</td>`),
+      YIDX.map(ix=>`<td class="mcelln col-tot">${fV0(sumIdx(colTot,ix))}</td>`))+
     `<td class="mcelln col-tot">${isD()?money(grand):fmt0(grand)}</td></tr></tfoot>`;
   document.getElementById("viewRoot").innerHTML=
     `<div class="panel"><div class="panel-hd"><h2>Allocated ${isD()?"dollars":"hours"} by customer × month</h2>`+
@@ -1484,13 +1491,14 @@ function tbaDrill(t){
   for(const proj in a) for(const mk in a[proj]) if(a[proj][mk]>0){ (byProj[proj]=byProj[proj]||{})[mk]=a[proj][mk]; }
   const projs=sortProjIds(Object.keys(byProj));
   const cell=(v,cls)=>`<td class="mcelln ${cls||""}">${v}</td>`;
-  const months=(fn)=>MONTHS.map(m=>fn(m.key,m.mi)).join("");
+  const months=(fn)=>MONTHS.map(m=>fn(m.key,m.mi));
   let html=`<div style="overflow:auto;margin-top:8px"><table class="pivot"><thead><tr><th class="lbl">Project</th>`+
-    MONTHS.map(m=>`<th class="${isPastMi(m.mi)?"actual":""}">${m.label}</th>`).join("")+
-    YLBL.map(l=>`<th class="col-tot">${l}</th>`).join("")+`<th class="col-tot">Total</th></tr></thead><tbody>`;
+    withYearCols(MONTHS.map(m=>`<th class="${isPastMi(m.mi)?"actual":""}">${m.label}</th>`),
+                 YLBL.map(l=>`<th class="col-tot" title="Annual total (read-only)">${l}</th>`))+
+    `<th class="col-tot">Total</th></tr></thead><tbody>`;
   if(!projs.length) html+=`<tr><td class="lbl muted">No demand staffed on this role yet — add projects from the Allocate tabs.</td>${MONTHS.map(()=>"<td></td>").join("")}<td></td><td></td><td></td></tr>`;
   const yrTds=(arr,mul)=>YIDX.map(ix=>{ const h=sumIdx(arr,ix);
-    return `<td class="mcelln col-tot">${isD()&&mul!==undefined? money(h*mul) : fmt0(h)}</td>`; }).join("");
+    return `<td class="mcelln col-tot">${isD()&&mul!==undefined? money(h*mul) : fmt0(h)}</td>`; });
   projs.forEach(proj=>{
     const pr=projById(proj); const rate=pairRate(t.id,proj);
     let tot=0; const perM=[];
@@ -1502,18 +1510,18 @@ function tbaDrill(t){
       (canEdit()?`<div><button class="btn" data-shoremv="${t.id}|${esc(String(proj))}" data-shoreto="${otherShore}" style="font-size:10px;padding:2px 7px;margin-top:3px" title="Move this project's demand to the ${otherShore} ${esc(t.role||"")} pool (created if needed) — hours, rate and proposed hire go with it">⇄ Move to ${otherShore==="offshore"?"Offshore":"Onshore"}</button></div>`+
       `<div><select data-transfer="${t.id}|${esc(String(proj))}" style="font-size:10.5px;margin-top:3px;max-width:170px" title="Transfer this project's forecast (current month onward) to a real person — bill rate copies where they have none, and the proposed-hire note clears">`+
         `<option value="">Transfer to person…</option>${shiftEmpOpts("")}</select></div>`:"")+
-      `</td>${tds}${yrTds(perM,rate)}`+
+      `</td>`+withYearCols(tds,yrTds(perM,rate))+
       `<td class="mcelln col-tot">${isD()? money(tot*rate) : fmt0(tot)}</td></tr>`;
   });
   // pool demand total + role availability, employees vs contractors
   let dTot=0; const dPer=[];
   const demandTds=months(k=>{ const h=personMonthTotal(t.id,k); dTot+=h; dPer.push(h); return cell(h?fmt(h):"·"); });
-  html+=`<tr class="grp"><td class="lbl">Unassigned demand (h)</td>${demandTds}${yrTds(dPer)}<td class="mcelln col-tot">${fmt0(dTot)}</td></tr>`;
+  html+=`<tr class="grp"><td class="lbl">Unassigned demand (h)</td>`+withYearCols(demandTds,yrTds(dPer))+`<td class="mcelln col-tot">${fmt0(dTot)}</td></tr>`;
   const availRow=(label,type)=>{
     let tot=0; const perM=[];
     const tds=months((k,mi)=>{ const v=roleAvail(t.role,k,type); tot+=v; perM.push(v);
       const cls = v<0? "v-over" : (v>0? "v-on":""); return cell(fmt(Math.round(v*10)/10)||"0",cls); });
-    return `<tr><td class="lbl">${label}</td>${tds}${yrTds(perM)}<td class="mcelln col-tot">${fmt0(tot)}</td></tr>`;
+    return `<tr><td class="lbl">${label}</td>`+withYearCols(tds,yrTds(perM))+`<td class="mcelln col-tot">${fmt0(tot)}</td></tr>`;
   };
   html+=availRow("Available — employees","employee");
   html+=availRow("Available — contractors","contractor");
@@ -1854,16 +1862,16 @@ function renderCosting(){
     const tds=cells.map((c,i)=>{ rrev+=c.rev; rcost+=c.cost;
       a.rev[i]+=c.rev; a.cost[i]+=c.cost; acc.team.rev[i]+=c.rev; acc.team.cost[i]+=c.cost;
       return costCell(c.rev,c.cost,c.kind,"");
-    }).join("");
+    });
     const badge=p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
-    const ytds=YIDX.map(ix=>costCell(sumIdx(cells.map(c=>c.rev),ix),sumIdx(cells.map(c=>c.cost),ix),"","col-tot")).join("");
-    body+=`<tr><td class="lbl">${esc(p.name)}${badge}<div class="muted" style="font-size:11px">${esc(p.role||"—")}</div></td>${tds}${ytds}${costCell(rrev,rcost,"","col-tot")}</tr>`;
+    const ytds=YIDX.map(ix=>costCell(sumIdx(cells.map(c=>c.rev),ix),sumIdx(cells.map(c=>c.cost),ix),"","col-tot"));
+    body+=`<tr><td class="lbl">${esc(p.name)}${badge}<div class="muted" style="font-size:11px">${esc(p.role||"—")}</div></td>`+withYearCols(tds,ytds)+`${costCell(rrev,rcost,"","col-tot")}</tr>`;
   });
   const footRow=(label,a,cls)=>{
-    const tds=a.rev.map((r,i)=>costCell(r,a.cost[i],"","")).join("");
-    const ytds=YIDX.map(ix=>costCell(sumIdx(a.rev,ix),sumIdx(a.cost,ix),"","col-tot")).join("");
+    const tds=a.rev.map((r,i)=>costCell(r,a.cost[i],"",""));
+    const ytds=YIDX.map(ix=>costCell(sumIdx(a.rev,ix),sumIdx(a.cost,ix),"","col-tot"));
     const gr=a.rev.reduce((s,x)=>s+x,0), gc=a.cost.reduce((s,x)=>s+x,0);
-    return `<tr class="${cls||""}"><td class="lbl">${label}</td>${tds}${ytds}${costCell(gr,gc,"","col-tot")}</tr>`;
+    return `<tr class="${cls||""}"><td class="lbl">${label}</td>`+withYearCols(tds,ytds)+`${costCell(gr,gc,"","col-tot")}</tr>`;
   };
   const foot=`<tfoot>`+
     (acc.employee.n?footRow(`Employees <span class="muted">· ${acc.employee.n}</span>`,acc.employee):"")+
@@ -2196,22 +2204,29 @@ exportMenu.addEventListener("click",e=>{ const b=e.target.closest("[data-exp]");
 function download(name,text,mime){ const b=new Blob([text],{type:mime||"text/plain"}); const u=URL.createObjectURL(b);
   const a=document.createElement("a"); a.href=u; a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(u),1000); }
 function csvEsc(v){ v=String(v==null?"":v); return /[",\n]/.test(v)? '"'+v.replace(/"/g,'""')+'"':v; }
+/* Column values in the shared grid order: months of '26, '26 total, months of
+   '27, '27 total (per-value counterpart of withYearCols). */
+const withYearVals=(mArr,yArr)=>YEARS.flatMap((y,yi)=>[...YIDX[yi].map(i=>mArr[i]), yArr[yi]]);
 function exportEmpCSV(){
-  const yHead=YEARS.map(y=>"Total "+y), yHeadD=YEARS.map(y=>"Total "+y+" $");
-  const head=["Department","Employee","Type","Role","Blended rate ($/hr)",...MONTHS.map(m=>m.label),...yHead,"Total",...MONTHS.map(m=>m.label+" $"),...yHeadD,"Total $"];
+  const mHead=MONTHS.map(m=>m.label), yHead=YEARS.map(y=>"Total "+y);
+  const head=["Department","Employee","Type","Role","Blended rate ($/hr)",
+    ...withYearVals(mHead,yHead),"Total",
+    ...withYearVals(mHead.map(l=>l+" $"),yHead.map(l=>l+" $")),"Total $"];
   const lines=[head.map(csvEsc).join(",")];
   filteredPeople().forEach(p=>{ const cells=MKEYS.map(k=>personMonthTotal(p.id,k)); const tot=cells.reduce((s,x)=>s+x,0);
     const dcells=MKEYS.map(k=>Math.round(personMonthDollars(p.id,k))); const dtot=dcells.reduce((s,x)=>s+x,0);
     const yCells=YIDX.map(ix=>sumIdx(cells,ix)), yD=YIDX.map(ix=>sumIdx(dcells,ix));
     const blended = tot&&dtot? Math.round(dtot/tot) : "";   // rates vary per project — this is the weighted average
-    lines.push([p.dept,p.name,p.type,p.role||"",blended,...cells,...yCells,tot,...dcells,...yD,dtot].map(csvEsc).join(",")); });
+    lines.push([p.dept,p.name,p.type,p.role||"",blended,...withYearVals(cells,yCells),tot,...withYearVals(dcells,yD),dtot].map(csvEsc).join(",")); });
   download("tqs-by-employee-month.csv",lines.join("\n"),"text/csv");
 }
 /* Was referenced by the export menu but never defined — clicking it threw.
    One row per person × project with the pair's bill rate and monthly $ columns. */
 function exportDetailCSV(){
-  const yHead=YEARS.map(y=>"Total "+y), yHeadD=YEARS.map(y=>"Total "+y+" $");
-  const head=["Person","Type","Role","Department","Bill rate ($/hr)","Project","Source","Client",...MONTHS.map(m=>m.label),...yHead,"Total",...MONTHS.map(m=>m.label+" $"),...yHeadD,"Total $"];
+  const mHead=MONTHS.map(m=>m.label), yHead=YEARS.map(y=>"Total "+y);
+  const head=["Person","Type","Role","Department","Bill rate ($/hr)","Project","Source","Client",
+    ...withYearVals(mHead,yHead),"Total",
+    ...withYearVals(mHead.map(l=>l+" $"),yHead.map(l=>l+" $")),"Total $"];
   const lines=[head.map(csvEsc).join(",")];
   allPeople().forEach(p=>{ const a=state.alloc[p.id]; if(!a) return;
     sortProjIds(Object.keys(a)).forEach(projid=>{ const pr=projById(projid); if(!pr) return;
@@ -2219,7 +2234,7 @@ function exportDetailCSV(){
       const cells=MKEYS.map(k=>alloc(p.id,projid,k)); const tot=cells.reduce((s,x)=>s+x,0); if(tot===0) return;
       const dcells=cells.map(h=>Math.round(h*r)); const dtot=dcells.reduce((s,x)=>s+x,0);
       const yCells=YIDX.map(ix=>sumIdx(cells,ix)), yD=YIDX.map(ix=>sumIdx(dcells,ix));
-      lines.push([p.name,p.type,p.role||"",p.dept,r||"",projLabel(pr),pr.src,pr.client||"",...cells,...yCells,tot,...dcells,...yD,dtot].map(csvEsc).join(","));
+      lines.push([p.name,p.type,p.role||"",p.dept,r||"",projLabel(pr),pr.src,pr.client||"",...withYearVals(cells,yCells),tot,...withYearVals(dcells,yD),dtot].map(csvEsc).join(","));
     });
   });
   download("tqs-allocations-detail.csv",lines.join("\n"),"text/csv");
