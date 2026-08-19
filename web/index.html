@@ -1961,6 +1961,9 @@ function renderCosting(){
    rate for that hour. Closed months use actual hours + realized revenue from
    Odoo; open months use forecast hours × forecast pair rate. Costing role only. */
 let pmOpen=new Set();
+/* Toggle: hide person-lines whose hours have no hourly cost behind them (and
+   drop their hours from the project sums) — or show everything, flagged. */
+let PM_HIDENC=false; try{ PM_HIDENC=localStorage.getItem("tqs-rm-pm-hidenc")==="1"; }catch(e){}
 function pmCell(rev,cost,extra,flag){
   if(!(rev>0)&&!(cost>0)) return `<td class="mcelln ${extra||""}"></td>`;
   const profit=rev-cost, pct= rev>0? Math.round(profit/rev*100) : null;
@@ -1981,7 +1984,9 @@ function renderProjMargin(){
     return;
   }
   const head=(bodyHtml)=>`<div class="panel"><div class="panel-hd">`+
-    `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><h2>Project margin by month</h2></div>`+
+    `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><h2>Project margin by month</h2>`+
+    `<label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);cursor:pointer" title="Hide lines whose hours have no hourly cost behind them (TBA pools, missing cost cards) — their hours drop out of the project totals too">`+
+    `<input type="checkbox" id="pmHideNc"${PM_HIDENC?" checked":""}> Hide no-cost lines</label></div>`+
     `<span class="hint">margin % + profit $ · cost is 1:1 per hour (each person's hourly cost vs. their bill rate) · closed months actual, open months forecast · click a project to drill into its people</span></div>${bodyHtml}</div>`;
   const root=document.getElementById("viewRoot");
   if(COST.err){ root.innerHTML=head(`<div style="padding:18px"><p>⚠ ${esc(COST.err)}</p></div>`); return; }
@@ -1993,18 +1998,19 @@ function renderProjMargin(){
   const items=[];
   projs.forEach(pr=>{
     const people=projPeople(pr.id).sort(byPersonOrder);   // respects the dept/type dropdowns
-    const rev=MKEYS.map(()=>0), cost=MKEYS.map(()=>0);
-    let missing=false;
-    const perPerson=people.map(p=>{
+    let perPerson=people.map(p=>{
       const prev=MKEYS.map(()=>0), pcost=MKEYS.map(()=>0); let ph=0, pMissing=false;
       MONTHS.forEach((m,i)=>{ const x=pmPersonMonth(p.id,pr.id,m);
         prev[i]=x.rev; pcost[i]=x.cost; ph+=x.h;
-        rev[i]+=x.rev; cost[i]+=x.cost;
         // The "no cost" flag exists only where uncosted HOURS are assigned —
         // a person with no hours and no cost is simply not a margin problem.
-        if(x.h>0 && x.missing){ missing=true; pMissing=true; } });
+        if(x.h>0 && x.missing) pMissing=true; });
       return {p, rev:prev, cost:pcost, hours:ph, missing:pMissing};
     }).filter(x=>x.hours>0 || x.rev.some(v=>v>0));
+    if(PM_HIDENC) perPerson=perPerson.filter(x=>!x.missing);   // hidden lines leave the sums too
+    const rev=MKEYS.map((k,i)=>perPerson.reduce((s,x)=>s+x.rev[i],0));
+    const cost=MKEYS.map((k,i)=>perPerson.reduce((s,x)=>s+x.cost[i],0));
+    const missing=perPerson.some(x=>x.missing);
     const tRev=rev.reduce((a,b)=>a+b,0), tCost=cost.reduce((a,b)=>a+b,0);
     if(!tRev && !tCost) return;                            // nothing on this project
     items.push({pr, people:perPerson, rev, cost, tRev, tCost, missing});
@@ -2135,6 +2141,9 @@ function queuePush(pid,projid,mkey,v){
 }
 document.getElementById("viewRoot").addEventListener("change",e=>{
   const el=e.target;
+  if(el.id==="pmHideNc"){ PM_HIDENC=el.checked;
+    try{ localStorage.setItem("tqs-rm-pm-hidenc", PM_HIDENC?"1":"0"); }catch(err){}
+    renderProjMargin(); return; }
   if(el.dataset.cap!==undefined){ const pid=el.dataset.cap;
     if(!canEdit()) return;
     const val = (el.value===""||el.value===null) ? null : Number(el.value);
