@@ -67,11 +67,11 @@ async function handle(db, req) {
   if (path === "/api/cost" || path === "/api/cost/rate") {
     if (!canCost(user)) return json(403, { error: "costing role required" });
     if (method === "GET" && path === "/api/cost") {
-      const rows = await db.all("SELECT employee_id, biweekly, monthly, hourly, updated_by, updated_at FROM cost_rate");
+      const rows = await db.all("SELECT employee_id, annual, biweekly, monthly, hourly, updated_by, updated_at FROM cost_rate");
       const n = (v) => (v === null || v === undefined ? null : Number(v));
       return json(200, {
         rates: rows.map(r => ({
-          employeeId: r.employee_id, biweekly: n(r.biweekly), monthly: n(r.monthly), hourly: n(r.hourly),
+          employeeId: r.employee_id, annual: n(r.annual), biweekly: n(r.biweekly), monthly: n(r.monthly), hourly: n(r.hourly),
           updatedBy: r.updated_by, updatedAt: String(r.updated_at),
         })),
       });
@@ -84,19 +84,19 @@ async function handle(db, req) {
         const x = Number(v);
         return Number.isFinite(x) && x >= 0 ? Math.round(x * 100) / 100 : NaN;
       };
-      const biweekly = num(body.biweekly), monthly = num(body.monthly), hourly = num(body.hourly);
-      if ([biweekly, monthly, hourly].some(Number.isNaN)) return json(400, { error: "costs must be numbers >= 0" });
-      if (biweekly === null && monthly === null && hourly === null) {
+      const annual = num(body.annual), biweekly = num(body.biweekly), monthly = num(body.monthly), hourly = num(body.hourly);
+      if ([annual, biweekly, monthly, hourly].some(Number.isNaN)) return json(400, { error: "costs must be numbers >= 0" });
+      if (annual === null && biweekly === null && monthly === null && hourly === null) {
         await db.run("DELETE FROM cost_rate WHERE employee_id = ?", [id]);
         return json(200, { ok: true, deleted: true });
       }
       await db.run(
-        `INSERT INTO cost_rate (employee_id, biweekly, monthly, hourly, updated_by, updated_at)
-         VALUES (?,?,?,?,?,?)
+        `INSERT INTO cost_rate (employee_id, annual, biweekly, monthly, hourly, updated_by, updated_at)
+         VALUES (?,?,?,?,?,?,?)
          ON CONFLICT (employee_id) DO UPDATE SET
-           biweekly=excluded.biweekly, monthly=excluded.monthly, hourly=excluded.hourly,
+           annual=excluded.annual, biweekly=excluded.biweekly, monthly=excluded.monthly, hourly=excluded.hourly,
            updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
-        [id, biweekly, monthly, hourly, user.upn, new Date().toISOString()]);
+        [id, annual, biweekly, monthly, hourly, user.upn, new Date().toISOString()]);
       return json(200, { ok: true });
     }
     return json(404, { error: "no such route" });

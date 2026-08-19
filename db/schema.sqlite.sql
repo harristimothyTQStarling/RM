@@ -177,6 +177,7 @@ CREATE TABLE IF NOT EXISTS ref_cost (
 -- hourly x that month's hours.
 CREATE TABLE IF NOT EXISTS cost_rate (
   employee_id INTEGER PRIMARY KEY,   -- Odoo person id (ref_person.id)
+  annual      REAL,
   biweekly    REAL,
   monthly     REAL,
   hourly      REAL,

@@ -1844,13 +1844,16 @@ async function loadCost(force){
   if(VIEW==="costing") renderCosting();
 }
 /* A month's fully loaded cost from the person's rate card: monthly wins, else
-   bi-weekly × 26/12, else hourly × that month's hours (actual hours for closed
-   months, forecast onward — personMonthTotal already reads the right source). */
+   annual ÷ 12, else bi-weekly × 26/12, else hourly × that month's hours (actual
+   hours for closed months, forecast onward — personMonthTotal reads the right
+   source). Salaried people typically carry annual + hourly (2040h basis); the
+   annual figure drives the monthly cost, the hourly is reference. */
 function costRateOf(pid){ return COST.rates? COST.rates.get(String(pid)) : null; }
-function costBasis(r){ return !r? "" : r.monthly!=null? "monthly" : r.biweekly!=null? "bi-weekly ×26/12" : r.hourly!=null? "hourly × hours" : ""; }
+function costBasis(r){ return !r? "" : r.monthly!=null? "monthly" : r.annual!=null? "annual ÷12" : r.biweekly!=null? "bi-weekly ×26/12" : r.hourly!=null? "hourly × hours" : ""; }
 function personMonthCost(pid,mkey){
   const r=costRateOf(pid); if(!r) return 0;
   if(r.monthly!=null) return r.monthly;
+  if(r.annual!=null) return Math.round(r.annual/12*100)/100;
   if(r.biweekly!=null) return Math.round(r.biweekly*26/12*100)/100;
   if(r.hourly!=null) return Math.round(r.hourly*personMonthTotal(pid,mkey)*100)/100;
   return 0;
@@ -1885,7 +1888,7 @@ function renderCosting(){
       ["profit","revenue","cost"].map(mo=>`<button type="button" data-costmode="${mo}" aria-pressed="${COST.mode===mo}">${mo[0].toUpperCase()+mo.slice(1)}</button>`).join("")+
     `</div>`+
     `<button class="btn primary" id="btnCostRates" title="Enter each person's fully loaded cost — bi-weekly, monthly or hourly. Only the costing role can see or edit.">Resource costs…</button></div>`+
-    `<span class="hint">fully loaded cost (salary + bonus + employer taxes + benefits) vs revenue · costs entered in-app per person: monthly, bi-weekly ×26/12, or hourly × hours</span></div>${bodyHtml}</div>`;
+    `<span class="hint">fully loaded cost (salary + bonus + employer taxes + benefits) vs revenue · costs entered in-app per person: monthly, annual ÷12, bi-weekly ×26/12, or hourly × hours</span></div>${bodyHtml}</div>`;
   const root=document.getElementById("viewRoot");
   if(COST.err){ root.innerHTML=head(`<div style="padding:18px"><p>⚠ ${esc(COST.err)}</p></div>`); return; }
   if(!COST.rates){ loadCost(); root.innerHTML=head(`<div style="padding:18px" class="muted">Loading cost data…</div>`); return; }
@@ -1922,7 +1925,7 @@ function renderCosting(){
   const note=`<div class="legend" style="margin-top:6px"><span>`+
     (COST.rates.size? `${COST.rates.size} ${COST.rates.size===1?"person has":"people have"} a cost rate. `
                     : `<b>No cost data yet.</b> Use Resource costs to enter each person's fully loaded cost. `)+
-    `A month's cost = the person's <b>monthly</b> rate if set, else <b>bi-weekly × 26 ÷ 12</b>, else <b>hourly × that month's hours</b> (actual hours for closed months, forecast onward). Revenue: closed months are actual billable revenue from Odoo; from the current month it is forecast hours × bill rate.`+
+    `A month's cost = the person's <b>monthly</b> rate if set, else <b>annual ÷ 12</b>, else <b>bi-weekly × 26 ÷ 12</b>, else <b>hourly × that month's hours</b> (actual hours for closed months, forecast onward). Revenue: closed months are actual billable revenue from Odoo; from the current month it is forecast hours × bill rate.`+
     `</span></div>`;
   root.innerHTML=head(`<div class="scroll"><table class="pivot">${pivotHead("Person")}<tbody>${body||`<tr><td class="lbl muted" style="padding:14px">No people with cost or revenue match the current filters.</td></tr>`}</tbody>${foot}</table></div>${note}`);
 }
@@ -1935,23 +1938,25 @@ function openCostRates(){
   const ppl=allPeople().filter(p=>p.type!=="tbh").sort((a,b)=>typeRank(a)-typeRank(b)||a.name.localeCompare(b.name));
   const cur=new Date().toISOString().slice(0,7);
   const eff=(pid)=>{ const c=personMonthCost(pid,cur); const r=costRateOf(pid);
-    return c? `${money(c)}${r&&r.hourly!=null&&r.monthly==null&&r.biweekly==null?" this mo.":"/mo"}` : "—"; };
-  const inp=(pid,f,v)=>`<input type="number" min="0" step="0.01" value="${v??""}" data-cr="${pid}|${f}" style="width:96px;padding:4px 7px;text-align:right">`;
+    return c? `${money(c)}${r&&r.hourly!=null&&r.monthly==null&&r.annual==null&&r.biweekly==null?" this mo.":"/mo"}` : "—"; };
+  const inp=(pid,f,v)=>`<input type="number" min="0" step="0.01" value="${v??""}" data-cr="${pid}|${f}" style="width:92px;padding:4px 7px;text-align:right">`;
   const rows=ppl.map(p=>{ const r=costRateOf(p.id)||{};
     const badge=p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
     return `<tr><td style="padding:5px 8px"><b>${esc(p.name)}</b>${badge}<div class="muted" style="font-size:11px">${esc(p.role||"—")}</div></td>`+
+      `<td style="padding:5px 8px;text-align:right">${inp(p.id,"annual",r.annual)}</td>`+
       `<td style="padding:5px 8px;text-align:right">${inp(p.id,"biweekly",r.biweekly)}</td>`+
       `<td style="padding:5px 8px;text-align:right">${inp(p.id,"monthly",r.monthly)}</td>`+
       `<td style="padding:5px 8px;text-align:right">${inp(p.id,"hourly",r.hourly)}</td>`+
       `<td style="padding:5px 8px;text-align:right" class="muted" data-creff="${p.id}">${eff(p.id)}</td></tr>`;
   }).join("");
   document.getElementById("modalRoot").innerHTML=
-    `<div class="backdrop" id="crBackdrop"><div class="modal" style="width:min(760px,100%)">`+
+    `<div class="backdrop" id="crBackdrop"><div class="modal" style="width:min(860px,100%)">`+
     `<div class="modal-hd"><h2>Resource costs</h2>`+
     `<p>Fully loaded cost per person (salary + bonus + employer taxes + benefits). Enter whichever basis you have — `+
-    `<b>monthly</b> wins, else <b>bi-weekly × 26 ÷ 12</b>, else <b>hourly × that month's hours</b>. Each change saves immediately; clear all three to remove a person's cost.</p></div>`+
+    `<b>monthly</b> wins, else <b>annual ÷ 12</b>, else <b>bi-weekly × 26 ÷ 12</b>, else <b>hourly × that month's hours</b>. Each change saves immediately; clear every field to remove a person's cost.</p></div>`+
     `<div class="modal-bd" style="max-height:min(56vh,540px);overflow:auto">`+
     `<table class="maptbl"><thead><tr><th style="text-align:left;padding:5px 8px">Person</th>`+
+    `<th style="text-align:right;padding:5px 8px">Annual $</th>`+
     `<th style="text-align:right;padding:5px 8px">Bi-weekly $</th><th style="text-align:right;padding:5px 8px">Monthly $</th>`+
     `<th style="text-align:right;padding:5px 8px">Hourly $</th><th style="text-align:right;padding:5px 8px">Effective</th></tr></thead>`+
     `<tbody>${rows}</tbody></table></div>`+
@@ -1966,10 +1971,10 @@ function openCostRates(){
     const [pid]=el.dataset.cr.split("|");
     const val=f=>{ const i=document.querySelector(`[data-cr="${pid}|${f}"]`); const v=i&&i.value!==""?Number(i.value):null;
       return v!=null&&Number.isFinite(v)&&v>=0? v : null; };
-    const card={ employeeId:Number(pid), biweekly:val("biweekly"), monthly:val("monthly"), hourly:val("hourly") };
+    const card={ employeeId:Number(pid), annual:val("annual"), biweekly:val("biweekly"), monthly:val("monthly"), hourly:val("hourly") };
     try{
       await api("PUT","/api/cost/rate",card);
-      if(card.biweekly==null&&card.monthly==null&&card.hourly==null) COST.rates.delete(String(pid));
+      if(card.annual==null&&card.biweekly==null&&card.monthly==null&&card.hourly==null) COST.rates.delete(String(pid));
       else COST.rates.set(String(pid),{...card});
       const effc=document.querySelector(`[data-creff="${pid}"]`); if(effc) effc.textContent=eff(pid);
       status("Saved");

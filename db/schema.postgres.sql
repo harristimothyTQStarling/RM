@@ -231,12 +231,14 @@ CREATE TABLE IF NOT EXISTS ref_cost (
 -- hourly x that month's hours.
 CREATE TABLE IF NOT EXISTS cost_rate (
   employee_id INT           PRIMARY KEY,   -- odoo person id (ref_person.id)
+  annual      NUMERIC(12,2),
   biweekly    NUMERIC(12,2),
   monthly     NUMERIC(12,2),
   hourly      NUMERIC(12,2),
   updated_by  VARCHAR(128)  NOT NULL,
   updated_at  TIMESTAMPTZ   NOT NULL DEFAULT now()
 );
+ALTER TABLE cost_rate ADD COLUMN IF NOT EXISTS annual NUMERIC(12,2);
 
 CREATE TABLE IF NOT EXISTS sync_state (
   source     VARCHAR(32) PRIMARY KEY,            -- people | projects | opportunities | actuals

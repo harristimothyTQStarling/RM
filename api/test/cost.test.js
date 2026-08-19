@@ -45,17 +45,20 @@ test("rate card round-trips: upsert, partial fields, attribution", async () => {
   const db = fresh();
   assert.equal((await put(db, TIM, { employeeId: 1, biweekly: 9500, monthly: null, hourly: null })).status, 200);
   assert.equal((await put(db, TIM, { employeeId: 2, hourly: 120.505 })).status, 200);
+  // Salaried pattern: annual salary + hourly at the 2040h basis.
+  assert.equal((await put(db, TIM, { employeeId: 4, annual: 180000, hourly: 88.24 })).status, 200);
 
   let got = (await call(db, "GET", "/api/cost", null, TIM)).body.rates;
-  assert.deepEqual(got.map(r => [r.employeeId, r.biweekly, r.monthly, r.hourly]).sort(),
-    [[1, 9500, null, null], [2, null, null, 120.51]], "values round-trip, cents rounded");
+  assert.deepEqual(got.map(r => [r.employeeId, r.annual, r.biweekly, r.monthly, r.hourly]).sort(),
+    [[1, null, 9500, null, null], [2, null, null, null, 120.51], [4, 180000, null, null, 88.24]],
+    "values round-trip, cents rounded");
   assert.ok(got.every(r => r.updatedBy === "tim@tqstarling.com"), "attribution recorded on the card");
 
   // Upsert replaces the whole card for that person (a cleared field goes null).
   assert.equal((await put(db, TIM, { employeeId: 1, monthly: 21000 })).status, 200);
   got = (await call(db, "GET", "/api/cost", null, TIM)).body.rates;
   const p1 = got.find(r => r.employeeId === 1);
-  assert.deepEqual([p1.biweekly, p1.monthly, p1.hourly], [null, 21000, null]);
+  assert.deepEqual([p1.annual, p1.biweekly, p1.monthly, p1.hourly], [null, null, 21000, null]);
 });
 
 test("clearing every field deletes the person's card", async () => {
