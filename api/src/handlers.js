@@ -58,68 +58,46 @@ async function handle(db, req) {
 
   // ---- costing (COSTING_UPNS only — payroll-derived data never leaves the
   //      server for anyone else; enforcement is here, not in the UI) ----
-  if (path === "/api/cost" || path === "/api/cost/import") {
+  // Costs are a per-person rate card entered in-app by the costing role:
+  // bi-weekly, monthly and hourly cost. The client derives each month's cost
+  // (monthly wins, else bi-weekly × 26/12, else hourly × that month's hours).
+  // Deliberately NOT written to audit_log: the audit feed is visible to every
+  // signed-in user and cost figures must never leak there — attribution lives
+  // in cost_rate.updated_by instead.
+  if (path === "/api/cost" || path === "/api/cost/rate") {
     if (!canCost(user)) return json(403, { error: "costing role required" });
     if (method === "GET" && path === "/api/cost") {
-      const [rows, sync] = await Promise.all([
-        db.all("SELECT employee_id, month, cost, kind FROM ref_cost"),
-        db.get("SELECT synced_at, row_count, ok, message FROM sync_state WHERE source = 'costs'"),
-      ]);
-      let by = "";
-      try { by = JSON.parse((sync && sync.message) || "{}").by || ""; } catch { /* older format */ }
+      const rows = await db.all("SELECT employee_id, biweekly, monthly, hourly, updated_by, updated_at FROM cost_rate");
+      const n = (v) => (v === null || v === undefined ? null : Number(v));
       return json(200, {
-        costs: rows.map(r => ({ employeeId: r.employee_id, month: String(r.month).slice(0, 7), cost: Number(r.cost), kind: r.kind })),
-        synced: sync ? { at: String(sync.synced_at), rows: sync.row_count, ok: !!sync.ok, by } : null,
+        rates: rows.map(r => ({
+          employeeId: r.employee_id, biweekly: n(r.biweekly), monthly: n(r.monthly), hourly: n(r.hourly),
+          updatedBy: r.updated_by, updatedAt: String(r.updated_at),
+        })),
       });
     }
-    if (method === "POST" && path === "/api/cost/import") {
-      // Replace the whole cost dataset (fully loaded $ per person per month,
-      // sourced from Gusto reporting outside the app). kind is derived from
-      // the month: closed months are actuals, current-month-onward is the
-      // standard rate. fillForward (default on) projects each person's
-      // trailing 3-closed-month average across every month from the current
-      // one through December of NEXT year (the planner's two-year horizon)
-      // where no explicit forward value was supplied.
-      const items = Array.isArray(body.rows) ? body.rows : null;
-      if (!items || !items.length) return json(400, { error: "rows[] required" });
-      if (items.length > 3000) return json(413, { error: "too many rows" });
-      const current = store.currentMonthStart();
-      const year = current.slice(0, 4);
-      const norm = [];
-      for (const r of items) {
-        const id = Number(r.employeeId);
-        const month = String(r.month || "").slice(0, 7) + "-01";
-        const cost = Number(r.cost);
-        if (!Number.isInteger(id) || !/^\d{4}-\d{2}-01$/.test(month) || !Number.isFinite(cost) || cost < 0)
-          return json(400, { error: `bad row: ${JSON.stringify(r)}` });
-        norm.push({ id, month, cost: Math.round(cost * 100) / 100 });
+    if (method === "PUT" && path === "/api/cost/rate") {
+      const id = Number(body.employeeId);
+      if (!Number.isInteger(id)) return json(400, { error: "employeeId required" });
+      const num = (v) => {
+        if (v === null || v === undefined || v === "") return null;
+        const x = Number(v);
+        return Number.isFinite(x) && x >= 0 ? Math.round(x * 100) / 100 : NaN;
+      };
+      const biweekly = num(body.biweekly), monthly = num(body.monthly), hourly = num(body.hourly);
+      if ([biweekly, monthly, hourly].some(Number.isNaN)) return json(400, { error: "costs must be numbers >= 0" });
+      if (biweekly === null && monthly === null && hourly === null) {
+        await db.run("DELETE FROM cost_rate WHERE employee_id = ?", [id]);
+        return json(200, { ok: true, deleted: true });
       }
-      const byKey = new Map();                                       // last one wins per person×month
-      for (const r of norm) byKey.set(`${r.id}|${r.month}`, r);
-      const rows = [...byKey.values()].map(r => ({ ...r, kind: r.month < current ? "actual" : "standard" }));
-      if (body.fillForward !== false) {
-        const forward = [];
-        for (let y = Number(year), m = Number(current.slice(5, 7)); y <= Number(year) + 1; m++) {
-          if (m > 12) { m = 1; y++; if (y > Number(year) + 1) break; }
-          forward.push(`${y}-${String(m).padStart(2, "0")}-01`);
-        }
-        const byPerson = new Map();
-        rows.forEach(r => { (byPerson.get(r.id) || byPerson.set(r.id, []).get(r.id)).push(r); });
-        for (const [id, list] of byPerson) {
-          const closed = list.filter(r => r.kind === "actual" && r.cost > 0).sort((a, b) => a.month.localeCompare(b.month)).slice(-3);
-          if (!closed.length) continue;
-          const rate = Math.round(closed.reduce((s, r) => s + r.cost, 0) / closed.length * 100) / 100;
-          for (const m of forward) if (!byKey.has(`${id}|${m}`)) rows.push({ id, month: m, cost: rate, kind: "standard" });
-        }
-      }
-      await db.tx(async () => {
-        await db.run("DELETE FROM ref_cost");
-        for (const r of rows) await db.run("INSERT INTO ref_cost (employee_id, month, cost, kind) VALUES (?,?,?,?)", [r.id, r.month, r.cost, r.kind]);
-        await db.run("DELETE FROM sync_state WHERE source = 'costs'");
-        await db.run("INSERT INTO sync_state (source, synced_at, row_count, ok, message) VALUES ('costs', ?, ?, 1, ?)",
-          [new Date().toISOString(), rows.length, JSON.stringify({ by: user.upn })]);
-      });
-      return json(200, { ok: true, rows: rows.length, provided: byKey.size, projected: rows.length - byKey.size });
+      await db.run(
+        `INSERT INTO cost_rate (employee_id, biweekly, monthly, hourly, updated_by, updated_at)
+         VALUES (?,?,?,?,?,?)
+         ON CONFLICT (employee_id) DO UPDATE SET
+           biweekly=excluded.biweekly, monthly=excluded.monthly, hourly=excluded.hourly,
+           updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
+        [id, biweekly, monthly, hourly, user.upn, new Date().toISOString()]);
+      return json(200, { ok: true });
     }
     return json(404, { error: "no such route" });
   }

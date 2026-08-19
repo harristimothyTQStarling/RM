@@ -161,16 +161,27 @@ CREATE TABLE IF NOT EXISTS ref_actual (
   PRIMARY KEY (employee_id, project_id, month)
 );
 
--- Fully loaded per-person monthly cost (salary + bonus + employer taxes +
--- benefits), imported from Gusto reporting by the costing role. Only served to
--- COSTING_UPNS. kind: 'actual' for closed months, 'standard' (trailing-average
--- forward rate) for current and future months.
+-- RETIRED (kept so existing files open; no endpoint reads or writes it):
+-- per-month imported costs, replaced by the cost_rate card below.
 CREATE TABLE IF NOT EXISTS ref_cost (
   employee_id INTEGER NOT NULL,      -- Odoo person id (ref_person.id)
   month       TEXT NOT NULL,         -- 'YYYY-MM-01'
   cost        REAL NOT NULL,
   kind        TEXT NOT NULL DEFAULT 'actual',
   PRIMARY KEY (employee_id, month)
+);
+
+-- Fully loaded cost rate card per person, entered in-app by the costing role
+-- (COSTING_UPNS) and only ever served to it. Any of the three may be set; the
+-- client derives a month's cost as: monthly, else bi-weekly x 26/12, else
+-- hourly x that month's hours.
+CREATE TABLE IF NOT EXISTS cost_rate (
+  employee_id INTEGER PRIMARY KEY,   -- Odoo person id (ref_person.id)
+  biweekly    REAL,
+  monthly     REAL,
+  hourly      REAL,
+  updated_by  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS sync_state (

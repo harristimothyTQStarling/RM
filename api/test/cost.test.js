@@ -1,15 +1,14 @@
 "use strict";
 /**
  * Costing role — the contract:
- *   - /api/cost and /api/cost/import are COSTING_UPNS-only (default tim@),
+ *   - /api/cost and /api/cost/rate are COSTING_UPNS-only (default tim@),
  *     fail closed, and never leak payroll-derived data to editors or viewers
- *   - import REPLACES the dataset; kind derives from the month (closed ->
- *     actual, current onward -> standard); fillForward projects each person's
- *     trailing 3-closed-month average across the remaining months
+ *   - costs are a per-person RATE CARD entered in-app: bi-weekly, monthly and
+ *     hourly. PUT upserts a person's card; clearing all three deletes it.
  */
 const test = require("node:test");
 const assert = require("node:assert");
-const { as, ANON, fresh, fm, call } = require("./helpers");
+const { as, ANON, fresh, call } = require("./helpers");
 
 process.env.EDITOR_UPNS = "tim@tqstarling.com,melissa@tqstarling.com";
 delete process.env.COSTING_UPNS;              // default: tim only
@@ -17,20 +16,23 @@ const TIM = as("tim@tqstarling.com");
 const MELISSA = as("melissa@tqstarling.com"); // editor but NOT costing
 const JANE = as("jane@tqstarling.com");       // viewer
 
-test("role gating: only the costing allowlist can see or import cost data", async () => {
+const put = (db, headers, card) => call(db, "PUT", "/api/cost/rate", card, headers);
+
+test("role gating: only the costing allowlist can see or edit cost rates", async () => {
   const db = fresh();
   assert.equal((await call(db, "GET", "/api/cost", null, ANON)).status, 401);
   assert.equal((await call(db, "GET", "/api/cost", null, JANE)).status, 403, "viewers are refused");
   assert.equal((await call(db, "GET", "/api/cost", null, MELISSA)).status, 403, "editors without the role are refused");
   const ok = await call(db, "GET", "/api/cost", null, TIM);
   assert.equal(ok.status, 200, "tim@ is the default costing role");
-  assert.deepEqual(ok.body.costs, []);
+  assert.deepEqual(ok.body.rates, []);
 
   process.env.COSTING_UPNS = "";              // fail closed
   assert.equal((await call(db, "GET", "/api/cost", null, TIM)).status, 403, "empty allowlist denies everyone");
   delete process.env.COSTING_UPNS;
 
-  assert.equal((await call(db, "POST", "/api/cost/import", { rows: [{ employeeId: 1, month: fm(-1), cost: 100 }] }, MELISSA)).status, 403);
+  assert.equal((await put(db, MELISSA, { employeeId: 1, monthly: 20000 })).status, 403, "editors cannot write rates");
+  assert.equal((await put(db, JANE, { employeeId: 1, monthly: 20000 })).status, 403);
 });
 
 test("me/bootstrap expose canCost to exactly the costing role", async () => {
@@ -39,56 +41,52 @@ test("me/bootstrap expose canCost to exactly the costing role", async () => {
   assert.equal((await call(db, "GET", "/api/me", null, MELISSA)).body.canCost, false);
 });
 
-test("import: kind derives from the month; fillForward projects the trailing average; dataset is replaced", async () => {
+test("rate card round-trips: upsert, partial fields, attribution", async () => {
   const db = fresh();
-  // Three closed months (avg of last 3 = (1000+1100+1200)/3 = 1100) + nothing forward.
-  const rows = [
-    { employeeId: 1, month: fm(-3), cost: 1000 },
-    { employeeId: 1, month: fm(-2), cost: 1100 },
-    { employeeId: 1, month: fm(-1), cost: 1200 },
-  ];
-  const r = await call(db, "POST", "/api/cost/import", { rows }, TIM);
-  assert.equal(r.status, 200);
-  assert.equal(r.body.provided, 3);
-  assert.ok(r.body.projected >= 1, "current..December filled from the trailing average");
+  assert.equal((await put(db, TIM, { employeeId: 1, biweekly: 9500, monthly: null, hourly: null })).status, 200);
+  assert.equal((await put(db, TIM, { employeeId: 2, hourly: 120.505 })).status, 200);
 
-  const got = (await call(db, "GET", "/api/cost", null, TIM)).body;
-  const actuals = got.costs.filter(c => c.kind === "actual");
-  const standards = got.costs.filter(c => c.kind === "standard");
-  assert.equal(actuals.length, 3, "closed months are actuals");
-  assert.ok(standards.length >= 1 && standards.every(c => c.cost === 1100), "standard = avg of last 3 closed months");
-  assert.ok(standards.some(c => c.month === `${new Date().getFullYear() + 1}-12`), "projection covers the full horizon through Dec of next year");
-  assert.equal(got.synced.by, "tim@tqstarling.com", "import attributed to the importer");
+  let got = (await call(db, "GET", "/api/cost", null, TIM)).body.rates;
+  assert.deepEqual(got.map(r => [r.employeeId, r.biweekly, r.monthly, r.hourly]).sort(),
+    [[1, 9500, null, null], [2, null, null, 120.51]], "values round-trip, cents rounded");
+  assert.ok(got.every(r => r.updatedBy === "tim@tqstarling.com"), "attribution recorded on the card");
 
-  // Re-import replaces everything.
-  const r2 = await call(db, "POST", "/api/cost/import", { rows: [{ employeeId: 2, month: fm(-1), cost: 500 }], fillForward: false }, TIM);
-  assert.equal(r2.status, 200);
-  const got2 = (await call(db, "GET", "/api/cost", null, TIM)).body;
-  assert.deepEqual(got2.costs.map(c => [c.employeeId, c.cost]), [[2, 500]], "old dataset fully replaced; fillForward=false adds nothing");
+  // Upsert replaces the whole card for that person (a cleared field goes null).
+  assert.equal((await put(db, TIM, { employeeId: 1, monthly: 21000 })).status, 200);
+  got = (await call(db, "GET", "/api/cost", null, TIM)).body.rates;
+  const p1 = got.find(r => r.employeeId === 1);
+  assert.deepEqual([p1.biweekly, p1.monthly, p1.hourly], [null, 21000, null]);
 });
 
-test("import: an explicit forward value wins over the projection; duplicates last-write-wins", async () => {
+test("clearing every field deletes the person's card", async () => {
   const db = fresh();
-  const rows = [
-    { employeeId: 1, month: fm(-1), cost: 1000 },
-    { employeeId: 1, month: fm(0), cost: 9999 },   // explicit current month
-    { employeeId: 1, month: fm(-1), cost: 1200 },  // duplicate: last wins
-  ];
-  const r = await call(db, "POST", "/api/cost/import", { rows }, TIM);
+  await put(db, TIM, { employeeId: 3, monthly: 18000 });
+  const r = await put(db, TIM, { employeeId: 3, biweekly: "", monthly: "", hourly: null });
   assert.equal(r.status, 200);
-  const got = (await call(db, "GET", "/api/cost", null, TIM)).body;
-  assert.equal(got.costs.find(c => c.month === fm(-1)).cost, 1200, "last duplicate wins");
-  const cur = got.costs.find(c => c.month === fm(0));
-  assert.deepEqual({ cost: cur.cost, kind: cur.kind }, { cost: 9999, kind: "standard" }, "explicit forward value kept");
-  got.costs.filter(c => c.month > fm(0)).forEach(c => assert.equal(c.cost, 1200, "projection uses the closed-month average"));
+  assert.equal(r.body.deleted, true);
+  assert.deepEqual((await call(db, "GET", "/api/cost", null, TIM)).body.rates, []);
 });
 
-test("import validation: bad rows rejected atomically", async () => {
+test("validation: bad ids and negative or non-numeric costs are rejected", async () => {
   const db = fresh();
-  assert.equal((await call(db, "POST", "/api/cost/import", {}, TIM)).status, 400);
-  assert.equal((await call(db, "POST", "/api/cost/import", { rows: [] }, TIM)).status, 400);
-  assert.equal((await call(db, "POST", "/api/cost/import", { rows: [{ employeeId: "x", month: fm(0), cost: 1 }] }, TIM)).status, 400);
-  assert.equal((await call(db, "POST", "/api/cost/import", { rows: [{ employeeId: 1, month: "2026-1", cost: 1 }] }, TIM)).status, 400);
-  assert.equal((await call(db, "POST", "/api/cost/import", { rows: [{ employeeId: 1, month: fm(0), cost: -5 }] }, TIM)).status, 400);
-  assert.equal((await call(db, "GET", "/api/cost", null, TIM)).body.costs.length, 0, "nothing was written");
+  assert.equal((await put(db, TIM, { monthly: 100 })).status, 400, "employeeId required");
+  assert.equal((await put(db, TIM, { employeeId: "x", monthly: 100 })).status, 400);
+  assert.equal((await put(db, TIM, { employeeId: 1, monthly: -5 })).status, 400, "negative refused");
+  assert.equal((await put(db, TIM, { employeeId: 1, hourly: "abc" })).status, 400);
+  assert.deepEqual((await call(db, "GET", "/api/cost", null, TIM)).body.rates, [], "nothing was written");
+});
+
+test("cost edits never reach the audit feed (visible to every signed-in user)", async () => {
+  const db = fresh();
+  await put(db, TIM, { employeeId: 1, monthly: 21000 });
+  const audit = await call(db, "GET", "/api/audit", null, JANE);
+  assert.equal(audit.status, 200);
+  const leaked = JSON.stringify(audit.body).includes("21000");
+  assert.equal(leaked, false, "payroll figures must not appear in the audit log");
+});
+
+test("the retired import endpoint is gone", async () => {
+  const db = fresh();
+  const r = await call(db, "POST", "/api/cost/import", { rows: [] }, TIM);
+  assert.equal(r.status, 404, "per-month import was replaced by the rate card");
 });

@@ -73,8 +73,8 @@ const canImport = (user) =>
   canEdit(user) && importerUpns().includes(String((user && user.upn) || "").toLowerCase());
 
 /**
- * Who may see COSTS AND PROFIT — fully loaded per-person cost from Gusto and
- * the margin it implies. This is payroll data, so it is its own allowlist,
+ * Who may see COSTS AND PROFIT — the fully loaded per-person cost rate card
+ * (entered in-app) and the margin it implies. Payroll data, so its own allowlist,
  * independent of edit rights, following the IMPORTER_UPNS idiom:
  *   unset        -> defaults to tim@tqstarling.com
  *   empty string -> nobody (fail closed)

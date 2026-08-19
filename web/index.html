@@ -1832,17 +1832,28 @@ function setView(v){ VIEW=v;
 /* Payroll-derived data: fetched lazily from /api/cost the first time the tab
    opens, and ONLY for the costing role — the server 403s everyone else, so
    these numbers never reach other users' browsers. */
-const COST={ rows:null, map:new Map(), synced:null, unmatched:[], loading:false, err:null, mode:"profit" };
+const COST={ rates:null, loading:false, err:null, mode:"profit" };
 async function loadCost(force){
-  if(COST.loading || (COST.rows && !force)) return;
+  if(COST.loading || (COST.rates && !force)) return;
   COST.loading=true; COST.err=null;
   try{
     const r=await api("GET","/api/cost");
-    COST.rows=r.costs||[]; COST.synced=r.synced;
-    COST.map=new Map(); COST.rows.forEach(c=>COST.map.set(`${c.employeeId}|${c.month}`,c));
+    COST.rates=new Map((r.rates||[]).map(x=>[String(x.employeeId),x]));
   }catch(e){ COST.err=e.message; }
   COST.loading=false;
   if(VIEW==="costing") renderCosting();
+}
+/* A month's fully loaded cost from the person's rate card: monthly wins, else
+   bi-weekly × 26/12, else hourly × that month's hours (actual hours for closed
+   months, forecast onward — personMonthTotal already reads the right source). */
+function costRateOf(pid){ return COST.rates? COST.rates.get(String(pid)) : null; }
+function costBasis(r){ return !r? "" : r.monthly!=null? "monthly" : r.biweekly!=null? "bi-weekly ×26/12" : r.hourly!=null? "hourly × hours" : ""; }
+function personMonthCost(pid,mkey){
+  const r=costRateOf(pid); if(!r) return 0;
+  if(r.monthly!=null) return r.monthly;
+  if(r.biweekly!=null) return Math.round(r.biweekly*26/12*100)/100;
+  if(r.hourly!=null) return Math.round(r.hourly*personMonthTotal(pid,mkey)*100)/100;
+  return 0;
 }
 /* Revenue per person per month: closed months use actual billable revenue from
    Odoo; the current month onward uses forecast hours × bill rate. */
@@ -1873,11 +1884,11 @@ function renderCosting(){
     `<div class="seg" role="group" aria-label="Metric">`+
       ["profit","revenue","cost"].map(mo=>`<button type="button" data-costmode="${mo}" aria-pressed="${COST.mode===mo}">${mo[0].toUpperCase()+mo.slice(1)}</button>`).join("")+
     `</div>`+
-    `<button class="btn primary" id="btnCostImport" title="Paste fully loaded monthly costs (from Gusto reporting) — replaces the current cost data">Import costs…</button></div>`+
-    `<span class="hint">fully loaded cost (salary + bonus + employer taxes + benefits, from Gusto reporting) vs revenue · closed months actual, current month onward at the standard rate</span></div>${bodyHtml}</div>`;
+    `<button class="btn primary" id="btnCostRates" title="Enter each person's fully loaded cost — bi-weekly, monthly or hourly. Only the costing role can see or edit.">Resource costs…</button></div>`+
+    `<span class="hint">fully loaded cost (salary + bonus + employer taxes + benefits) vs revenue · costs entered in-app per person: monthly, bi-weekly ×26/12, or hourly × hours</span></div>${bodyHtml}</div>`;
   const root=document.getElementById("viewRoot");
   if(COST.err){ root.innerHTML=head(`<div style="padding:18px"><p>⚠ ${esc(COST.err)}</p></div>`); return; }
-  if(!COST.rows){ loadCost(); root.innerHTML=head(`<div style="padding:18px" class="muted">Loading cost data…</div>`); return; }
+  if(!COST.rates){ loadCost(); root.innerHTML=head(`<div style="padding:18px" class="muted">Loading cost data…</div>`); return; }
 
   const typeRank=p=>p.type==="contractor"?1:0;
   const ppl=filteredPeople().filter(p=>p.type!=="tbh").sort((a,b)=>typeRank(a)-typeRank(b));
@@ -1885,10 +1896,8 @@ function renderCosting(){
   const acc={employee:mkAcc(),contractor:mkAcc(),team:mkAcc()};
   let body="";
   ppl.forEach(p=>{
-    const cells=MONTHS.map(m=>{
-      const ce=COST.map.get(`${p.id}|${m.key}`);
-      return { rev:personMonthRevenue(p.id,m), cost:ce?ce.cost:0, kind:ce?ce.kind:"" };
-    });
+    const basis=costBasis(costRateOf(p.id));
+    const cells=MONTHS.map(m=>({ rev:personMonthRevenue(p.id,m), cost:personMonthCost(p.id,m.key), kind:basis }));
     if(!cells.some(c=>c.rev>0||c.cost>0)) return;      // nothing to show for this person
     const a=acc[p.type]||acc.employee; a.n++; acc.team.n++;
     let rrev=0,rcost=0;
@@ -1910,71 +1919,61 @@ function renderCosting(){
     (acc.employee.n?footRow(`Employees <span class="muted">· ${acc.employee.n}</span>`,acc.employee):"")+
     (acc.contractor.n?footRow(`Contractors <span class="muted">· ${acc.contractor.n}</span>`,acc.contractor):"")+
     footRow("Team total",acc.team,"grand")+`</tfoot>`;
-  const never=!COST.synced;
   const note=`<div class="legend" style="margin-top:6px"><span>`+
-    (never? `<b>No cost data yet.</b> Use Import costs to paste fully loaded monthly costs from Gusto reporting. `
-          : `Costs last imported ${esc(String(COST.synced.at).slice(0,16).replace("T"," "))}${COST.synced.by?` by ${esc(COST.synced.by)}`:""} · ${COST.rows.length} rows. `)+
-    `Standard rate = average of the last up-to-3 closed months of fully loaded cost, projected forward automatically. Revenue: closed months are actual billable revenue from Odoo; from the current month it is forecast hours × bill rate.`+
+    (COST.rates.size? `${COST.rates.size} ${COST.rates.size===1?"person has":"people have"} a cost rate. `
+                    : `<b>No cost data yet.</b> Use Resource costs to enter each person's fully loaded cost. `)+
+    `A month's cost = the person's <b>monthly</b> rate if set, else <b>bi-weekly × 26 ÷ 12</b>, else <b>hourly × that month's hours</b> (actual hours for closed months, forecast onward). Revenue: closed months are actual billable revenue from Odoo; from the current month it is forecast hours × bill rate.`+
     `</span></div>`;
   root.innerHTML=head(`<div class="scroll"><table class="pivot">${pivotHead("Person")}<tbody>${body||`<tr><td class="lbl muted" style="padding:14px">No people with cost or revenue match the current filters.</td></tr>`}</tbody>${foot}</table></div>${note}`);
 }
 
-/* Cost import modal: paste "Name (or Odoo id), YYYY-MM, cost" lines — commas
-   or tabs (Excel paste). Names resolve against the roster; the server replaces
-   the whole cost dataset and projects forward months automatically. */
-function openCostImport(){
+/* Resource cost form: one row per employee/contractor with bi-weekly, monthly
+   and hourly cost inputs. Each edit saves that person's card immediately.
+   Visible and editable only for the costing role (server-enforced too). */
+function openCostRates(){
+  const typeRank=p=>p.type==="contractor"?1:0;
+  const ppl=allPeople().filter(p=>p.type!=="tbh").sort((a,b)=>typeRank(a)-typeRank(b)||a.name.localeCompare(b.name));
+  const cur=new Date().toISOString().slice(0,7);
+  const eff=(pid)=>{ const c=personMonthCost(pid,cur); const r=costRateOf(pid);
+    return c? `${money(c)}${r&&r.hourly!=null&&r.monthly==null&&r.biweekly==null?" this mo.":"/mo"}` : "—"; };
+  const inp=(pid,f,v)=>`<input type="number" min="0" step="0.01" value="${v??""}" data-cr="${pid}|${f}" style="width:96px;padding:4px 7px;text-align:right">`;
+  const rows=ppl.map(p=>{ const r=costRateOf(p.id)||{};
+    const badge=p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
+    return `<tr><td style="padding:5px 8px"><b>${esc(p.name)}</b>${badge}<div class="muted" style="font-size:11px">${esc(p.role||"—")}</div></td>`+
+      `<td style="padding:5px 8px;text-align:right">${inp(p.id,"biweekly",r.biweekly)}</td>`+
+      `<td style="padding:5px 8px;text-align:right">${inp(p.id,"monthly",r.monthly)}</td>`+
+      `<td style="padding:5px 8px;text-align:right">${inp(p.id,"hourly",r.hourly)}</td>`+
+      `<td style="padding:5px 8px;text-align:right" class="muted" data-creff="${p.id}">${eff(p.id)}</td></tr>`;
+  }).join("");
   document.getElementById("modalRoot").innerHTML=
-    `<div class="backdrop" id="ciBackdrop"><div class="modal" style="width:min(640px,100%)">`+
-    `<div class="modal-hd"><h2>Import fully loaded costs</h2>`+
-    `<p>One line per person per month: <b>Name, 2026-01, 21000</b> (commas or tabs — pasting from Excel works). `+
-    `Numbers are total employer cost for the month: salary + bonus + employer taxes + benefits. This <b>replaces</b> all existing cost data.</p></div>`+
-    `<div class="modal-bd">`+
-    `<textarea id="ciText" rows="12" style="width:100%;font:12px/1.5 ui-monospace,monospace;border:1px solid var(--line-strong);border-radius:8px;background:var(--surface);color:var(--ink);padding:10px" placeholder="Alex Rivera, 2026-01, 21450\nAlex Rivera, 2026-02, 20980\nJordan Lee\t2026-01\t16500"></textarea>`+
-    `<label style="display:flex;align-items:center;gap:8px;font-size:12.5px"><input type="checkbox" id="ciForward" checked> Project current and future months automatically (trailing 3-month average per person)</label>`+
-    `<div id="ciPreview" class="muted" style="font-size:12px"></div>`+
-    `</div>`+
-    `<div class="modal-ft"><span class="muted" style="font-size:11.5px">Only the costing role can see or import this data.</span>`+
-    `<div style="display:flex;gap:8px"><button class="btn" id="ciCancel">Cancel</button><button class="btn primary" id="ciApply">Import</button></div></div>`+
+    `<div class="backdrop" id="crBackdrop"><div class="modal" style="width:min(760px,100%)">`+
+    `<div class="modal-hd"><h2>Resource costs</h2>`+
+    `<p>Fully loaded cost per person (salary + bonus + employer taxes + benefits). Enter whichever basis you have — `+
+    `<b>monthly</b> wins, else <b>bi-weekly × 26 ÷ 12</b>, else <b>hourly × that month's hours</b>. Each change saves immediately; clear all three to remove a person's cost.</p></div>`+
+    `<div class="modal-bd" style="max-height:min(56vh,540px);overflow:auto">`+
+    `<table class="maptbl"><thead><tr><th style="text-align:left;padding:5px 8px">Person</th>`+
+    `<th style="text-align:right;padding:5px 8px">Bi-weekly $</th><th style="text-align:right;padding:5px 8px">Monthly $</th>`+
+    `<th style="text-align:right;padding:5px 8px">Hourly $</th><th style="text-align:right;padding:5px 8px">Effective</th></tr></thead>`+
+    `<tbody>${rows}</tbody></table></div>`+
+    `<div class="modal-ft"><span class="muted" style="font-size:11.5px">Only the costing role can see or edit this data.</span>`+
+    `<button class="btn primary" id="crDone">Done</button></div>`+
     `</div></div>`;
-  const close=()=>{ document.getElementById("modalRoot").innerHTML=""; };
-  const parse=()=>{
-    const roster=allPeople().filter(p=>p.type!=="tbh");
-    const byNorm=new Map(roster.map(p=>[String(p.name).toLowerCase().replace(/[^a-z0-9]+/g,""),p.id]));
-    const rows=[], unmatched=new Set(); let bad=0;
-    document.getElementById("ciText").value.split(/\r?\n/).forEach(line=>{
-      const t=line.trim(); if(!t) return;
-      const parts=(t.includes("\t")?t.split("\t"):t.split(",")).map(s=>s.trim()).filter(s=>s!=="");
-      if(parts.length<3){ bad++; return; }
-      const cost=Number(parts[parts.length-1].replace(/[$,\s]/g,""));
-      const month=parts[parts.length-2].slice(0,7);
-      const who=parts.slice(0,parts.length-2).join(" ");
-      if(!/^\d{4}-\d{2}$/.test(month)||!Number.isFinite(cost)||cost<0){ bad++; return; }
-      const id=/^\d+$/.test(who)? Number(who) : byNorm.get(who.toLowerCase().replace(/[^a-z0-9]+/g,""));
-      if(id==null){ unmatched.add(who); return; }
-      rows.push({ employeeId:id, month, cost });
-    });
-    return { rows, unmatched:[...unmatched], bad };
-  };
-  const preview=()=>{
-    const {rows,unmatched,bad}=parse();
-    document.getElementById("ciPreview").innerHTML=
-      `${rows.length} row${rows.length===1?"":"s"} for ${new Set(rows.map(r=>r.employeeId)).size} people ready.`+
-      (unmatched.length?` <b>Not in the roster (skipped):</b> ${unmatched.map(esc).join(", ")}.`:"")+
-      (bad?` ${bad} malformed line${bad===1?"":"s"} ignored.`:"");
-    return rows;
-  };
-  document.getElementById("ciText").addEventListener("input",preview);
-  document.getElementById("ciCancel").addEventListener("click",close);
-  document.getElementById("ciBackdrop").addEventListener("click",e=>{ if(e.target.id==="ciBackdrop") close(); });
-  document.getElementById("ciApply").addEventListener("click",async ()=>{
-    const rows=preview();
-    if(!rows.length){ toast("Nothing to import — check the format"); return; }
-    const btn=document.getElementById("ciApply"); btn.disabled=true; btn.textContent="Importing…";
+  const close=()=>{ document.getElementById("modalRoot").innerHTML=""; renderCosting(); };
+  document.getElementById("crDone").addEventListener("click",close);
+  document.getElementById("crBackdrop").addEventListener("click",e=>{ if(e.target.id==="crBackdrop") close(); });
+  document.getElementById("crBackdrop").addEventListener("change",async e=>{
+    const el=e.target; if(el.dataset.cr===undefined) return;
+    const [pid]=el.dataset.cr.split("|");
+    const val=f=>{ const i=document.querySelector(`[data-cr="${pid}|${f}"]`); const v=i&&i.value!==""?Number(i.value):null;
+      return v!=null&&Number.isFinite(v)&&v>=0? v : null; };
+    const card={ employeeId:Number(pid), biweekly:val("biweekly"), monthly:val("monthly"), hourly:val("hourly") };
     try{
-      const r=await api("POST","/api/cost/import",{ rows, fillForward:document.getElementById("ciForward").checked });
-      toast(`Costs imported: ${r.provided} provided + ${r.projected} projected months`);
-      close(); await loadCost(true);
-    }catch(err){ toast("Import failed: "+err.message); btn.disabled=false; btn.textContent="Import"; }
+      await api("PUT","/api/cost/rate",card);
+      if(card.biweekly==null&&card.monthly==null&&card.hourly==null) COST.rates.delete(String(pid));
+      else COST.rates.set(String(pid),{...card});
+      const effc=document.querySelector(`[data-creff="${pid}"]`); if(effc) effc.textContent=eff(pid);
+      status("Saved");
+    }catch(err){ toast("Cost not saved: "+err.message); }
   });
 }
 
@@ -2067,7 +2066,7 @@ function keepScroll(fn){
 document.getElementById("viewRoot").addEventListener("click",async e=>{
   const cmBtn=e.target.closest("[data-costmode]");
   if(cmBtn){ COST.mode=cmBtn.dataset.costmode; renderCosting(); return; }
-  if(e.target.closest("#btnCostImport")){ openCostImport(); return; }
+  if(e.target.closest("#btnCostRates")){ openCostRates(); return; }
   if(e.target.closest("#btnBulk")){ openBulkModal(); return; }
   const rp=e.target.closest("[data-rp]");            // By Role: practice → people
   if(rp){ const k=rp.getAttribute("data-rp"); if(rpOpen.has(k)) rpOpen.delete(k); else rpOpen.add(k); keepScroll(renderByRole); return; }
@@ -2952,7 +2951,7 @@ async function bootstrap(){
   // Cost & Profit tab only for the costing role; refetch cost data on reload.
   const tabCost = document.getElementById("tabCosting");
   if (tabCost) tabCost.hidden = !ME.canCost;
-  COST.rows = null;
+  COST.rates = null;
   const who=document.getElementById("whoami");
   if(who) who.innerHTML = `${esc(ME.name||ME.upn)} · ${ME.canEdit?"editor":"view only"} · <a href="/auth/logout">sign out</a>`;
 
