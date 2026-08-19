@@ -2007,12 +2007,15 @@ function renderProjMargin(){
         if(x.h>0 && x.missing) pMissing=true; });
       return {p, rev:prev, cost:pcost, hours:ph, missing:pMissing};
     }).filter(x=>x.hours>0 || x.rev.some(v=>v>0));
-    if(PM_HIDENC) perPerson=perPerson.filter(x=>!x.missing);   // hidden lines leave the sums too
+    const hadLines=perPerson.length>0;
+    // Hiding removes only the no-cost LINES (and their hours from the sums);
+    // the project row itself stays, even if every line on it was hidden.
+    if(PM_HIDENC) perPerson=perPerson.filter(x=>!x.missing);
     const rev=MKEYS.map((k,i)=>perPerson.reduce((s,x)=>s+x.rev[i],0));
     const cost=MKEYS.map((k,i)=>perPerson.reduce((s,x)=>s+x.cost[i],0));
     const missing=perPerson.some(x=>x.missing);
     const tRev=rev.reduce((a,b)=>a+b,0), tCost=cost.reduce((a,b)=>a+b,0);
-    if(!tRev && !tCost) return;                            // nothing on this project
+    if(!hadLines) return;                                  // nothing on this project at all
     items.push({pr, people:perPerson, rev, cost, tRev, tCost, missing});
   });
   items.sort((a,b)=> b.tRev-a.tRev || a.pr.name.localeCompare(b.pr.name));   // biggest projects first
@@ -2027,7 +2030,7 @@ function renderProjMargin(){
     const ytds=YIDX.map(ix=>pmCell(sumIdx(it.rev,ix),sumIdx(it.cost,ix),"col-tot"));
     body+=`<tr class="lvl1${isOpen?" open":""}" data-pm="${esc(id)}"><td class="lbl">`+
       `<span class="tw">${chev()}</span>${badge} <b>${esc(it.pr.name)}</b>${flagBadge}`+
-      `<div class="muted" style="font-size:11px;padding-left:18px">${esc(it.pr.client||"—")} · ${it.people.length} ${it.people.length===1?"person":"people"}</div></td>`+
+      `<div class="muted" style="font-size:11px;padding-left:18px">${esc(it.pr.client||"—")} · ${it.people.length?`${it.people.length} ${it.people.length===1?"person":"people"}`:"all lines hidden — no cost"}</div></td>`+
       withYearCols(tds,ytds)+pmCell(it.tRev,it.tCost,"col-tot",it.missing)+`</tr>`;
     if(!isOpen) return;
     it.people.forEach(x=>{
