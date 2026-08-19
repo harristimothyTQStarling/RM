@@ -271,8 +271,8 @@
   .pill{display:inline-block;padding:1px 6px;border-radius:5px;font-size:11px;font-weight:640;font-variant-numeric:tabular-nums;}
   .subrow td.lbl{padding-left:30px;font-weight:400;color:var(--ink-2);}
   /* By Role drill-down: role → practice → person */
-  table.pivot tr[data-role] td.lbl,table.pivot tr[data-rp] td.lbl,table.pivot tr[data-cust] td.lbl{cursor:pointer;user-select:none;}
-  table.pivot tr[data-role] td.lbl:hover,table.pivot tr[data-rp] td.lbl:hover,table.pivot tr[data-cust] td.lbl:hover{color:var(--accent-ink);}
+  table.pivot tr[data-role] td.lbl,table.pivot tr[data-rp] td.lbl,table.pivot tr[data-cust] td.lbl,table.pivot tr[data-pm] td.lbl{cursor:pointer;user-select:none;}
+  table.pivot tr[data-role] td.lbl:hover,table.pivot tr[data-rp] td.lbl:hover,table.pivot tr[data-cust] td.lbl:hover,table.pivot tr[data-pm] td.lbl:hover{color:var(--accent-ink);}
   table.pivot tr.lvl2 td{background:var(--surface-2);}
   table.pivot tr.lvl2 td.lbl{background:var(--surface-2);}
   table.pivot tr.lvl3 td{background:var(--surface-3);}
@@ -480,7 +480,8 @@
       <button class="tab" role="tab" data-view="variance" aria-selected="false">Forecast vs Actual</button>
       <button class="tab" role="tab" data-view="crmCheck" aria-selected="false">Mismatches</button>
       <button class="tab" role="tab" data-view="hiring" aria-selected="false">To Be Assigned</button>
-      <button class="tab" role="tab" data-view="costing" aria-selected="false" id="tabCosting" hidden>Cost &amp; Profit</button>
+      <button class="tab" role="tab" data-view="costing" aria-selected="false" id="tabCosting" hidden>Employee Margin</button>
+      <button class="tab" role="tab" data-view="projMargin" aria-selected="false" id="tabProjMargin" hidden>Project Margin</button>
     </div>
     <div class="filters" id="filters">
       <div class="seg" id="modeSeg" role="group" aria-label="Show hours or dollars">
@@ -1808,7 +1809,7 @@ function render(){
   // takes the department / employee-type dropdowns (project views filter the
   // PEOPLE whose hours are counted, while their search box filters projects).
   const personFilters = VIEW!=="crmCheck";
-  const personSearch = VIEW!=="byProj" && VIEW!=="byCust" && VIEW!=="crmCheck";
+  const personSearch = VIEW!=="byProj" && VIEW!=="byCust" && VIEW!=="crmCheck" && VIEW!=="projMargin";
   document.getElementById("fDept").style.display = personFilters? "":"none";
   document.getElementById("fType").style.display = personFilters? "":"none";
   document.getElementById("fSearch").placeholder = personSearch ? "Search name / role…"
@@ -1818,6 +1819,7 @@ function render(){
   else if(VIEW==="byRole") renderByRole();
   else if(VIEW==="byProj") renderByProj();
   else if(VIEW==="byCust") renderByCust();
+  else if(VIEW==="projMargin") renderProjMargin();
   else if(VIEW==="variance") renderVariance();
   else if(VIEW==="crmCheck") renderCrmCheck();
   else if(VIEW==="hiring") renderHiring();
@@ -1842,6 +1844,7 @@ async function loadCost(force){
   }catch(e){ COST.err=e.message; }
   COST.loading=false;
   if(VIEW==="costing") renderCosting();
+  else if(VIEW==="projMargin") renderProjMargin();
 }
 /* A month's fully loaded cost from the person's rate card: monthly wins, else
    annual ÷ 12, else bi-weekly × 26/12, else hourly × that month's hours (actual
@@ -1904,7 +1907,7 @@ function renderCosting(){
     return;
   }
   const head=(bodyHtml)=>`<div class="panel"><div class="panel-hd">`+
-    `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><h2>Cost &amp; profit by person × month</h2>`+
+    `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><h2>Employee margin by person × month</h2>`+
     `<div class="seg" role="group" aria-label="Metric">`+
       ["profit","revenue","cost"].map(mo=>`<button type="button" data-costmode="${mo}" aria-pressed="${COST.mode===mo}">${mo[0].toUpperCase()+mo.slice(1)}</button>`).join("")+
     `</div>`+
@@ -1950,6 +1953,95 @@ function renderCosting(){
     `Costs are <b>prorated to the Odoo employment window</b>: nothing before the hire date or after the offboarding date, and the start/end months carry only the employed fraction. Revenue: closed months are actual billable revenue from Odoo; from the current month it is forecast hours × bill rate.`+
     `</span></div>`;
   root.innerHTML=head(`<div class="scroll"><table class="pivot">${pivotHead("Person")}<tbody>${body||`<tr><td class="lbl muted" style="padding:14px">No people with cost or revenue match the current filters.</td></tr>`}</tbody>${foot}</table></div>${note}`);
+}
+
+/* ============================ PROJECT MARGIN ============================ */
+/* Margin per project × month, costed 1:1 per hour: every hour someone works on
+   a project carries their HOURLY cost (from the cost card) against the billed
+   rate for that hour. Closed months use actual hours + realized revenue from
+   Odoo; open months use forecast hours × forecast pair rate. Costing role only. */
+let pmOpen=new Set();
+function pmCell(rev,cost,extra,flag){
+  if(!(rev>0)&&!(cost>0)) return `<td class="mcelln ${extra||""}"></td>`;
+  const profit=rev-cost, pct= rev>0? Math.round(profit/rev*100) : null;
+  const cls= profit<-0.5? "v-over" : "v-on";
+  const tip=`revenue ${money(rev)} · cost ${money(cost)} · profit ${money(profit)}${pct!==null?` · ${pct}% margin`:""}${flag?" · includes hours with no hourly cost":""}`;
+  return `<td class="mcelln ${cls} ${extra||""}" title="${esc(tip)}"><span class="h">${pct!==null?pct+"%":"—"}</span><span class="pct">${money(profit)}${flag?" ⚑":""}</span></td>`;
+}
+/* One person's month on one project: hours, revenue and 1:1 hourly cost. */
+function pmPersonMonth(pid,projid,m){
+  const h=alloc(pid,projid,m.key); if(!h) return {rev:0,cost:0,h:0,missing:false};
+  const rev = isPastMi(m.mi) ? (ACT_REV.get(`${pid}|${projid}|${m.key}`)||0) : h*rateAt(pid,projid,m.key);
+  const r=costRateOf(pid), hc = r&&r.hourly!=null ? r.hourly : null;
+  return { rev, cost: hc!=null? h*hc : 0, h, missing: hc==null };
+}
+function renderProjMargin(){
+  if(!ME||!ME.canCost){
+    document.getElementById("viewRoot").innerHTML=`<div class="panel"><div class="panel-hd"><h2>Restricted</h2></div><div style="padding:18px" class="muted">Margin data is limited to the costing role.</div></div>`;
+    return;
+  }
+  const head=(bodyHtml)=>`<div class="panel"><div class="panel-hd">`+
+    `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><h2>Project margin by month</h2></div>`+
+    `<span class="hint">margin % + profit $ · cost is 1:1 per hour (each person's hourly cost vs. their bill rate) · closed months actual, open months forecast · click a project to drill into its people</span></div>${bodyHtml}</div>`;
+  const root=document.getElementById("viewRoot");
+  if(COST.err){ root.innerHTML=head(`<div style="padding:18px"><p>⚠ ${esc(COST.err)}</p></div>`); return; }
+  if(!COST.rates){ loadCost(); root.innerHTML=head(`<div style="padding:18px" class="muted">Loading cost data…</div>`); return; }
+
+  const q=(F.search||"").toLowerCase();
+  const projs=sortedProjects().filter(pr=> !q || projLabel(pr).toLowerCase().includes(q) || (pr.client||"").toLowerCase().includes(q));
+  const colRev=MKEYS.map(()=>0), colCost=MKEYS.map(()=>0);
+  const items=[];
+  projs.forEach(pr=>{
+    const people=projPeople(pr.id).sort(byPersonOrder);   // respects the dept/type dropdowns
+    const rev=MKEYS.map(()=>0), cost=MKEYS.map(()=>0);
+    let missing=false;
+    const perPerson=people.map(p=>{
+      const prev=MKEYS.map(()=>0), pcost=MKEYS.map(()=>0); let ph=0, pMissing=false;
+      MONTHS.forEach((m,i)=>{ const x=pmPersonMonth(p.id,pr.id,m);
+        prev[i]=x.rev; pcost[i]=x.cost; ph+=x.h;
+        rev[i]+=x.rev; cost[i]+=x.cost;
+        if(x.h>0 && x.missing){ missing=true; pMissing=true; } });
+      return {p, rev:prev, cost:pcost, hours:ph, missing:pMissing};
+    }).filter(x=>x.hours>0 || x.rev.some(v=>v>0));
+    const tRev=rev.reduce((a,b)=>a+b,0), tCost=cost.reduce((a,b)=>a+b,0);
+    if(!tRev && !tCost) return;                            // nothing on this project
+    items.push({pr, people:perPerson, rev, cost, tRev, tCost, missing});
+  });
+  items.sort((a,b)=> b.tRev-a.tRev || a.pr.name.localeCompare(b.pr.name));   // biggest projects first
+
+  let body="";
+  items.forEach(it=>{
+    it.rev.forEach((v,i)=>{ colRev[i]+=v; colCost[i]+=it.cost[i]; });
+    const id=String(it.pr.id), isOpen=pmOpen.has(id);
+    const badge=it.pr.src==="CRM"?`<span class="badge crm">CRM</span>`:`<span class="badge prj">PRJ</span>`;
+    const flagBadge=it.missing?` <span class="badge np" title="Some hours on this project belong to people with no hourly cost — their cost counts as $0">no cost</span>`:"";
+    const tds=MONTHS.map((m,i)=>pmCell(it.rev[i],it.cost[i],""));
+    const ytds=YIDX.map(ix=>pmCell(sumIdx(it.rev,ix),sumIdx(it.cost,ix),"col-tot"));
+    body+=`<tr class="lvl1${isOpen?" open":""}" data-pm="${esc(id)}"><td class="lbl">`+
+      `<span class="tw">${chev()}</span>${badge} <b>${esc(it.pr.name)}</b>${flagBadge}`+
+      `<div class="muted" style="font-size:11px;padding-left:18px">${esc(it.pr.client||"—")} · ${it.people.length} ${it.people.length===1?"person":"people"}</div></td>`+
+      withYearCols(tds,ytds)+pmCell(it.tRev,it.tCost,"col-tot",it.missing)+`</tr>`;
+    if(!isOpen) return;
+    it.people.forEach(x=>{
+      const r=costRateOf(x.p.id), hc=r&&r.hourly!=null? r.hourly:null;
+      const cbadge=x.p.type==="contractor"?" <span class='badge contractor'>Con</span>":x.p.type==="tbh"?" <span class='badge tbh'>TBA</span>":"";
+      const costNote= hc!=null? `$${fmt(hc)}/hr cost · ${fmt0(x.hours)}h` : `<span class="badge np">no hourly cost</span> · ${fmt0(x.hours)}h`;
+      const ptds=MONTHS.map((m,i)=>pmCell(x.rev[i],x.cost[i],""));
+      const pytds=YIDX.map(ix=>pmCell(sumIdx(x.rev,ix),sumIdx(x.cost,ix),"col-tot"));
+      body+=`<tr class="lvl2"><td class="lbl lvl2i">${esc(x.p.name)}${cbadge}`+
+        `<div class="muted" style="font-size:11px">${costNote}</div></td>`+
+        withYearCols(ptds,pytds)+pmCell(x.rev.reduce((a,b)=>a+b,0),x.cost.reduce((a,b)=>a+b,0),"col-tot",x.missing)+`</tr>`;
+    });
+  });
+  const foot=`<tfoot><tr class="grand"><td class="lbl">All projects</td>`+
+    withYearCols(MONTHS.map((m,i)=>pmCell(colRev[i],colCost[i],"")),
+                 YIDX.map(ix=>pmCell(sumIdx(colRev,ix),sumIdx(colCost,ix),"col-tot")))+
+    pmCell(colRev.reduce((a,b)=>a+b,0),colCost.reduce((a,b)=>a+b,0),"col-tot")+`</tr></tfoot>`;
+  const note=`<div class="legend" style="margin-top:6px"><span>`+
+    `Cost is <b>1:1 per hour</b>: each person's hours × their <b>hourly</b> cost from the rate card, against the same hours billed (closed months: actual hours &amp; realized revenue from Odoo; open months: forecast hours × pair bill rate). `+
+    `⚑ / <b>no cost</b> = hours from someone with no hourly cost on their card — revenue counts, cost counts as $0, so fill their card to make the margin real.`+
+    `</span></div>`;
+  root.innerHTML=head(`<div class="scroll"><table class="pivot">${pivotHead("Project")}<tbody>${body||`<tr><td class="lbl muted" style="padding:14px">No projects with hours match the current filters.</td></tr>`}</tbody>${foot}</table></div>${note}`);
 }
 
 /* Resource cost form: one row per employee/contractor with bi-weekly, monthly
@@ -2109,6 +2201,8 @@ document.getElementById("viewRoot").addEventListener("click",async e=>{
   if(rr){ const k=rr.getAttribute("data-role"); if(roleOpen.has(k)) roleOpen.delete(k); else roleOpen.add(k); keepScroll(renderByRole); return; }
   const cu=e.target.closest("[data-cust]");          // By Customer: customer → projects/CRM
   if(cu){ const k=cu.getAttribute("data-cust"); if(custOpen.has(k)) custOpen.delete(k); else custOpen.add(k); keepScroll(renderByCust); return; }
+  const pm=e.target.closest("[data-pm]");            // Project Margin: project → people
+  if(pm){ const k=pm.getAttribute("data-pm"); if(pmOpen.has(k)) pmOpen.delete(k); else pmOpen.add(k); keepScroll(renderProjMargin); return; }
   const ptog=e.target.closest("[data-ptoggle]");   // By Project: expand a project
   if(ptog){ const id=ptog.dataset.ptoggle; if(projOpen.has(id)) projOpen.delete(id); else projOpen.add(id); keepScroll(renderByProj); return; }
   const rmr=e.target.closest("[data-rmres]");      // By Project: remove a resource from a project
@@ -2983,9 +3077,11 @@ async function bootstrap(){
   // The Planner Assistant exists only when the server has an Anthropic key.
   const btnAI = document.getElementById("btnAI");
   if (btnAI) btnAI.hidden = !ME.agentEnabled;
-  // Cost & Profit tab only for the costing role; refetch cost data on reload.
+  // Margin tabs only for the costing role; refetch cost data on reload.
   const tabCost = document.getElementById("tabCosting");
   if (tabCost) tabCost.hidden = !ME.canCost;
+  const tabPM = document.getElementById("tabProjMargin");
+  if (tabPM) tabPM.hidden = !ME.canCost;
   COST.rates = null;
   const who=document.getElementById("whoami");
   if(who) who.innerHTML = `${esc(ME.name||ME.upn)} · ${ME.canEdit?"editor":"view only"} · <a href="/auth/logout">sign out</a>`;
