@@ -155,7 +155,19 @@ CREATE TABLE IF NOT EXISTS ref_person (
   role      VARCHAR(128) NOT NULL DEFAULT '',
   dept      VARCHAR(128) NOT NULL DEFAULT '',
   type      VARCHAR(16)  NOT NULL DEFAULT 'employee',   -- employee | contractor
-  active    SMALLINT     NOT NULL DEFAULT 1
+  active    SMALLINT     NOT NULL DEFAULT 1,
+  hire_date DATE                                 -- earliest hr_version.date_version
+);
+ALTER TABLE ref_person ADD COLUMN IF NOT EXISTS hire_date DATE;
+
+-- Company-wide public holidays (resource_calendar_leaves rows with no resource,
+-- time_type='leave'). Used to prorate monthly capacity, matching the board-pack
+-- utilization basis: available = 8h x weekdays - company holidays.
+CREATE TABLE IF NOT EXISTS ref_holiday (
+  id        INT PRIMARY KEY,                     -- odoo resource_calendar_leaves.id
+  name      VARCHAR(256) NOT NULL DEFAULT '',
+  date_from DATE NOT NULL,
+  date_to   DATE NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS ref_project (

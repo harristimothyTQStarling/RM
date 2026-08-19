@@ -35,6 +35,7 @@ function sqliteDriver(file) {
     "ALTER TABLE ref_opportunity ADD COLUMN expected_months INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE ref_actual ADD COLUMN bill_rate REAL NOT NULL DEFAULT 0",
     "ALTER TABLE ref_actual ADD COLUMN revenue REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE ref_person ADD COLUMN hire_date TEXT",
   ]) { try { db.exec(sql); } catch { /* column already exists */ } }
   return {
     kind: "sqlite",

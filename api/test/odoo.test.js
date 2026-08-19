@@ -149,6 +149,9 @@ test("syncAll caches reference data and scopes actuals to the roster", async () 
       { employee_id: [2, "Tim"], project_id: [119, "Bain"], date: "2026-05-11", unit_amount: 5 },    // person not in roster
       { employee_id: [110, "Ken"], project_id: [999, "Tmpl"], date: "2026-05-12", unit_amount: 3 },  // project not listed
     ],
+    "resource.calendar.leaves": [
+      { id: 71, name: "Independence Day", date_from: "2026-07-03 05:00:00", date_to: "2026-07-03 23:59:59" },
+    ],
   };
   const DIRECT = new Set(["name", "active", "job_title", "department_id", "partner_id", "stage_id", "type", "employee_id", "project_id", "date", "unit_amount"]);
   const fakeOdoo = {
@@ -168,5 +171,41 @@ test("syncAll caches reference data and scopes actuals to the roster", async () 
   const a = await db.all("SELECT employee_id, project_id, month, hours FROM ref_actual");
   assert.deepEqual(a, [{ employee_id: 110, project_id: 119, month: "2026-05-01", hours: 10 }]);
   const sync = await db.all("SELECT source FROM sync_state ORDER BY source");
-  assert.deepEqual(sync.map((s) => s.source), ["ref_actual", "ref_opportunity", "ref_person", "ref_project"]);
+  assert.deepEqual(sync.map((s) => s.source), ["ref_actual", "ref_holiday", "ref_opportunity", "ref_person", "ref_project"]);
+
+  // The reference payload carries the capacity-proration inputs to the client.
+  const ref = await require("../src/store").getReference(db);
+  assert.deepEqual(ref.holidays, [{ name: "Independence Day", from: "2026-07-03", to: "2026-07-03" }]);
+  assert.ok(ref.people.every((p) => "hireDate" in p), "people expose hireDate (null when Odoo has no versions)");
+});
+
+/* ---- capacity basis inputs: hire dates + company holidays (board-pack parity) ---- */
+
+test("hire date = earliest hr_version.date_version, matching the board pack", async () => {
+  const { readPeople } = require("../src/odoo");
+  const fakeOdoo = {
+    hasFields: async (model, names) => Object.fromEntries(names.map((n) => [n,
+      model === "hr.version" ? true : n === "current_version_id"])),
+    searchRead: async (model, domain, fields) => {
+      if (model === "hr.employee") return [{ id: 1, name: "Ken Sousa", current_version_id: [11, "v"] }];
+      if (fields.includes("date_version")) return [
+        { id: 21, employee_id: [1, "Ken"], date_version: "2025-06-01" },
+        { id: 11, employee_id: [1, "Ken"], date_version: "2024-03-15" },   // earliest wins
+        { id: 22, employee_id: [1, "Ken"], date_version: false },          // unset rows ignored
+      ];
+      return [{ id: 11, job_title: "Engagement Manager", department_id: [5, "Delivery"], employee_type: "employee" }];
+    },
+  };
+  const out = await readPeople(fakeOdoo);
+  assert.equal(out[0].hire_date, "2024-03-15");
+});
+
+test("readHolidays keeps only valid company-wide rows and normalises datetimes to dates", async () => {
+  const { readHolidays } = require("../src/odoo");
+  const fakeOdoo = { searchRead: async () => [
+    { id: 1, name: "New Year", date_from: "2026-01-01 05:00:00", date_to: "2026-01-01 23:59:59" },
+    { id: 2, name: "Broken", date_from: false, date_to: false },            // dropped
+  ] };
+  assert.deepEqual(await readHolidays(fakeOdoo),
+    [{ id: 1, name: "New Year", date_from: "2026-01-01", date_to: "2026-01-01" }]);
 });

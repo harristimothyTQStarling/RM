@@ -101,15 +101,22 @@ async function putProposedHire(db, user, p) {
 async function getReference(db) {
   // Non-billable projects (and their timesheet actuals) are hidden from the app
   // — see getPlan. Their rows stay cached so the filter is reversible.
-  const [people, projects, opportunities, actuals, sync] = await Promise.all([
-    db.all("SELECT id, name, role, dept, type FROM ref_person WHERE active = 1 ORDER BY name"),
+  const [people, projects, opportunities, actuals, holidays, sync] = await Promise.all([
+    db.all("SELECT id, name, role, dept, type, hire_date FROM ref_person WHERE active = 1 ORDER BY name"),
     db.all("SELECT id, name, client, billable FROM ref_project WHERE active = 1 AND billable = 1 ORDER BY name"),
     db.all("SELECT id, name, client, stage, needs_project, expected_start, expected_months FROM ref_opportunity WHERE active = 1 ORDER BY name"),
     db.all("SELECT employee_id, project_id, month, hours, bill_rate, revenue FROM ref_actual a WHERE NOT EXISTS (SELECT 1 FROM ref_project np WHERE np.billable = 0 AND np.id = a.project_id)"),
+    db.all("SELECT id, name, date_from, date_to FROM ref_holiday ORDER BY date_from"),
     db.all("SELECT source, synced_at, row_count, ok, message FROM sync_state"),
   ]);
   return {
-    people: people.map(p => ({ id: p.id, name: p.name, role: p.role || "", dept: p.dept || "", type: p.type })),
+    people: people.map(p => ({
+      id: p.id, name: p.name, role: p.role || "", dept: p.dept || "", type: p.type,
+      hireDate: p.hire_date ? String(p.hire_date).slice(0, 10) : null,
+    })),
+    holidays: holidays.map(h => ({
+      name: h.name || "", from: String(h.date_from).slice(0, 10), to: String(h.date_to || h.date_from).slice(0, 10),
+    })),
     projects: projects.map(p => ({ id: p.id, name: p.name, client: p.client || "", billable: !!p.billable })),
     opportunities: opportunities.map(o => ({
       id: o.id, name: o.name, client: o.client || "", stage: o.stage || "", needsProject: !!o.needs_project,

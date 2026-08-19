@@ -109,30 +109,68 @@ async function readPeople(odoo) {
   const direct = avail.job_title && avail.department_id;
   const typeField = avail.employee_type ? ["employee_type"] : [];
 
+  let people;
   if (direct) {
     const rows = await odoo.searchRead("hr.employee", [["active", "=", true]],
       ["name", "job_title", "department_id", ...typeField]);
-    return shapePeople(rows.map((r) => ({
+    people = shapePeople(rows.map((r) => ({
       id: r.id, name: r.name, role: r.job_title || "", dept: m2oName(r.department_id),
       employeeType: r.employee_type || "",
     })));
+  } else {
+    // Fallback: role/department live on the employee's current hr.version record —
+    // and in this layout (TQStarling's Odoo included) employee_type does too, so
+    // read it from whichever model actually has it.
+    const vAvail = await odoo.hasFields("hr.version", ["employee_type"]);
+    const vTypeField = vAvail.employee_type ? ["employee_type"] : [];
+    const emps = await odoo.searchRead("hr.employee", [["active", "=", true]], ["name", "current_version_id", ...typeField]);
+    const versionIds = emps.map((e) => m2oId(e.current_version_id)).filter(Boolean);
+    const versions = versionIds.length
+      ? await odoo.searchRead("hr.version", [["id", "in", versionIds]], ["job_title", "department_id", ...vTypeField])
+      : [];
+    const byVersion = new Map(versions.map((v) => [v.id, v]));
+    people = shapePeople(emps.map((e) => {
+      const v = byVersion.get(m2oId(e.current_version_id)) || {};
+      return { id: e.id, name: e.name, role: v.job_title || "", dept: m2oName(v.department_id), employeeType: v.employee_type || e.employee_type || "" };
+    }));
   }
+  const hires = await readHireDates(odoo, people.map((p) => p.id));
+  return people.map((p) => ({ ...p, hire_date: hires.get(p.id) || null }));
+}
 
-  // Fallback: role/department live on the employee's current hr.version record —
-  // and in this layout (TQStarling's Odoo included) employee_type does too, so
-  // read it from whichever model actually has it.
-  const vAvail = await odoo.hasFields("hr.version", ["employee_type"]);
-  const vTypeField = vAvail.employee_type ? ["employee_type"] : [];
-  const emps = await odoo.searchRead("hr.employee", [["active", "=", true]], ["name", "current_version_id", ...typeField]);
-  const versionIds = emps.map((e) => m2oId(e.current_version_id)).filter(Boolean);
-  const versions = versionIds.length
-    ? await odoo.searchRead("hr.version", [["id", "in", versionIds]], ["job_title", "department_id", ...vTypeField])
-    : [];
-  const byVersion = new Map(versions.map((v) => [v.id, v]));
-  return shapePeople(emps.map((e) => {
-    const v = byVersion.get(m2oId(e.current_version_id)) || {};
-    return { id: e.id, name: e.name, role: v.job_title || "", dept: m2oName(v.department_id), employeeType: v.employee_type || e.employee_type || "" };
-  }));
+/** Hire date per employee = earliest hr_version.date_version — the same basis the
+ *  board-pack utilization report uses (contract_date_start is often blank, so it
+ *  is deliberately NOT used). Missing model/field degrades to "no hire dates". */
+async function readHireDates(odoo, empIds) {
+  if (!empIds.length) return new Map();
+  let avail;
+  try { avail = await odoo.hasFields("hr.version", ["date_version", "employee_id"]); }
+  catch { return new Map(); }
+  if (!avail.date_version || !avail.employee_id) return new Map();
+  const rows = await odoo.searchRead("hr.version", [["employee_id", "in", empIds]], ["employee_id", "date_version"]);
+  const m = new Map();
+  for (const r of rows) {
+    const id = m2oId(r.employee_id), d = r.date_version ? String(r.date_version).slice(0, 10) : null;
+    if (!id || !d) continue;
+    if (!m.has(id) || d < m.get(id)) m.set(id, d);
+  }
+  return m;
+}
+
+/** Company-wide public holidays: resource_calendar_leaves rows with no resource
+ *  and time_type='leave'. Used client-side to prorate monthly capacity. */
+async function readHolidays(odoo) {
+  const rows = await odoo.searchRead("resource.calendar.leaves",
+    [["resource_id", "=", false], ["time_type", "=", "leave"]],
+    ["name", "date_from", "date_to"]);
+  return rows
+    .map((r) => ({
+      id: r.id,
+      name: String(r.name || "").trim(),
+      date_from: String(r.date_from || "").slice(0, 10),
+      date_to: String(r.date_to || r.date_from || "").slice(0, 10),
+    }))
+    .filter((h) => /^\d{4}-\d{2}-\d{2}$/.test(h.date_from));
 }
 
 function shapePeople(list) {
@@ -341,8 +379,12 @@ async function syncAll(db, odoo, { actualsFrom, actualsTo } = {}) {
   const people = await readPeople(odoo);
   const projects = await readProjects(odoo);
   const opps = await readOpportunities(odoo);
-  out.ref_person = await replaceAll(db, "ref_person", people, ["id", "name", "role", "dept", "type", "active"]);
+  out.ref_person = await replaceAll(db, "ref_person", people, ["id", "name", "role", "dept", "type", "active", "hire_date"]);
   out.ref_project = await replaceAll(db, "ref_project", projects, ["id", "name", "client", "billable", "active"]);
+  // Holidays feed capacity proration; an install without the resource module
+  // just keeps whatever was cached rather than failing the whole sync.
+  try { out.ref_holiday = await replaceAll(db, "ref_holiday", await readHolidays(odoo), ["id", "name", "date_from", "date_to"]); }
+  catch (e) { out.ref_holiday = `skipped (${e.message})`; }
   out.ref_opportunity = await replaceAll(db, "ref_opportunity", opps, ["id", "name", "client", "stage", "active", "expected_start", "expected_months"]);
   if (actualsFrom && actualsTo) {
     // Keep only actuals for people/projects we actually show. Odoo returns
@@ -364,5 +406,6 @@ async function syncAll(db, odoo, { actualsFrom, actualsTo } = {}) {
 module.exports = {
   Odoo, OdooError, syncAll, reconcileClosedCrm,
   readPeople, readProjects, readOpportunities, readOppsByIds, readActuals,
+  readHireDates, readHolidays,
   shapePeople, m2oName, m2oId,
 };

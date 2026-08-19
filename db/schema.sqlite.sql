@@ -112,12 +112,23 @@ CREATE INDEX IF NOT EXISTS IX_AgentLog_at ON agent_log (at DESC);
 -- app keeps working if Odoo is briefly unreachable.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS ref_person (
-  id     INTEGER PRIMARY KEY,
-  name   TEXT NOT NULL,
-  role   TEXT NOT NULL DEFAULT '',
-  dept   TEXT NOT NULL DEFAULT '',
-  type   TEXT NOT NULL DEFAULT 'employee',
-  active INTEGER NOT NULL DEFAULT 1
+  id        INTEGER PRIMARY KEY,
+  name      TEXT NOT NULL,
+  role      TEXT NOT NULL DEFAULT '',
+  dept      TEXT NOT NULL DEFAULT '',
+  type      TEXT NOT NULL DEFAULT 'employee',
+  active    INTEGER NOT NULL DEFAULT 1,
+  hire_date TEXT                             -- earliest hr_version.date_version (YYYY-MM-DD)
+);
+
+-- Company-wide public holidays (resource_calendar_leaves rows with no resource,
+-- time_type='leave'). Used to prorate monthly capacity, matching the board-pack
+-- utilization basis: available = 8h x weekdays - company holidays.
+CREATE TABLE IF NOT EXISTS ref_holiday (
+  id        INTEGER PRIMARY KEY,             -- odoo resource_calendar_leaves.id
+  name      TEXT NOT NULL DEFAULT '',
+  date_from TEXT NOT NULL,                   -- YYYY-MM-DD
+  date_to   TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS ref_project (

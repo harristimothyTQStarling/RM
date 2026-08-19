@@ -622,7 +622,8 @@ function refreshDeptFilter(){
   fd.value=[...fd.options].some(o=>o.value===cur)?cur:"all";
   F.dept=fd.value;
 }
-const DEFAULT_CAP = 160;
+const HOURS_PER_DAY = 8;
+let HOLIDAYS = [];   // company holidays from Odoo resource_calendar_leaves
 
 
 
@@ -780,13 +781,39 @@ async function pushRate(pid, jid, rate){
 function allPeople(){ return PEOPLE.concat(state.tbh); }
 function personById(id){ return allPeople().find(p=>String(p.id)===String(id)); }
 function projById(id){ return ALL_PROJECTS.find(p=>String(p.id)===String(id)); }
+/* Capacity basis — matches the board-pack utilization report so the planner and
+   the board deck answer "what's our utilization?" the same way:
+     available = 8h × weekdays in the month − company holidays (from Odoo
+     resource_calendar_leaves), prorated to the person's hire date (earliest
+     hr_version.date_version). A manual per-person override is treated as that
+     person's FULL-month capacity and is prorated by the same availability. */
+let CAL = {};   // mkey -> {days:[YYYY-MM-DD weekdays], hol:Set(weekday holidays)}
+function calFor(mkey){
+  if(CAL[mkey]) return CAL[mkey];
+  const [y,mo]=mkey.split("-").map(Number);
+  const dim=new Date(y,mo,0).getDate(), days=[];
+  for(let d=1;d<=dim;d++){ const dow=new Date(y,mo-1,d).getDay();
+    if(dow>0&&dow<6) days.push(`${mkey}-${String(d).padStart(2,"0")}`); }
+  const hol=new Set();
+  HOLIDAYS.forEach(h=>{ const to=h.to||h.from;
+    days.forEach(ds=>{ if(ds>=h.from&&ds<=to) hol.add(ds); }); });
+  return CAL[mkey]={days,hol};
+}
 function capOf(p,mkey){
   // TBA role pools are demand-only: unassigned hours against a role, with no
   // capacity of their own. Whether the org can absorb them is answered by the
   // role's available-capacity lines on the To Be Assigned tab.
   if(p.type==="tbh") return 0;
+  const c=calFor(mkey);
+  const workdays=c.days.length-c.hol.size;
+  let avail=0;
+  for(const ds of c.days){ if(!c.hol.has(ds) && !(p.hireDate && ds<p.hireDate)) avail++; }
+  if(!avail) return 0;
   const ov=state.capacity[p.id];
-  return (ov===undefined||ov===null||ov==="")? (p.cap||DEFAULT_CAP) : Number(ov);
+  if(ov!==undefined&&ov!==null&&ov!==""){
+    return Math.round(Number(ov)*(avail/Math.max(workdays,1))*10)/10;
+  }
+  return avail*HOURS_PER_DAY;
 }
 /* Closed months read from the Odoo actuals overlay, never from the plan: past
    hours are a fact, not a forecast, so they are never stored as allocations. */
@@ -1035,8 +1062,8 @@ function personBody(p){
     ? `<div class="cap-row"><span class="muted">To-Be-Assigned role pool — unassigned demand for ${esc(p.role||"this role")}; see the To Be Assigned tab for the role's available capacity</span>`+
       `<button class="btn" data-deltbh="${p.id}" style="margin-left:auto;padding:4px 9px">Remove pool</button></div>`
     : `<div class="cap-row"><span>Monthly capacity</span>`+
-      `<input type="number" min="0" step="1" placeholder="${DEFAULT_CAP}" value="${capVal}" data-cap="${p.id}"> h`+
-      `<span class="muted">· default ${DEFAULT_CAP}h</span>`+
+      `<input type="number" min="0" step="1" placeholder="auto" value="${capVal}" data-cap="${p.id}" title="Override for a full month (e.g. part-time). Prorated for hire date and company holidays like the automatic capacity."> h`+
+      `<span class="muted">· auto = ${HOURS_PER_DAY}h × workdays − company holidays${p.hireDate?`, prorated to hire date ${p.hireDate}`:""}</span>`+
     `</div>`)+
     rows+
     `<div class="addproj"><select data-addproj="${p.id}"><option value="">+ Add project…</option>${opts}</select></div>`;
@@ -2824,6 +2851,8 @@ async function bootstrap(){
 
   ME = me;
   PEOPLE = reference.people.map(p=>({ ...p, id:p.id }));
+  HOLIDAYS = reference.holidays || [];
+  CAL = {};   // capacity calendar depends on holidays — rebuild after every sync
   PROJECTS = reference.projects.map(p=>({ ...p, src:"PRJ" }));
   CRM_PROJECTS = reference.opportunities.map(o=>({ id:"crm-"+o.id, name:o.name, client:o.client, stage:o.stage, src:"CRM", billable:true, needsProject:!!o.needsProject,
     expectedStart:o.expectedStart||null, expectedMonths:o.expectedMonths||0 }));
