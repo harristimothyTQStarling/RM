@@ -1952,8 +1952,8 @@ function openCostRates(){
   document.getElementById("modalRoot").innerHTML=
     `<div class="backdrop" id="crBackdrop"><div class="modal" style="width:min(860px,100%)">`+
     `<div class="modal-hd"><h2>Resource costs</h2>`+
-    `<p>Fully loaded cost per person (salary + bonus + employer taxes + benefits). Enter whichever basis you have — `+
-    `<b>monthly</b> wins, else <b>annual ÷ 12</b>, else <b>bi-weekly × 26 ÷ 12</b>, else <b>hourly × that month's hours</b>. Each change saves immediately; clear every field to remove a person's cost.</p></div>`+
+    `<p>Fully loaded cost per person. Entering an <b>annual salary</b> auto-fills the loaded rates: bi-weekly = salary ÷ 27 × 1.22, monthly = salary ÷ 12 × 1.22, hourly = salary ÷ 2040 × 1.22 (each editable afterwards). `+
+    `Hourly-only people: just fill Hourly. A month's cost uses <b>monthly</b> first, else annual ÷ 12, else bi-weekly × 26 ÷ 12, else hourly × that month's hours. Each change saves immediately; clear every field to remove a person's cost.</p></div>`+
     `<div class="modal-bd" style="max-height:min(56vh,540px);overflow:auto">`+
     `<table class="maptbl"><thead><tr><th style="text-align:left;padding:5px 8px">Person</th>`+
     `<th style="text-align:right;padding:5px 8px">Annual $</th>`+
@@ -1968,7 +1968,15 @@ function openCostRates(){
   document.getElementById("crBackdrop").addEventListener("click",e=>{ if(e.target.id==="crBackdrop") close(); });
   document.getElementById("crBackdrop").addEventListener("change",async e=>{
     const el=e.target; if(el.dataset.cr===undefined) return;
-    const [pid]=el.dataset.cr.split("|");
+    const [pid,fld]=el.dataset.cr.split("|");
+    // Entering an annual salary derives the fully loaded rates automatically:
+    // bi-weekly = salary ÷ 27, monthly = salary ÷ 12, hourly = salary ÷ 2040,
+    // each × 1.22 (employer taxes + benefits load). Editable afterwards.
+    if(fld==="annual" && el.value!=="" && Number(el.value)>0){
+      const a=Number(el.value), r2=n=>Math.round(n*100)/100;
+      const set=(f,v)=>{ const i=document.querySelector(`[data-cr="${pid}|${f}"]`); if(i) i.value=v; };
+      set("biweekly",r2(a/27*1.22)); set("monthly",r2(a/12*1.22)); set("hourly",r2(a/2040*1.22));
+    }
     const val=f=>{ const i=document.querySelector(`[data-cr="${pid}|${f}"]`); const v=i&&i.value!==""?Number(i.value):null;
       return v!=null&&Number.isFinite(v)&&v>=0? v : null; };
     const card={ employeeId:Number(pid), annual:val("annual"), biweekly:val("biweekly"), monthly:val("monthly"), hourly:val("hourly") };
