@@ -952,6 +952,20 @@ function renderKpis(){
   const vsPrev = prevM? ` · vs ${prevM.label}` : "";
   // count over-allocated people this month
   let over=0; ppl.forEach(p=>{ const c=capOf(p,cur); if(c && personMonthTotal(p.id,cur)>c*1.10) over++; });
+  // Average bill rate this month: blended $/hr over hours that HAVE a rate
+  // (closed months use the realized Odoo rate, open months the forecast rate);
+  // unrated hours are reported separately rather than diluting the average.
+  const rateFor=(mk)=>{ let rev=0,rh=0,uh=0;
+    ppl.forEach(p=>personProjects(p.id).forEach(pr=>{
+      const h=alloc(p.id,pr,mk); if(!h) return;
+      const r=rateAt(p.id,pr,mk);
+      if(r>0){ rev+=h*r; rh+=h; } else uh+=h;
+    }));
+    return {avg: rh? rev/rh : 0, rev, rh, uh}; };
+  const R=rateFor(cur), Rp=prevM? rateFor(prevM.key):null;
+  const rmom=(()=>{ if(!Rp||!Rp.avg||!R.avg) return "";
+    const d=Math.round(R.avg)-Math.round(Rp.avg); if(!d) return "";
+    return `<span class="kdlt ${d>0?"up":"down"}">${d>0?"▲":"▼"}$${Math.abs(d)}</span>`; })();
   // Projects: company-wide by default; with a department selected, the distinct
   // projects/opportunities that department's people are staffed on.
   let projVal=ALL_PROJECTS.length, projMeta=PROJECTS.length+" PRJ · "+CRM_PROJECTS.length+" CRM pipeline";
@@ -966,6 +980,8 @@ function renderKpis(){
     {label:"Projects"+deptTag,val:projVal,meta:projMeta},
     {label:curM.label+" · employees"+deptTag,val:E.u+"%"+mom(E,Ep),cls:E.cls,meta:(isD()? money(E.ad)+" forecast · "+fmt0(E.a)+"h of "+fmt0(E.c)+"h" : fmt0(E.a)+"h of "+fmt0(E.c)+"h capacity")+vsPrev},
     {label:curM.label+" · contractors"+deptTag,val:C.u+"%"+mom(C,Cp),cls:C.cls,meta:(isD()? money(C.ad)+" forecast · "+fmt0(C.a)+"h of "+fmt0(C.c)+"h" : fmt0(C.a)+"h of "+fmt0(C.c)+"h capacity")+vsPrev},
+    {label:curM.label+" · avg bill rate"+deptTag,val:(R.rh?"$"+fmt0(Math.round(R.avg)):"—")+rmom,
+      meta:R.rh? `${money(R.rev)} over ${fmt0(R.rh)} rated h${R.uh?` · ${fmt0(R.uh)}h unrated`:""}`+vsPrev : "no rated hours this month"},
     {label:"Attention"+deptTag,val:over,meta:over===1?"person over-allocated":"people over-allocated"},
   ];
   document.getElementById("kpis").innerHTML=kpi.map(k=>
@@ -2202,6 +2218,19 @@ document.getElementById("viewRoot").addEventListener("change",e=>{
 /* Re-rendering a grid replaces its .scroll container, which silently resets the
    scroll position — so expanding a row deep in the list snapped the view back to
    the top. Capture the container's scroll offsets and restore them after. */
+/* Removing a person↔project line must clear the SERVER's forecast too, not just
+   the local mirror — otherwise the line reappears on the next reload. Zeroes
+   every open month that has hours (past months are locked actuals and keep the
+   person on the project by design), then clears the pair's bill rate. */
+function removePair(pid,projid){
+  if(!canEdit()) return;
+  const a=state.alloc[pid] && state.alloc[pid][projid];
+  const open=a? Object.keys(a).filter(mk=>{ const m=MONTHS.find(x=>x.key===mk);
+    return m && !isPastMi(m.mi) && a[mk]>0; }) : [];
+  if(state.alloc[pid]) delete state.alloc[pid][projid];
+  open.forEach(mk=>queuePush(pid,projid,mk,0));
+  if(pairRate(pid,projid)){ setPairRateLocal(pid,projid,0); pushRate(pid,projid,0); }
+}
 function keepScroll(fn){
   const sc=document.querySelector("#viewRoot .scroll");
   const t=sc?sc.scrollTop:0, l=sc?sc.scrollLeft:0;
@@ -2225,9 +2254,8 @@ document.getElementById("viewRoot").addEventListener("click",async e=>{
   const ptog=e.target.closest("[data-ptoggle]");   // By Project: expand a project
   if(ptog){ const id=ptog.dataset.ptoggle; if(projOpen.has(id)) projOpen.delete(id); else projOpen.add(id); keepScroll(renderByProj); return; }
   const rmr=e.target.closest("[data-rmres]");      // By Project: remove a resource from a project
-  if(rmr){ const [pid,projid]=rmr.dataset.rmres.split("|"); if(state.alloc[pid]) delete state.alloc[pid][projid];
-    if(pairRate(pid,projid)){ setPairRateLocal(pid,projid,0); pushRate(pid,projid,0); }
-    /*saved via API*/ keepScroll(renderByProj); renderKpis(); return; }
+  if(rmr){ const [pid,projid]=rmr.dataset.rmres.split("|");
+    removePair(pid,projid); keepScroll(renderByProj); renderKpis(); return; }
   const xf=e.target.closest("[data-xfer]");        // Allocate tabs: transfer all/partial hours to another resource
   if(xf){ if(!canEdit()) return; const s=xf.dataset.xfer, i=s.indexOf("|"); openTransferModal(s.slice(0,i), s.slice(i+1)); return; }
   const mo=e.target.closest("[data-mapopp]");      // By Project: map a closed CRM opp's forecast onto a project
@@ -2237,9 +2265,8 @@ document.getElementById("viewRoot").addEventListener("click",async e=>{
   const tog=e.target.closest("[data-toggle]");
   if(tog){ const id=tog.dataset.toggle; if(openSet.has(id)) openSet.delete(id); else openSet.add(id); keepScroll(renderAllocate); return; }
   const rm=e.target.closest("[data-rmproj]");
-  if(rm){ const [pid,projid]=rm.dataset.rmproj.split("|"); if(state.alloc[pid]) delete state.alloc[pid][projid];
-    if(pairRate(pid,projid)){ setPairRateLocal(pid,projid,0); pushRate(pid,projid,0); }
-    /*saved via API*/ keepScroll(renderAllocate); renderKpis(); return; }
+  if(rm){ const [pid,projid]=rm.dataset.rmproj.split("|");
+    removePair(pid,projid); keepScroll(renderAllocate); renderKpis(); return; }
   const smv=e.target.closest("[data-shoremv]");   // To Be Assigned: move one project to the other-shore pool
   if(smv){ if(!canEdit()) return;
     const [tid,proj]=smv.dataset.shoremv.split("|"); const shore=smv.dataset.shoreto;
