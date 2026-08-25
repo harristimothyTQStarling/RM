@@ -272,8 +272,8 @@
   .pill{display:inline-block;padding:1px 6px;border-radius:5px;font-size:11px;font-weight:640;font-variant-numeric:tabular-nums;}
   .subrow td.lbl{padding-left:30px;font-weight:400;color:var(--ink-2);}
   /* By Role drill-down: role → practice → person */
-  table.pivot tr[data-role] td.lbl,table.pivot tr[data-rp] td.lbl,table.pivot tr[data-cust] td.lbl,table.pivot tr[data-pm] td.lbl{cursor:pointer;user-select:none;}
-  table.pivot tr[data-role] td.lbl:hover,table.pivot tr[data-rp] td.lbl:hover,table.pivot tr[data-cust] td.lbl:hover,table.pivot tr[data-pm] td.lbl:hover{color:var(--accent-ink);}
+  table.pivot tr[data-role] td.lbl,table.pivot tr[data-rp] td.lbl,table.pivot tr[data-cust] td.lbl,table.pivot tr[data-pm] td.lbl,table.pivot tr[data-em] td.lbl{cursor:pointer;user-select:none;}
+  table.pivot tr[data-role] td.lbl:hover,table.pivot tr[data-rp] td.lbl:hover,table.pivot tr[data-cust] td.lbl:hover,table.pivot tr[data-pm] td.lbl:hover,table.pivot tr[data-em] td.lbl:hover{color:var(--accent-ink);}
   table.pivot tr.lvl2 td{background:var(--surface-2);}
   table.pivot tr.lvl2 td.lbl{background:var(--surface-2);}
   table.pivot tr.lvl3 td{background:var(--surface-3);}
@@ -1859,6 +1859,7 @@ function setView(v){ VIEW=v;
    opens, and ONLY for the costing role — the server 403s everyone else, so
    these numbers never reach other users' browsers. */
 const COST={ rates:null, loading:false, err:null, mode:"profit" };
+let emOpen=new Set();   // Employee Margin: people expanded into their projects
 async function loadCost(force){
   if(COST.loading || (COST.rates && !force)) return;
   COST.loading=true; COST.err=null;
@@ -1936,7 +1937,7 @@ function renderCosting(){
       ["profit","revenue","cost"].map(mo=>`<button type="button" data-costmode="${mo}" aria-pressed="${COST.mode===mo}">${mo[0].toUpperCase()+mo.slice(1)}</button>`).join("")+
     `</div>`+
     (ME.canCostEdit? `<button class="btn primary" id="btnCostRates" title="Enter each person's fully loaded cost — annual, bi-weekly, monthly or hourly.">Resource costs…</button>`:"")+`</div>`+
-    `<span class="hint">fully loaded cost (salary + bonus + employer taxes + benefits) vs revenue · costs entered in-app per person: monthly, annual ÷12, bi-weekly ×26/12, or hourly × hours</span></div>${bodyHtml}</div>`;
+    `<span class="hint">fully loaded cost (salary + bonus + employer taxes + benefits) vs revenue · costs entered in-app per person: monthly, annual ÷12, bi-weekly ×26/12, or hourly × hours · click a person to drill into their projects</span></div>${bodyHtml}</div>`;
   const root=document.getElementById("viewRoot");
   if(COST.err){ root.innerHTML=head(`<div style="padding:18px"><p>⚠ ${esc(COST.err)}</p></div>`); return; }
   if(!COST.rates){ loadCost(); root.innerHTML=head(`<div style="padding:18px" class="muted">Loading cost data…</div>`); return; }
@@ -1958,7 +1959,30 @@ function renderCosting(){
     });
     const badge=p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
     const ytds=YIDX.map(ix=>costCell(sumIdx(cells.map(c=>c.rev),ix),sumIdx(cells.map(c=>c.cost),ix),"","col-tot"));
-    body+=`<tr><td class="lbl">${esc(p.name)}${badge}<div class="muted" style="font-size:11px">${esc(p.role||"—")}</div></td>`+withYearCols(tds,ytds)+`${costCell(rrev,rcost,"","col-tot")}</tr>`;
+    const isOpen=emOpen.has(String(p.id));
+    body+=`<tr class="lvl1${isOpen?" open":""}" data-em="${p.id}"><td class="lbl"><span class="tw">${chev()}</span><b>${esc(p.name)}</b>${badge}<div class="muted" style="font-size:11px;padding-left:18px">${esc(p.role||"—")}</div></td>`+withYearCols(tds,ytds)+`${costCell(rrev,rcost,"","col-tot")}</tr>`;
+    if(!isOpen) return;
+    // Drill-down: the person's projects. Revenue is per project directly; the
+    // person's monthly (salary-derived) cost is attributed pro-rata by hours.
+    sortProjIds(personProjects(p.id)).forEach(projid=>{
+      const pr=projById(projid); if(!pr) return;
+      let prRev=0, prCost=0, prH=0;
+      const pcells=MONTHS.map(m=>{
+        const h=alloc(p.id,projid,m.key);
+        const rev=isPastMi(m.mi)? (ACT_REV.get(`${p.id}|${projid}|${m.key}`)||0) : h*rateAt(p.id,projid,m.key);
+        const th=personMonthTotal(p.id,m.key);
+        const cost=th? cells[m.mi].cost*h/th : 0;
+        prRev+=rev; prCost+=cost; prH+=h;
+        return {rev,cost};
+      });
+      if(!prH && !prRev) return;
+      const pbadge=pr.src==="CRM"?`<span class="badge crm">CRM</span>`:`<span class="badge prj">PRJ</span>`;
+      const ptds=pcells.map(c=>costCell(c.rev,c.cost,basis,""));
+      const pytds=YIDX.map(ix=>costCell(sumIdx(pcells.map(c=>c.rev),ix),sumIdx(pcells.map(c=>c.cost),ix),"","col-tot"));
+      body+=`<tr class="lvl2"><td class="lbl lvl2i">${pbadge} ${esc(pr.name)}`+
+        `<div class="muted" style="font-size:11px">${esc(pr.client||"—")} · ${fmt(prH)}h · cost pro-rata by hours</div></td>`+
+        withYearCols(ptds,pytds)+`${costCell(prRev,prCost,basis,"col-tot")}</tr>`;
+    });
   });
   const footRow=(label,a,cls)=>{
     const tds=a.rev.map((r,i)=>costCell(r,a.cost[i],"",""));
@@ -2259,6 +2283,8 @@ document.getElementById("viewRoot").addEventListener("click",async e=>{
   if(cu){ const k=cu.getAttribute("data-cust"); if(custOpen.has(k)) custOpen.delete(k); else custOpen.add(k); keepScroll(renderByCust); return; }
   const pm=e.target.closest("[data-pm]");            // Project Margin: project → people
   if(pm){ const k=pm.getAttribute("data-pm"); if(pmOpen.has(k)) pmOpen.delete(k); else pmOpen.add(k); keepScroll(renderProjMargin); return; }
+  const em=e.target.closest("[data-em]");            // Employee Margin: person → projects
+  if(em){ const k=em.getAttribute("data-em"); if(emOpen.has(k)) emOpen.delete(k); else emOpen.add(k); keepScroll(renderCosting); return; }
   const ptog=e.target.closest("[data-ptoggle]");   // By Project: expand a project
   if(ptog){ const id=ptog.dataset.ptoggle; if(projOpen.has(id)) projOpen.delete(id); else projOpen.add(id); keepScroll(renderByProj); return; }
   const rmr=e.target.closest("[data-rmres]");      // By Project: remove a resource from a project
