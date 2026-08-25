@@ -99,8 +99,9 @@
   .save-pill .dot{width:7px;height:7px;border-radius:50%;background:var(--u-good-ink);}
 
   /* ---------- KPI strip ---------- */
-  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:10px;margin-bottom:16px;}
-  .kpi{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;box-shadow:var(--shadow);}
+  /* One row always: every card shares the width equally, however many there are. */
+  .kpis{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:10px;margin-bottom:16px;}
+  .kpi{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;box-shadow:var(--shadow);min-width:0;}
   .kpi .label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;}
   .kpi .val{font-size:24px;font-weight:680;letter-spacing:-.02em;margin-top:4px;}
   .kpi .val small{font-size:13px;color:var(--muted);font-weight:500;letter-spacing:0;}
@@ -111,7 +112,7 @@
   .kpi .val.uv-good{color:var(--u-good-ink);}
   .kpi .val.uv-greenx{color:var(--u-greenx-ink);}
   .kpi .val.uv-none{color:var(--muted);}
-  @media(max-width:900px){.kpis{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:900px){.kpis{grid-auto-flow:row;grid-template-columns:repeat(2,1fr)}}
 
   /* ---------- Tabs + filters ---------- */
   .barrow{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;margin-bottom:14px;}
