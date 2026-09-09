@@ -2973,7 +2973,9 @@ function applyImport(records,pmap,prmap,sheetName,rolemap){
 }
 function renderBanner(){
   const el=document.getElementById("bannerRoot"); if(!el) return;
-  if(bannerDismissed){ el.innerHTML=""; return; }
+  // Importers already have the Import forecast button in the header — no banner
+  // for them. Non-importers keep the informational note when the plan is empty.
+  if(bannerDismissed || canImport()){ el.innerHTML=""; return; }
   const check=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h10l6 6v10H4Z"/><path d="M14 4v6h6"/><path d="m9 15 2 2 4-4"/></svg>`;
   // Import CTA only for importers; others get the same context without an action.
   const impBtn = canImport() ? `<button id="bannerImport">${state.lastImport?"Re-import":"Import forecast"}</button>` : "";
