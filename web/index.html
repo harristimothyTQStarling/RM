@@ -1032,7 +1032,33 @@ function projTotals(projs){
   const perMonth=MONTHS.map(m=>{ let h=0,d=0; projs.forEach(pr=>{ h+=projMonthTotal(pr.id,m.key); d+=projMonthDollars(pr.id,m.key); }); return {h,d}; });
   return { perMonth, grand: perMonth.reduce((g,x)=>({h:g.h+x.h,d:g.d+x.d}),{h:0,d:0}) };
 }
+/* Aggregate available hours (capacity) — shown only as a bottom row on the
+   tables, never per person. Hours in both view modes: availability is an
+   hours concept regardless of the $ toggle. */
+function availTotals(ppl){
+  const perMonth=MONTHS.map(m=>{ let h=0; ppl.forEach(p=>{ h+=capOf(p,m.key); }); return h; });
+  return {perMonth, grand:perMonth.reduce((a,b)=>a+b,0)};
+}
+function availRowHtml(label, av){
+  const cells=MONTHS.map((m,i)=>`<div class="mcell tot" data-avtot="${m.key}"><span class="h">${av.perMonth[i]?fmt0(av.perMonth[i]):"·"}</span></div>`);
+  const yr=YEARS.map((y,yi)=>`<div class="mcell tot" data-avtot-y="${yi}"><span class="h">${fmt0(sumIdx(av.perMonth,YIDX[yi]))}</span></div>`);
+  return `<div class="p-row grid-totrow"><div class="p-head">`+
+    `<div class="p-ident" style="color:var(--muted)">${label}</div>`+
+    `<div class="mgrid p-meta">`+withYearCols(cells,yr)+`<div class="mcell tot" data-avtot-yr><span class="h">${fmt0(av.grand)}</span></div></div>`+
+  `</div></div>`;
+}
+function availPeopleForView(){
+  return VIEW==="byProj" ? allPeople().filter(passDeptType) : (LAST_ALLOC_PPL||[]);
+}
 function refreshGridTotals(){
+  if(document.querySelector("[data-avtot]")){
+    const av=availTotals(availPeopleForView());
+    MONTHS.forEach((m,i)=>{ const c=document.querySelector(`[data-avtot="${m.key}"] .h`);
+      if(c) c.textContent=av.perMonth[i]?fmt0(av.perMonth[i]):"·"; });
+    YEARS.forEach((y,yi)=>{ const c=document.querySelector(`[data-avtot-y="${yi}"] .h`);
+      if(c) c.textContent=fmt0(sumIdx(av.perMonth,YIDX[yi])); });
+    const g=document.querySelector("[data-avtot-yr] .h"); if(g) g.textContent=fmt0(av.grand);
+  }
   if(!document.querySelector("[data-coltot]")) return;
   const t = VIEW==="byProj" ? projTotals(LAST_PROJ_LIST) : allocTotals(LAST_ALLOC_PPL);
   MONTHS.forEach((m,i)=>{ const c=document.querySelector(`[data-coltot="${m.key}"] .h`);
@@ -1060,7 +1086,8 @@ function renderAllocate(){
     monthHeadRow()+`</div>`;
   if(!ppl.length) html+=`<div class="empty-body" style="padding:24px">No people match the current filters.</div>`;
   ppl.forEach(p=>{ html+=personRow(p); });
-  if(ppl.length){ const t=allocTotals(ppl); html+=totalsRowHtml(`Total · ${ppl.length} people`, t.perMonth, t.grand); }
+  if(ppl.length){ const t=allocTotals(ppl); html+=totalsRowHtml(`Total · ${ppl.length} people`, t.perMonth, t.grand);
+    html+=availRowHtml(`Available hours · ${ppl.length} people`, availTotals(ppl)); }
   html+=`</div></div>`;
   html+=legend();
   html+=`</div>`;
@@ -1254,11 +1281,16 @@ function renderByEmp(){
     const tds=a.t.map((t,i)=>{ const cell=hpCell(t,a.c[i],"","",pu,a.d[i],true); pu=utilPct(t,a.c[i]); return cell; });
     const ytds=YIDX.map(ix=>hpCell(sumIdx(a.t,ix),sumIdx(a.c,ix),"","col-tot",null,sumIdx(a.d,ix),true));
     return `<tr class="${cls||""}"><td class="lbl">${label}</td>`+withYearCols(tds,ytds)+`${hpCell(a.g,a.gc,"","col-tot",null,a.gd,true)}</tr>`; };
+  const availFoot=`<tr><td class="lbl" style="color:var(--muted)">Available hours</td>`+
+    withYearCols(colCap.map(c=>`<td class="mcelln"><span class="h">${fmt0(c)}</span></td>`),
+                 YIDX.map(ix=>`<td class="mcelln col-tot"><span class="h">${fmt0(sumIdx(colCap,ix))}</span></td>`))+
+    `<td class="mcelln col-tot"><span class="h">${fmt0(grandCap)}</span></td></tr>`;
   const foot=`<tfoot>`+
     (acc.employee.n? footRow(`Employees <span class="muted">· ${acc.employee.n}</span>`,acc.employee):"")+
     (acc.contractor.n? footRow(`Contractors <span class="muted">· ${acc.contractor.n}</span>`,acc.contractor):"")+
     (acc.tbh.n? footRow(`To be assigned <span class="muted">· ${acc.tbh.n}</span>`,acc.tbh):"")+
     footRow("All shown",{t:colTot,c:colCap,d:colD,g:grand,gc:grandCap,gd:grandD},"grand")+
+    availFoot+
     `</tfoot>`;
   document.getElementById("viewRoot").innerHTML=
     `<div class="panel"><div class="panel-hd"><h2>Allocated ${isD()?"dollars":"hours"} by employee × month</h2><span class="hint">utilization % first, then ${isD()?"dollars (hours × per-project bill rate)":"hours"}, then the change vs. the prior month · shaded vs. capacity · ${ppl.length} people</span></div>`+
@@ -1325,7 +1357,11 @@ function renderByRole(){
     withYearCols(
       colTot.map((t,i)=>{ const cell=hpCell(t,colCap[i],"","",fpu,colD[i]); fpu=utilPct(t,colCap[i]); return cell; }),
       YIDX.map(ix=>hpCell(sumIdx(colTot,ix),sumIdx(colCap,ix),"","col-tot",null,sumIdx(colD,ix))))+
-    hpCell(grand,grandCap,"","col-tot",null,grandD)+`</tr></tfoot>`;
+    hpCell(grand,grandCap,"","col-tot",null,grandD)+`</tr>`+
+    `<tr><td class="lbl" style="color:var(--muted)">Available hours</td>`+
+    withYearCols(colCap.map(c=>`<td class="mcelln"><span class="h">${fmt0(c)}</span></td>`),
+                 YIDX.map(ix=>`<td class="mcelln col-tot"><span class="h">${fmt0(sumIdx(colCap,ix))}</span></td>`))+
+    `<td class="mcelln col-tot"><span class="h">${fmt0(grandCap)}</span></td></tr></tfoot>`;
   document.getElementById("viewRoot").innerHTML=
     `<div class="panel"><div class="panel-hd"><h2>Allocated ${isD()?"dollars":"hours"} by role × month</h2>`+
     `<span class="hint">roles rolled up across all practices · click a role to drill into practices, then into people</span></div>`+
@@ -1371,7 +1407,9 @@ function renderByProj(){
     monthHeadRow()+`</div>`;
   if(!projs.length) html+=`<div class="empty-body" style="padding:24px">No projects match the search.</div>`;
   projs.forEach(pr=>{ html+=projectRow(pr); });
-  if(projs.length){ const t=projTotals(projs); html+=totalsRowHtml(`Total · ${projs.length} projects`, t.perMonth, t.grand); }
+  if(projs.length){ const t=projTotals(projs); html+=totalsRowHtml(`Total · ${projs.length} projects`, t.perMonth, t.grand);
+    const cap=allPeople().filter(passDeptType);
+    html+=availRowHtml(`Available hours · ${cap.length} people${deptTypeActive()?" (filtered)":""}`, availTotals(cap)); }
   html+=`</div></div></div>`;
   document.getElementById("viewRoot").innerHTML=html;
 }
@@ -1496,11 +1534,17 @@ function renderByCust(){
         withYearCols(ptds,yrCells(per))+`<td class="mcelln col-tot">${fV0(t)}</td></tr>`;
     });
   });
+  const capPpl=allPeople().filter(passDeptType);
+  const colCapC=MKEYS.map(k=>capPpl.reduce((s,p)=>s+capOf(p,k),0));
   const foot=`<tfoot><tr><td class="lbl">All customers</td>`+
     withYearCols(
       colTot.map(t=>`<td class="mcelln">${fV0(t)}</td>`),
       YIDX.map(ix=>`<td class="mcelln col-tot">${fV0(sumIdx(colTot,ix))}</td>`))+
-    `<td class="mcelln col-tot">${isD()?money(grand):fmt0(grand)}</td></tr></tfoot>`;
+    `<td class="mcelln col-tot">${isD()?money(grand):fmt0(grand)}</td></tr>`+
+    `<tr><td class="lbl" style="color:var(--muted)">Available hours <span class="muted">· ${capPpl.length} people</span></td>`+
+    withYearCols(colCapC.map(c=>`<td class="mcelln"><span class="h">${fmt0(c)}</span></td>`),
+                 YIDX.map(ix=>`<td class="mcelln col-tot"><span class="h">${fmt0(sumIdx(colCapC,ix))}</span></td>`))+
+    `<td class="mcelln col-tot"><span class="h">${fmt0(colCapC.reduce((a,b)=>a+b,0))}</span></td></tr></tfoot>`;
   document.getElementById("viewRoot").innerHTML=
     `<div class="panel"><div class="panel-hd"><h2>Allocated ${isD()?"dollars":"hours"} by customer × month</h2>`+
     `<span class="hint">${rows.length} customers · click one to drill into its PRJ projects and CRM opportunities</span></div>`+
