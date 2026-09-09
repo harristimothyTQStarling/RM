@@ -100,7 +100,13 @@
 
   /* ---------- KPI strip ---------- */
   /* One row always: every card shares the width equally, however many there are. */
-  .kpis{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:10px;margin-bottom:16px;}
+  .kpis{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:10px;margin-bottom:2px;}
+  /* Collapsible KPI strip: a slim fold bar doubles as the divider. */
+  .kpifold{display:block;width:100%;border:0;background:transparent;color:var(--muted);
+    font:600 10.5px/1 inherit;font-family:inherit;letter-spacing:.04em;text-transform:uppercase;
+    padding:4px 0 6px;margin:0 0 8px;cursor:pointer;user-select:none;}
+  .kpifold:hover{color:var(--accent-ink);}
+  body.kpis-collapsed .kpis{display:none;}
   .kpi{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;box-shadow:var(--shadow);min-width:0;}
   .kpi .label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;}
   .kpi .val{font-size:24px;font-weight:680;letter-spacing:-.02em;margin-top:4px;}
@@ -470,6 +476,7 @@
 
   <div id="bannerRoot"></div>
   <div class="kpis" id="kpis"></div>
+  <button class="kpifold" id="kpiToggle" aria-controls="kpis" aria-expanded="true" title="Collapse or expand the KPI cards">▴ Hide KPIs</button>
 
   <div class="barrow">
     <div class="tabs" id="tabs" role="tablist">
@@ -2484,6 +2491,20 @@ function addTbh(){
   api("PUT","/api/tbh",{tbhKey:key,name:t.name,role,dept,shore,start:null,cap:null})
     .then(()=>status("Saved")).catch(e=>toast("Role pool not saved: "+e.message));
 }
+
+/* ---------------------- KPI strip collapse ---------------------- */
+let KPI_HIDDEN=false; try{ KPI_HIDDEN=localStorage.getItem("tqs-rm-kpis")==="0"; }catch(e){}
+function applyKpiFold(){
+  document.body.classList.toggle("kpis-collapsed", KPI_HIDDEN);
+  const b=document.getElementById("kpiToggle");
+  if(b){ b.textContent=KPI_HIDDEN? "▾ Show KPIs" : "▴ Hide KPIs"; b.setAttribute("aria-expanded", String(!KPI_HIDDEN)); }
+}
+document.getElementById("kpiToggle").addEventListener("click",()=>{
+  KPI_HIDDEN=!KPI_HIDDEN;
+  try{ localStorage.setItem("tqs-rm-kpis", KPI_HIDDEN?"0":"1"); }catch(e){}
+  applyKpiFold();
+});
+applyKpiFold();
 
 /* ---------------------- Hours / Dollars toggle ---------------------- */
 document.getElementById("modeSeg").addEventListener("click",e=>{
