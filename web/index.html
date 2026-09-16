@@ -171,6 +171,9 @@
   body.dollars .mgrid{grid-template-columns:repeat(12,minmax(64px,1fr)) 76px repeat(12,minmax(64px,1fr)) 76px 84px;}
   body.dollars .a-inputs{grid-template-columns:repeat(12,minmax(64px,1fr)) 76px repeat(12,minmax(64px,1fr)) 76px 84px;}
   .mgrid.head .mcell{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;font-weight:600;background:var(--surface-2);position:sticky;top:0;}
+  /* per-person available hours under each sticky month title */
+  .mavail{display:block;font-size:9px;font-weight:600;color:var(--muted);opacity:.85;text-transform:none;letter-spacing:0;line-height:1.2;}
+  table.pivot thead th .mavail{font-weight:500;}
   .mcell{padding:7px 4px;text-align:center;border-left:1px solid var(--line);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;}
   .mcell .h{font-weight:640;font-size:12.5px;}
   .mcell .u{font-size:9.5px;opacity:.8;}
@@ -820,6 +823,13 @@ function calFor(mkey){
     days.forEach(ds=>{ if(ds>=h.from&&ds<=to) hol.add(ds); }); });
   return CAL[mkey]={days,hol};
 }
+/* Standard single-person available hours for a month: 8h × (weekdays − company
+   holidays) — the same base capOf() uses before hire/exit proration. Shown in
+   the sticky month headers. */
+function monthBaseCap(mkey){ const c=calFor(mkey); return (c.days.length-c.hol.size)*HOURS_PER_DAY; }
+function mAvailTag(mkey){
+  return `<span class="mavail" title="Available hours for one person this month — 8h × workdays minus company holidays">${fmt0(monthBaseCap(mkey))}h</span>`;
+}
 function capOf(p,mkey){
   // TBA role pools are demand-only: unassigned hours against a role, with no
   // capacity of their own. Whether the org can absorb them is answered by the
@@ -1013,7 +1023,7 @@ const custOpen=new Set();   // By Customer: expanded customers
 function chev(){ return `<svg class="twchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>`; }
 
 function monthHeadRow(extraClass){
-  const mc=MONTHS.map(m=>`<div class="mcell${isPastMi(m.mi)?" actual":""}">${m.label}${isPastMi(m.mi)?'<span class="actflag">actual</span>':''}</div>`);
+  const mc=MONTHS.map(m=>`<div class="mcell${isPastMi(m.mi)?" actual":""}">${m.label}${mAvailTag(m.key)}${isPastMi(m.mi)?'<span class="actflag">actual</span>':''}</div>`);
   const yc=YLBL.map(l=>`<div class="mcell tot" title="Annual total (read-only)">${l}</div>`);
   return `<div class="mgrid head ${extraClass||""}">`+withYearCols(mc,yc)+
     `<div class="mcell tot">Total</div></div>`;
@@ -1275,7 +1285,7 @@ function hpCell(h,c,cls,extra,pu,dh,pctFirst){
 }
 const utilPct=(h,c)=> c ? Math.round(h/c*100) : null;
 function pivotHead(firstLabel){
-  const mc=MONTHS.map(m=>`<th class="${isPastMi(m.mi)?"actual":""}">${m.label}</th>`);
+  const mc=MONTHS.map(m=>`<th class="${isPastMi(m.mi)?"actual":""}">${m.label}${mAvailTag(m.key)}</th>`);
   const yc=YLBL.map(l=>`<th class="col-tot" title="Annual total (read-only)">${l}</th>`);
   return `<thead><tr><th class="lbl">${firstLabel}</th>`+withYearCols(mc,yc)+`<th class="col-tot">Total</th></tr></thead>`;
 }
@@ -1637,7 +1647,7 @@ function tbaDrill(t){
   const cell=(v,cls)=>`<td class="mcelln ${cls||""}">${v}</td>`;
   const months=(fn)=>MONTHS.map(m=>fn(m.key,m.mi));
   let html=`<div style="overflow:auto;margin-top:8px"><table class="pivot"><thead><tr><th class="lbl">Project</th>`+
-    withYearCols(MONTHS.map(m=>`<th class="${isPastMi(m.mi)?"actual":""}">${m.label}</th>`),
+    withYearCols(MONTHS.map(m=>`<th class="${isPastMi(m.mi)?"actual":""}">${m.label}${mAvailTag(m.key)}</th>`),
                  YLBL.map(l=>`<th class="col-tot" title="Annual total (read-only)">${l}</th>`))+
     `<th class="col-tot">Total</th></tr></thead><tbody>`;
   if(!projs.length) html+=`<tr><td class="lbl muted">No demand staffed on this role yet — add projects from the Allocate tabs.</td>${MONTHS.map(()=>"<td></td>").join("")}<td></td><td></td><td></td></tr>`;
