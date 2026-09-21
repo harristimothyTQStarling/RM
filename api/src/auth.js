@@ -76,12 +76,12 @@ const canImport = (user) =>
  * Who may see COSTS AND PROFIT — the fully loaded per-person cost rate card
  * (entered in-app) and the margin it implies. Payroll data, so its own allowlist,
  * independent of edit rights, following the IMPORTER_UPNS idiom:
- *   unset        -> defaults to tim, melissa, joe and peter @tqstarling.com
+ *   unset        -> defaults to tim, melissa, joe, peter and mo @tqstarling.com
  *   empty string -> nobody (fail closed)
  * Enforced server-side: /api/cost never returns data to anyone else, so the
  * numbers are not merely hidden in the UI — they never reach the browser.
  */
-const DEFAULT_COSTING = "tim@tqstarling.com,melissa@tqstarling.com,joe@tqstarling.com,peter@tqstarling.com";
+const DEFAULT_COSTING = "tim@tqstarling.com,melissa@tqstarling.com,joe@tqstarling.com,peter@tqstarling.com,mo@tqstarling.com";
 function costingUpns() {
   const raw = process.env.COSTING_UPNS;
   return (raw == null ? DEFAULT_COSTING : raw)
