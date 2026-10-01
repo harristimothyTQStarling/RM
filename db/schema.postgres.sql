@@ -242,6 +242,20 @@ CREATE TABLE IF NOT EXISTS cost_rate (
 );
 ALTER TABLE cost_rate ADD COLUMN IF NOT EXISTS annual NUMERIC(12,2);
 
+-- Daily snapshot of the baseline plan (allocations + pair rates), written by
+-- the nightly job and lazily on demand. The Changes view diffs two snapshot
+-- dates; the audit_log supplies the who/when detail between them.
+CREATE TABLE IF NOT EXISTS plan_snapshot (
+  snap_date    DATE         NOT NULL,
+  resource_key VARCHAR(64)  NOT NULL,
+  target_key   VARCHAR(64)  NOT NULL,
+  month        DATE         NOT NULL,
+  hours        REAL         NOT NULL,
+  rate         NUMERIC(8,2) NOT NULL DEFAULT 0,
+  PRIMARY KEY (snap_date, resource_key, target_key, month)
+);
+CREATE INDEX IF NOT EXISTS IX_PlanSnapshot_date ON plan_snapshot (snap_date);
+
 CREATE TABLE IF NOT EXISTS sync_state (
   source     VARCHAR(32) PRIMARY KEY,            -- people | projects | opportunities | actuals
   synced_at  TIMESTAMPTZ NOT NULL DEFAULT now(),

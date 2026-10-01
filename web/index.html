@@ -281,8 +281,15 @@
   .pill{display:inline-block;padding:1px 6px;border-radius:5px;font-size:11px;font-weight:640;font-variant-numeric:tabular-nums;}
   .subrow td.lbl{padding-left:30px;font-weight:400;color:var(--ink-2);}
   /* By Role drill-down: role → practice → person */
-  table.pivot tr[data-role] td.lbl,table.pivot tr[data-rp] td.lbl,table.pivot tr[data-cust] td.lbl,table.pivot tr[data-pm] td.lbl,table.pivot tr[data-em] td.lbl,table.pivot tr[data-vf] td.lbl{cursor:pointer;user-select:none;}
-  table.pivot tr[data-role] td.lbl:hover,table.pivot tr[data-rp] td.lbl:hover,table.pivot tr[data-cust] td.lbl:hover,table.pivot tr[data-pm] td.lbl:hover,table.pivot tr[data-em] td.lbl:hover,table.pivot tr[data-vf] td.lbl:hover{color:var(--accent-ink);}
+  table.pivot tr[data-role] td.lbl,table.pivot tr[data-rp] td.lbl,table.pivot tr[data-cust] td.lbl,table.pivot tr[data-pm] td.lbl,table.pivot tr[data-em] td.lbl,table.pivot tr[data-vf] td.lbl,table.pivot tr[data-chg] td.lbl{cursor:pointer;user-select:none;}
+  table.pivot tr[data-role] td.lbl:hover,table.pivot tr[data-rp] td.lbl:hover,table.pivot tr[data-cust] td.lbl:hover,table.pivot tr[data-pm] td.lbl:hover,table.pivot tr[data-em] td.lbl:hover,table.pivot tr[data-vf] td.lbl:hover,table.pivot tr[data-chg] td.lbl:hover{color:var(--accent-ink);}
+  /* Changes tab */
+  table.chgtbl th.num,table.chgtbl td.num{text-align:right;padding:6px 12px;font-variant-numeric:tabular-nums;white-space:nowrap;}
+  table.chgtbl td.num.up2{color:var(--u-good-ink);}
+  table.chgtbl td.num.dn2{color:var(--u-over-ink);}
+  .chgchip{display:inline-block;border-radius:999px;padding:1px 8px;margin:1px 4px 1px 0;font-size:10.5px;font-variant-numeric:tabular-nums;background:var(--surface-3);color:var(--ink-2);}
+  .chgchip.up{background:var(--u-good);color:var(--u-good-ink);}
+  .chgchip.down{background:var(--u-over);color:var(--u-over-ink);}
   table.pivot tr.lvl2 td{background:var(--surface-2);}
   table.pivot tr.lvl2 td.lbl{background:var(--surface-2);}
   table.pivot tr.lvl3 td{background:var(--surface-3);}
@@ -493,6 +500,7 @@
       <button class="tab" role="tab" data-view="hiring" aria-selected="false">To Be Assigned</button>
       <button class="tab" role="tab" data-view="costing" aria-selected="false" id="tabCosting" hidden>Employee Margin</button>
       <button class="tab" role="tab" data-view="projMargin" aria-selected="false" id="tabProjMargin" hidden>Project Margin</button>
+      <button class="tab" role="tab" data-view="changes" aria-selected="false" id="tabChanges" hidden>Changes</button>
     </div>
     <div class="filters" id="filters">
       <div class="seg" id="modeSeg" role="group" aria-label="Show hours or dollars">
@@ -1957,17 +1965,18 @@ function render(){
   // takes the department / employee-type dropdowns (project views filter the
   // PEOPLE whose hours are counted, while their search box filters projects).
   const personFilters = VIEW!=="crmCheck";
-  const personSearch = VIEW!=="byProj" && VIEW!=="byCust" && VIEW!=="crmCheck" && VIEW!=="projMargin";
+  const personSearch = VIEW!=="byProj" && VIEW!=="byCust" && VIEW!=="crmCheck" && VIEW!=="projMargin" && VIEW!=="changes";
   document.getElementById("fDept").style.display = personFilters? "":"none";
   document.getElementById("fType").style.display = personFilters? "":"none";
   document.getElementById("fSearch").placeholder = personSearch ? "Search name / role…"
-    : (VIEW==="byCust" ? "Search customer / project…" : "Search project / client…");
+    : (VIEW==="byCust" ? "Search customer / project…" : VIEW==="changes" ? "Search project / person…" : "Search project / client…");
   if(VIEW==="allocate") renderAllocate();
   else if(VIEW==="byEmp") renderByEmp();
   else if(VIEW==="byRole") renderByRole();
   else if(VIEW==="byProj") renderByProj();
   else if(VIEW==="byCust") renderByCust();
   else if(VIEW==="projMargin") renderProjMargin();
+  else if(VIEW==="changes") renderChanges();
   else if(VIEW==="variance") renderVariance();
   else if(VIEW==="crmCheck") renderCrmCheck();
   else if(VIEW==="hiring") renderHiring();
@@ -2232,6 +2241,153 @@ function renderProjMargin(){
   root.innerHTML=head(`<div class="scroll"><table class="pivot">${pivotHead("Project")}<tbody>${body||`<tr><td class="lbl muted" style="padding:14px">No projects with hours match the current filters.</td></tr>`}</tbody>${foot}</table></div>${note}`);
 }
 
+/* ============================ CHANGES (plan history) ============================ */
+/* What changed between two dates: the server diffs its daily plan snapshots
+   (hours per person × project × month) and returns the audit feed for the
+   window. Dollar impact is valued at CURRENT rates (realized for closed
+   months, forecast pair rate otherwise). Editors only. */
+let chgOpen=new Set();
+const CHG={from:null,to:null,data:null,loading:false,err:null};
+async function loadChanges(from,to){
+  CHG.loading=true; CHG.err=null; CHG.from=from; CHG.to=to; CHG.data=null;
+  try{ CHG.data=await api("GET",`/api/changes?from=${from}&to=${to}`); }
+  catch(e){ CHG.err=e.message; }
+  CHG.loading=false;
+  if(VIEW==="changes") renderChanges();
+}
+const monLab=mk=>{ const m=MONTHS.find(x=>x.key===mk); return m?m.label:mk; };
+const sgnH=n=> Math.abs(n)<0.05? "0h" : (n>0?"+":"−") + fmt(Math.abs(n)) + "h";
+const sgnD=n=> Math.abs(n)<0.5? "$0" : (n>0?"+":"−") + money(Math.abs(n));
+function renderChanges(){
+  if(!ME||!ME.canEdit){
+    document.getElementById("viewRoot").innerHTML=`<div class="panel"><div class="panel-hd"><h2>Restricted</h2></div><div style="padding:18px" class="muted">Change history is limited to editors.</div></div>`;
+    return;
+  }
+  if(!CHG.from){ const t=new Date();
+    CHG.from=`${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}-01`;
+    CHG.to=t.toISOString().slice(0,10); }
+  const head=(bodyHtml)=>`<div class="panel"><div class="panel-hd">`+
+    `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h2>Plan changes</h2>`+
+    `<input type="date" id="chgFrom" value="${CHG.from}" style="padding:4px 7px"> → `+
+    `<input type="date" id="chgTo" value="${CHG.to}" style="padding:4px 7px">`+
+    `<button class="btn primary" id="chgApply" style="padding:5px 11px">Show</button>`+
+    `<button class="btn" id="chgThisMo" style="padding:5px 9px">This month</button>`+
+    `<button class="btn" id="chgLastMo" style="padding:5px 9px">Last month</button>`+
+    `<button class="btn" id="chgExport" style="padding:5px 9px">Export CSV</button></div>`+
+    `<span class="hint">what moved in the plan between two dates · hours per person × project × month, valued at current rates · daily snapshots (changes same-day net out until tomorrow's snapshot)</span></div>${bodyHtml}</div>`;
+  const root=document.getElementById("viewRoot");
+  const wire=()=>{
+    const go=()=>loadChanges(document.getElementById("chgFrom").value, document.getElementById("chgTo").value);
+    document.getElementById("chgApply")?.addEventListener("click",go);
+    document.getElementById("chgThisMo")?.addEventListener("click",()=>{ const t=new Date();
+      loadChanges(`${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}-01`, t.toISOString().slice(0,10)); });
+    document.getElementById("chgLastMo")?.addEventListener("click",()=>{ const t=new Date();
+      const lm=new Date(t.getFullYear(), t.getMonth()-1, 1);
+      const le=new Date(t.getFullYear(), t.getMonth(), 0);
+      const d=x=>`${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,"0")}-${String(x.getDate()).padStart(2,"0")}`;
+      loadChanges(d(lm), d(le)); });
+    document.getElementById("chgExport")?.addEventListener("click",exportChangesCSV);
+  };
+  if(CHG.err){ root.innerHTML=head(`<div style="padding:18px"><p>⚠ ${esc(CHG.err)}</p></div>`); wire(); return; }
+  if(!CHG.data){ if(!CHG.loading) loadChanges(CHG.from,CHG.to);
+    root.innerHTML=head(`<div style="padding:18px" class="muted">Loading changes…</div>`); wire(); return; }
+
+  const q=(F.search||"").toLowerCase();
+  const rows=CHG.data.changes.map(c=>{
+    const pid=fromResKey(c.resourceKey), jid=fromTgtKey(c.targetKey);
+    const p=personById(pid), pr=projById(jid);
+    const rate=(p&&pr)? rateAt(pid,jid,c.month) : (c.rate||0);
+    return {pid:String(pid),jid:String(jid),p,pr,month:c.month,before:c.before,after:c.after,d:c.after-c.before,rate};
+  }).filter(r=>!(r.p && !passDeptType(r.p)))
+    .filter(r=>{ if(!q) return true;
+      const pn=(r.pr?projLabel(r.pr):r.jid).toLowerCase(), nm=(r.p?r.p.name:r.pid).toLowerCase();
+      return pn.includes(q)||nm.includes(q); });
+
+  const byProj=new Map();
+  rows.forEach(r=>{
+    const g=byProj.get(r.jid)||{pr:r.pr,jid:r.jid,add:0,rem:0,net:0,netD:0,people:new Map()};
+    const dD=r.d*r.rate;
+    if(r.d>0) g.add+=r.d; else g.rem-=r.d;
+    g.net+=r.d; g.netD+=dD;
+    const pg=g.people.get(r.pid)||{p:r.p,pid:r.pid,add:0,rem:0,net:0,netD:0,months:[]};
+    if(r.d>0) pg.add+=r.d; else pg.rem-=r.d;
+    pg.net+=r.d; pg.netD+=dD; pg.months.push(r);
+    g.people.set(r.pid,pg); byProj.set(r.jid,g);
+  });
+  const projs=[...byProj.values()].sort((a,b)=>Math.abs(b.netD)-Math.abs(a.netD)||Math.abs(b.net)-Math.abs(a.net));
+  const tot=projs.reduce((t,g)=>({add:t.add+g.add,rem:t.rem+g.rem,net:t.net+g.net,netD:t.netD+g.netD}),{add:0,rem:0,net:0,netD:0});
+
+  const lineNote=(pg)=>{
+    if(pg.add>0 && pg.rem===0 && pg.months.every(m=>m.before===0)) return `<span class="badge prj">new</span>`;
+    if(pg.rem>0 && pg.add===0 && pg.months.every(m=>m.after===0)) return `<span class="badge np">removed</span>`;
+    const neg=pg.months.filter(m=>m.d<0).sort((a,b)=>a.d-b.d), pos=pg.months.filter(m=>m.d>0).sort((a,b)=>b.d-a.d);
+    if(neg.length&&pos.length){
+      const moved=Math.min(-neg.reduce((s,m)=>s+m.d,0), pos.reduce((s,m)=>s+m.d,0));
+      if(moved>0) return `<span class="muted">⇄ ${fmt(moved)}h moved ${monLab(neg[0].month)} → ${monLab(pos[0].month)}${neg.length+pos.length>2?" (+ more)":""}</span>`;
+    }
+    return "";
+  };
+  const chips=(pg)=>pg.months.slice().sort((a,b)=>a.month.localeCompare(b.month))
+    .map(m=>`<span class="chgchip ${m.d>0?"up":"down"}" title="${monLab(m.month)}: ${fmt(m.before)}h → ${fmt(m.after)}h">${monLab(m.month)} ${m.d>0?"+":""}${fmt(m.d)}</span>`).join("");
+
+  let body="";
+  if(!projs.length) body=`<tr><td colspan="6" class="muted" style="padding:16px">No allocation changes between ${esc(CHG.data.fromSnap)} and ${esc(CHG.data.toSnap)} match the filters.</td></tr>`;
+  projs.forEach(g=>{
+    const isOpen=chgOpen.has(g.jid);
+    const badge=g.pr? (g.pr.src==="CRM"?`<span class="badge crm">CRM</span>`:`<span class="badge prj">PRJ</span>`) : "";
+    body+=`<tr class="lvl1${isOpen?" open":""}" data-chg="${esc(g.jid)}"><td class="lbl"><span class="tw">${chev()}</span>${badge} <b>${g.pr?esc(g.pr.name):esc(g.jid)}</b>`+
+      `<div class="muted" style="font-size:11px;padding-left:18px">${g.pr?esc(g.pr.client||"—"):""} · ${g.people.size} ${g.people.size===1?"person":"people"}</div></td>`+
+      `<td class="num up2">${g.add?"+"+fmt(g.add):"·"}</td><td class="num dn2">${g.rem?"−"+fmt(g.rem):"·"}</td>`+
+      `<td class="num"><b>${sgnH(g.net)}</b></td><td class="num"><b>${sgnD(g.netD)}</b></td><td></td></tr>`;
+    if(!isOpen) return;
+    [...g.people.values()].sort((a,b)=>Math.abs(b.netD)-Math.abs(a.netD)).forEach(pg=>{
+      const cb=pg.p? (pg.p.type==="contractor"?" <span class='badge contractor'>Con</span>":pg.p.type==="tbh"?" <span class='badge tbh'>TBA</span>":"") : "";
+      body+=`<tr class="lvl2"><td class="lbl lvl2i">${pg.p?esc(pg.p.name):esc(pg.pid)}${cb} ${lineNote(pg)}`+
+        `<div style="padding:2px 0 2px 0">${chips(pg)}</div></td>`+
+        `<td class="num up2">${pg.add?"+"+fmt(pg.add):"·"}</td><td class="num dn2">${pg.rem?"−"+fmt(pg.rem):"·"}</td>`+
+        `<td class="num">${sgnH(pg.net)}</td><td class="num">${sgnD(pg.netD)}</td><td></td></tr>`;
+    });
+  });
+
+  const ev=CHG.data.events.map(e=>{
+    const parts=String(e.key).split("|");
+    let who="", proj="", mon="";
+    if(parts.length>=4){ const pid=fromResKey(parts[1]), jid=fromTgtKey(parts[2]);
+      const p=personById(pid), pr=projById(jid);
+      who=p?p.name:parts[1]; proj=pr?projLabel(pr):parts[2]; mon=monLab(String(parts[3]).slice(0,7)); }
+    return `<tr><td>${esc(String(e.at).slice(0,16).replace("T"," "))}</td><td>${esc(e.actor)}</td>`+
+      `<td>${esc(who)}${proj?` · ${esc(proj)}`:""}${mon?` · ${esc(mon)}`:""}</td><td>${esc(e.action)}</td>`+
+      `<td class="num">${esc(e.oldValue==null?"·":e.oldValue)} → ${esc(e.newValue==null?"·":e.newValue)}</td></tr>`;
+  }).join("");
+
+  root.innerHTML=head(
+    `<div style="padding:10px 16px 4px;display:flex;gap:22px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-2)">`+
+      `<span>Compared <b>${esc(CHG.data.fromSnap)}</b> → <b>${esc(CHG.data.toSnap)}</b></span>`+
+      `<span>Added <b style="color:var(--u-good-ink)">+${fmt(tot.add)}h</b></span>`+
+      `<span>Removed <b style="color:var(--u-over-ink)">−${fmt(tot.rem)}h</b></span>`+
+      `<span>Net <b>${sgnH(tot.net)}</b> · <b>${sgnD(tot.netD)}</b></span>`+
+      `<span>${projs.length} project${projs.length===1?"":"s"} touched</span></div>`+
+    `<div class="scroll" style="max-height:unset"><table class="pivot chgtbl"><thead><tr>`+
+      `<th class="lbl">Project · person</th><th class="num">Added</th><th class="num">Removed</th><th class="num">Net h</th><th class="num">Net $</th><th></th></tr></thead>`+
+      `<tbody>${body}</tbody></table></div>`+
+    `<div class="panel-hd" style="border-top:1px solid var(--line)"><h2 style="font-size:14px">Who changed what</h2><span class="hint">${CHG.data.events.length} audit entries in the window (latest first)</span></div>`+
+    `<div style="max-height:300px;overflow:auto"><table class="maptbl" style="font-size:12px"><thead><tr><th style="text-align:left;padding:4px 10px">When</th><th style="text-align:left">By</th><th style="text-align:left">Line</th><th style="text-align:left">Action</th><th style="text-align:left">Change</th></tr></thead><tbody>${ev||`<tr><td colspan="5" class="muted" style="padding:10px">No audit entries in the window.</td></tr>`}</tbody></table></div>`);
+  wire();
+}
+function exportChangesCSV(){
+  if(!CHG.data) return;
+  const lines=[["Project","Client","Source","Person","Type","Month","Before h","After h","Delta h","Rate","Delta $"].join(",")];
+  CHG.data.changes.forEach(c=>{
+    const pid=fromResKey(c.resourceKey), jid=fromTgtKey(c.targetKey);
+    const p=personById(pid), pr=projById(jid);
+    const rate=(p&&pr)? rateAt(pid,jid,c.month):(c.rate||0);
+    lines.push([pr?projLabel(pr):jid, pr?pr.client||"":"", pr?pr.src:"", p?p.name:pid, p?p.type:"",
+      c.month, c.before, c.after, Math.round((c.after-c.before)*10)/10, rate, Math.round((c.after-c.before)*rate)].map(csvEsc).join(","));
+  });
+  download(`tqs-plan-changes-${CHG.data.fromSnap}-to-${CHG.data.toSnap}.csv`, lines.join("\n"), "text/csv");
+  toast("Change log exported");
+}
+
 /* Resource cost form: one row per employee/contractor with bi-weekly, monthly
    and hourly cost inputs. Each edit saves that person's card immediately.
    Visible and editable only for the costing role (server-enforced too). */
@@ -2411,6 +2567,8 @@ document.getElementById("viewRoot").addEventListener("click",async e=>{
   if(em){ const k=em.getAttribute("data-em"); if(emOpen.has(k)) emOpen.delete(k); else emOpen.add(k); keepScroll(renderCosting); return; }
   const vf=e.target.closest("[data-vf]");            // Forecast vs Actual: person → projects
   if(vf){ const k=vf.getAttribute("data-vf"); if(vfOpen.has(k)) vfOpen.delete(k); else vfOpen.add(k); keepScroll(renderVariance); return; }
+  const ch=e.target.closest("[data-chg]");           // Changes: project → people
+  if(ch){ const k=ch.getAttribute("data-chg"); if(chgOpen.has(k)) chgOpen.delete(k); else chgOpen.add(k); keepScroll(renderChanges); return; }
   const ptog=e.target.closest("[data-ptoggle]");   // By Project: expand a project
   if(ptog){ const id=ptog.dataset.ptoggle; if(projOpen.has(id)) projOpen.delete(id); else projOpen.add(id); keepScroll(renderByProj); return; }
   const rmr=e.target.closest("[data-rmres]");      // By Project: remove a resource from a project
@@ -3304,7 +3462,10 @@ async function bootstrap(){
   if (tabCost) tabCost.hidden = !ME.canCost;
   const tabPM = document.getElementById("tabProjMargin");
   if (tabPM) tabPM.hidden = !ME.canCost;
+  const tabChg = document.getElementById("tabChanges");
+  if (tabChg) tabChg.hidden = !ME.canEdit;
   COST.rates = null;
+  CHG.data = null;
   const who=document.getElementById("whoami");
   if(who) who.innerHTML = `${esc(ME.name||ME.upn)} · ${ME.canEdit?"editor":"view only"} · <a href="/auth/logout">sign out</a>`;
 

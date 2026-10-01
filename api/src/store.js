@@ -640,4 +640,64 @@ async function putImportMap(db, user, m) {
   return { ok: true };
 }
 
-module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, mapOpportunityToProject, putCapacity, putRate, putTbh, deleteTbh, shiftTbhForecast, moveTbaTarget, transferHours, normalizeTbaPools, roleSlug, tbaName, normShore, putImportMap, putProposedHire, Conflict, PastMonth, monthKey, currentMonthStart };
+/* ------------------------------------------------------- plan snapshots -- */
+/** Write today's snapshot of the baseline plan (idempotent per day). The
+ *  Changes view diffs two snapshot dates, so granularity is daily. */
+async function takeSnapshot(db, date) {
+  const day = (date || new Date().toISOString()).slice(0, 10);
+  const [alloc, rates] = await Promise.all([
+    db.all("SELECT resource_key, target_key, month, hours FROM allocation WHERE scenario = 'baseline'"),
+    db.all("SELECT resource_key, target_key, rate FROM bill_rate WHERE scenario = 'baseline'"),
+  ]);
+  const rateOf = new Map(rates.map(r => [`${r.resource_key}|${r.target_key}`, Number(r.rate) || 0]));
+  await db.tx(async () => {
+    await db.run("DELETE FROM plan_snapshot WHERE snap_date = ?", [day]);
+    for (const a of alloc) {
+      await db.run(
+        "INSERT INTO plan_snapshot (snap_date, resource_key, target_key, month, hours, rate) VALUES (?,?,?,?,?,?)",
+        [day, a.resource_key, a.target_key, String(a.month).slice(0, 10), Number(a.hours), rateOf.get(`${a.resource_key}|${a.target_key}`) || 0]);
+    }
+  });
+  return { day, rows: alloc.length };
+}
+
+/** Changes between two dates: diff of the snapshots nearest ON OR BEFORE each
+ *  date (today's snapshot is taken lazily so "to = today" always works), plus
+ *  the allocation audit entries in the window as the who/when feed. */
+async function getChanges(db, from, to) {
+  const today = new Date().toISOString().slice(0, 10);
+  const have = await db.get("SELECT COUNT(*) AS n FROM plan_snapshot WHERE snap_date = ?", [today]);
+  if (!Number(have.n)) await takeSnapshot(db, today);
+  const snapAt = async (d) => {
+    const r = await db.get("SELECT MAX(snap_date) AS d FROM plan_snapshot WHERE snap_date <= ?", [d]);
+    if (r && r.d) return String(r.d).slice(0, 10);
+    const first = await db.get("SELECT MIN(snap_date) AS d FROM plan_snapshot");
+    return first && first.d ? String(first.d).slice(0, 10) : today;
+  };
+  const fromSnap = await snapAt(from || today);
+  const toSnap = await snapAt(to || today);
+  const load = async (d) => {
+    const rows = await db.all("SELECT resource_key, target_key, month, hours, rate FROM plan_snapshot WHERE snap_date = ?", [d]);
+    return new Map(rows.map(r => [`${r.resource_key}|${r.target_key}|${String(r.month).slice(0, 7)}`, { h: Number(r.hours), rate: Number(r.rate) || 0 }]));
+  };
+  const A = await load(fromSnap), B = await load(toSnap);
+  const changes = [];
+  const keys = new Set([...A.keys(), ...B.keys()]);
+  for (const k of keys) {
+    const a = A.get(k), b = B.get(k);
+    const before = a ? a.h : 0, after = b ? b.h : 0;
+    if (Math.abs(before - after) < 0.001) continue;
+    const [resourceKey, targetKey, month] = k.split("|");
+    changes.push({ resourceKey, targetKey, month, before, after,
+      rate: (b && b.rate) || (a && a.rate) || 0 });
+  }
+  const events = await db.all(
+    `SELECT at, actor, entity_key, action, old_value, new_value FROM audit_log
+     WHERE entity = 'allocation' AND at >= ? AND at <= ? ORDER BY at DESC LIMIT 1000`,
+    [`${fromSnap}T00:00:00`, `${to || today}T23:59:59.999Z`]);
+  return { fromSnap, toSnap, changes,
+    events: events.map(e => ({ at: String(e.at), actor: e.actor, key: e.entity_key, action: e.action,
+      oldValue: e.old_value == null ? null : String(e.old_value), newValue: e.new_value == null ? null : String(e.new_value) })) };
+}
+
+module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, mapOpportunityToProject, putCapacity, putRate, putTbh, deleteTbh, shiftTbhForecast, moveTbaTarget, transferHours, normalizeTbaPools, roleSlug, tbaName, normShore, putImportMap, putProposedHire, takeSnapshot, getChanges, Conflict, PastMonth, monthKey, currentMonthStart };

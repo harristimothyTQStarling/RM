@@ -162,6 +162,13 @@ function scheduleNightlySync() {
       } catch (e) {
         console.error(`[nightly-sync] FAILED (will retry tomorrow): ${e.message}`);
       }
+      try {
+        // Daily plan snapshot for the Changes view (independent of Odoo).
+        const snap = await require("./store").takeSnapshot(db);
+        console.log(`[nightly-snapshot] ${snap.day}: ${snap.rows} rows`);
+      } catch (e) {
+        console.error(`[nightly-snapshot] FAILED: ${e.message}`);
+      }
       arm();                                   // schedule the next night
     }, msUntilUtcHour(hour)).unref();          // never keeps a dying process alive
   };

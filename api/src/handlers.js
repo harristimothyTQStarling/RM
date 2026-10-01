@@ -122,6 +122,16 @@ async function handle(db, req) {
     }
   }
 
+  // Change history between two dates (editors only — it names who changed
+  // what, and carries the same plan detail editors already see).
+  if (method === "GET" && path === "/api/changes") {
+    if (!canEdit(user)) return FORBID;
+    const day = /^\d{4}-\d{2}-\d{2}$/;
+    const from = day.test(String(q.from || "")) ? q.from : null;
+    const to = day.test(String(q.to || "")) ? q.to : null;
+    return json(200, await store.getChanges(db, from, to));
+  }
+
   // ---- writes (Editor only) ----
   const write = ["PUT", "POST", "DELETE"].includes(method);
   if (write && !canEdit(user)) return FORBID;

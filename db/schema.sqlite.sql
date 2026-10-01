@@ -186,6 +186,20 @@ CREATE TABLE IF NOT EXISTS cost_rate (
   updated_at  TEXT NOT NULL
 );
 
+-- Daily snapshot of the baseline plan (allocations + pair rates), written by
+-- the nightly job and lazily on demand. The Changes view diffs two snapshot
+-- dates; the audit_log supplies the who/when detail between them.
+CREATE TABLE IF NOT EXISTS plan_snapshot (
+  snap_date    TEXT NOT NULL,             -- YYYY-MM-DD (state at the time taken)
+  resource_key TEXT NOT NULL,
+  target_key   TEXT NOT NULL,
+  month        TEXT NOT NULL,             -- YYYY-MM-01
+  hours        REAL NOT NULL,
+  rate         REAL NOT NULL DEFAULT 0,   -- pair bill rate at snapshot time
+  PRIMARY KEY (snap_date, resource_key, target_key, month)
+);
+CREATE INDEX IF NOT EXISTS IX_PlanSnapshot_date ON plan_snapshot (snap_date);
+
 CREATE TABLE IF NOT EXISTS sync_state (
   source    TEXT PRIMARY KEY,
   synced_at TEXT NOT NULL,
