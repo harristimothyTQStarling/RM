@@ -141,11 +141,64 @@ test("getReference exposes the CRM planning window (expected start / months)", a
   assert.deepEqual({ s: b.expectedStart, m: b.expectedMonths }, { s: null, m: 0 }, "missing fields -> null/0 so the UI skips the check");
 });
 
+/* ---- the pair-keyed satellites (bill rate, proposed hire) move too ---- */
+
+function seedRate(db, resourceKey, targetKey, rate) {
+  db.run("INSERT INTO bill_rate (scenario,resource_key,target_key,rate,updated_by,updated_at,version) VALUES ('baseline',?,?,?,?,'2026-01-01 00:00:00',1)",
+    [resourceKey, targetKey, rate, U.upn]);
+}
+const rateOf = (db, resourceKey, targetKey) =>
+  db.get("SELECT rate FROM bill_rate WHERE scenario='baseline' AND resource_key=? AND target_key=?", [resourceKey, targetKey]);
+
+test("auto-reconcile carries the bill rate from the opp to the project", async () => {
+  const db = open({ driver: "sqlite", file: ":memory:" });
+  seedAlloc(db, "emp:110", "crm:222", "2026-08", 100);
+  seedRate(db, "emp:110", "crm:222", 185);
+
+  const odoo = fakeOdoo({ 222: { name: "Advocate Health", client: "Advocate Health" } });
+  await reconcileClosedCrm(db, odoo, [{ id: 119, name: "Advocate Health Implementation", client: "Advocate Health" }], new Set());
+
+  assert.equal(rateOf(db, "emp:110", "crm:222"), undefined, "nothing stranded on the retired key");
+  assert.equal(Number(rateOf(db, "emp:110", "prj:119").rate), 185, "the pair's rate now prices the project forecast");
+});
+
+test("manual map carries the bill rate and the proposed-hire note", async () => {
+  const db = open({ driver: "sqlite", file: ":memory:" });
+  seedAlloc(db, "emp:110", "crm:223", "2026-08", 80);
+  seedAlloc(db, "tbh:tba-technical-consultant-onshore", "crm:223", "2026-09", 40);
+  seedRate(db, "emp:110", "crm:223", 170);
+  seedRate(db, "tbh:tba-technical-consultant-onshore", "crm:223", 150);
+  db.run("INSERT INTO proposed_hire (scenario,resource_key,target_key,name,updated_by,updated_at) VALUES ('baseline','tbh:tba-technical-consultant-onshore','crm:223','Jane Candidate',?,'2026-01-01 00:00:00')", [U.upn]);
+  db.run("INSERT INTO ref_opportunity (id,name,client,stage,active,needs_project) VALUES (223,'Mystery Deal','Nobody','Lost',1,1)");
+  db.run("INSERT INTO ref_project (id,name,client,billable,active) VALUES (777,'Rescued Project','Nobody',1,1)");
+
+  const out = await mapOpportunityToProject(db, U, 223, 777);
+  assert.equal(out.ratesMoved, 2);
+  assert.equal(Number(rateOf(db, "emp:110", "prj:777").rate), 170);
+  assert.equal(Number(rateOf(db, "tbh:tba-technical-consultant-onshore", "prj:777").rate), 150);
+  const prop = db.get("SELECT name FROM proposed_hire WHERE target_key='prj:777'");
+  assert.equal(prop.name, "Jane Candidate", "proposed-hire note follows the pool's forecast");
+  assert.equal(db.all("SELECT 1 FROM bill_rate WHERE target_key='crm:223'").length, 0);
+  assert.equal(db.all("SELECT 1 FROM proposed_hire WHERE target_key='crm:223'").length, 0);
+});
+
+test("a rate already set on the destination pair wins; the source row is removed", async () => {
+  const db = open({ driver: "sqlite", file: ":memory:" });
+  seedAlloc(db, "emp:110", "crm:222", "2026-08", 40);
+  seedRate(db, "emp:110", "crm:222", 160);
+  seedRate(db, "emp:110", "prj:119", 185);   // the project pair was priced deliberately
+
+  const out = await reassignAllocations(db, U, "crm:222", "prj:119");
+  assert.equal(out.ratesMoved, 0);
+  assert.equal(Number(rateOf(db, "emp:110", "prj:119").rate), 185, "deliberate project rate kept");
+  assert.equal(rateOf(db, "emp:110", "crm:222"), undefined, "stranded source row cleaned up");
+});
+
 test("reassignAllocations audits every move", async () => {
   const db = open({ driver: "sqlite", file: ":memory:" });
   seedAlloc(db, "emp:110", "crm:222", "2026-08", 100);
   const out = await reassignAllocations(db, U, "crm:222", "prj:119");
-  assert.deepEqual(out, { moved: 1, merged: 0 });
+  assert.deepEqual(out, { moved: 1, merged: 0, ratesMoved: 0 });
   const log = db.all("SELECT action, old_value, new_value FROM audit_log WHERE entity='allocation'");
   assert.equal(log.length, 1);
   assert.deepEqual(log[0], { action: "reassign", old_value: "crm:222", new_value: "prj:119" });

@@ -205,6 +205,12 @@ async function putAllocations(db, user, items) {
  * the source row deleted, rather than dropped: losing forecast is worse than a
  * rare double-count, and every move is audited so it can be traced. Runs in one
  * transaction so a mid-move failure leaves the plan wholly on the old key.
+ *
+ * Bill rates and proposed-hire notes are keyed per (resource, target) pair, so
+ * they must move with the plan — left behind on the retired key, the migrated
+ * forecast silently prices at $0. Where the destination pair already has its own
+ * row, that one wins (it was set deliberately against the real project) and the
+ * stranded source row is removed.
  */
 async function reassignAllocations(db, user, fromKey, toKey) {
   if (fromKey === toKey) return { moved: 0, merged: 0 };
@@ -234,7 +240,28 @@ async function reassignAllocations(db, user, fromKey, toKey) {
       }
       moved++;
     }
-    return { moved, merged };
+    const rates = await db.all("SELECT id, scenario, resource_key, rate FROM bill_rate WHERE target_key = ?", [fromKey]);
+    let ratesMoved = 0;
+    for (const r of rates) {
+      const dst = await db.get("SELECT id FROM bill_rate WHERE scenario=? AND resource_key=? AND target_key=?",
+        [r.scenario, r.resource_key, toKey]);
+      if (dst) {
+        await db.run("DELETE FROM bill_rate WHERE id=?", [r.id]);
+      } else {
+        await db.run("UPDATE bill_rate SET target_key=?, updated_by=?, updated_at=?, version=version+1 WHERE id=?",
+          [toKey, user.upn, nowIso(), r.id]);
+        await audit(db, user.upn, "rate", `${r.scenario}|${r.resource_key}|${toKey}`, "reassign", fromKey, toKey);
+        ratesMoved++;
+      }
+    }
+    const props = await db.all("SELECT id, scenario, resource_key FROM proposed_hire WHERE target_key = ?", [fromKey]);
+    for (const pr of props) {
+      const dst = await db.get("SELECT id FROM proposed_hire WHERE scenario=? AND resource_key=? AND target_key=?",
+        [pr.scenario, pr.resource_key, toKey]);
+      if (dst) await db.run("DELETE FROM proposed_hire WHERE id=?", [pr.id]);
+      else await db.run("UPDATE proposed_hire SET target_key=?, updated_by=?, updated_at=? WHERE id=?", [toKey, user.upn, nowIso(), pr.id]);
+    }
+    return { moved, merged, ratesMoved };
   });
 }
 
