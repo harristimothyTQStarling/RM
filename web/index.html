@@ -1504,8 +1504,18 @@ function projectBody(pr){
   // still on the project and must not be offered in the add list again.
   const avail=allPeople().filter(p=>!onProject(p,pr.id)).sort(byPersonOrder);
   const opts=avail.map(p=>`<option value="${p.id}">${esc(p.name)}${p.type==="tbh"?" (TBA)":""} · ${esc(p.role||deptLabel(p.dept))}</option>`).join("");
+  // A role whose every TBA pool is already on this project can still take another
+  // open seat: offer to create the next numbered pool and staff it in one step.
+  const seatable=new Map();
+  state.tbh.forEach(t=>{ const g=slugRole(t.role,t.shore);
+    const e=seatable.get(g)||{src:t,allOn:true,anyOn:false};
+    if(onProject(t,pr.id)) e.anyOn=true; else e.allOn=false;
+    seatable.set(g,e); });
+  const seatOpts=[...seatable.values()].filter(e=>e.anyOn&&e.allOn).map(e=>{
+    const s=nextSeat(e.src.role,e.src.shore);
+    return `<option value="seat:${esc(String(e.src.id))}">➕ Another open seat — ${esc(s.name)}</option>`; }).join("");
   const mapBanner=(pr.needsProject && canEdit())? npMapBanner(pr) : "";
-  return mapBanner+rows+`<div class="addproj"><select data-addres="${String(pr.id)}"><option value="">+ Add resource…</option>${opts}</select></div>`;
+  return mapBanner+rows+`<div class="addproj"><select data-addres="${String(pr.id)}"><option value="">+ Add resource…</option>${opts}${seatOpts}</select></div>`;
 }
 /* Editor control shown inside a closed-but-unmatched CRM opportunity: pick the
    real delivery project and move this forecast onto it. */
@@ -1636,6 +1646,21 @@ function detectGaps(){
 const normShore = (s) => String(s||"").trim().toLowerCase()==="offshore" ? "offshore" : "onshore";
 const slugRole = (role,shore) => "tba-" + ((String(role||"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"")) || "unassigned") + "-" + normShore(shore);
 const tbaLabel = (role,shore) => "TBA - " + (String(role||"").trim() || "Unassigned") + (normShore(shore)==="offshore" ? " (Offshore)" : " (Onshore)");
+/* An extra open seat of a role gets its own numbered pool ("TBA - <role> #2"):
+   same role for reporting, but its own line, rate and proposed hire per project.
+   Mirrors the server's seat convention (<slug>-<n>, n >= 2). */
+function nextSeat(role,shore){
+  const base=slugRole(role,shore); let n=2;
+  while(state.tbh.some(t=>String(t.id)==="tbh-"+base+"-"+n)) n++;
+  return { key: base+"-"+n, name: tbaLabel(role,shore)+" #"+n, n };
+}
+function createPool(key,name,role,dept,shore){
+  const t={id:"tbh-"+key,name,role,dept:dept||"",shore,type:"tbh",start:null,cap:null};
+  state.tbh.push(t);
+  api("PUT","/api/tbh",{tbhKey:key,name,role,dept:dept||"",shore,start:null,cap:null})
+    .then(()=>status("Saved")).catch(e=>toast("Role pool not saved: "+e.message));
+  return t;
+}
 let tbaOpen = new Set();
 const proposedFor = (pid,projid) => state.proposed[`${pid}|${projid}`] || "";
 /* Available capacity for a role in a month: what people who ALREADY have that
@@ -1725,7 +1750,7 @@ function renderHiring(){
 
   const deptOpts=`<option value="">— No department —</option>`+DEPTS.map(d=>`<option value="${d}">${d}</option>`).join("");
   document.getElementById("viewRoot").innerHTML=
-    `<div class="panel"><div class="panel-hd"><h2>To Be Assigned — unstaffed role demand</h2><span class="hint">one pool per role · forecast against the role, then shift it to the person once they're assigned</span></div>`+
+    `<div class="panel"><div class="panel-hd"><h2>To Be Assigned — unstaffed role demand</h2><span class="hint">one pool per role (plus numbered seats for extra openings) · forecast against the role, then shift it to the person once they're assigned</span></div>`+
     `<div class="hire-wrap"><div class="hire-grid">`+
       `<div class="card"><h3>Add a to-be-assigned role</h3><div class="bd">`+
         `<div class="form-grid">`+
@@ -1734,7 +1759,7 @@ function renderHiring(){
           `<div class="field"><label>Shore</label><select id="tbhShore"><option value="onshore">Onshore</option><option value="offshore">Offshore</option></select></div>`+
         `</div>`+
         `<button class="btn primary" id="tbhAdd">Add role pool</button>`+
-        `<div class="muted" style="font-size:11.5px;margin-top:6px">Named “TBA - &lt;role&gt;”. One pool per role — adding an existing role opens its pool.</div>`+
+        `<div class="muted" style="font-size:11.5px;margin-top:6px">Named “TBA - &lt;role&gt;”. Adding an existing role offers a second numbered seat (“#2”) or opens the pool — so a project can carry several open positions of the same role.</div>`+
       `</div></div>`+
       `<div class="card"><h3>Suggested roles — capacity gaps</h3><div class="bd">${gapHtml}</div></div>`+
     `</div>`+
@@ -2522,7 +2547,14 @@ document.getElementById("viewRoot").addEventListener("change",e=>{
     if(!state.alloc[pid]) state.alloc[pid]={}; if(!state.alloc[pid][projid]) state.alloc[pid][projid]={};
     /*saved via API*/ keepScroll(renderAllocate); // keep this person open, stay where we were
   }
-  if(el.dataset.addres!==undefined && el.value){ const projid=el.dataset.addres, pid=el.value;
+  if(el.dataset.addres!==undefined && el.value){ const projid=el.dataset.addres; let pid=el.value;
+    if(pid.startsWith("seat:")){ // create the next numbered TBA seat pool and staff it here
+      if(!canEdit()) return;
+      const src=state.tbh.find(t=>String(t.id)===pid.slice(5)); if(!src) return;
+      const s=nextSeat(src.role,src.shore);
+      pid=String(createPool(s.key,s.name,src.role,src.dept,src.shore).id);
+      renderKpis();
+    }
     if(!state.alloc[pid]) state.alloc[pid]={}; if(!state.alloc[pid][projid]) state.alloc[pid][projid]={};
     /*saved via API*/ keepScroll(renderByProj); // keep this project open, stay where we were
   }
@@ -2675,14 +2707,20 @@ function addTbh(){
   const dept=document.getElementById("tbhDept").value;
   const shore=normShore(document.getElementById("tbhShore").value);
   if(!role){ document.getElementById("tbhRole").focus(); return; }
-  // ONE pool per (role, shore): adding an existing combination opens its pool.
+  // One BASE pool per (role, shore) — but extra open seats of the same role can
+  // be added as numbered pools ("#2", "#3", …), each a full pool of its own.
   const key=slugRole(role,shore), id="tbh-"+key;
   const existing=state.tbh.find(t=>String(t.id)===id);
-  if(existing){ tbaOpen.add(id); renderHiring(); toast(`“${tbaLabel(role,shore)}” already exists — opened its pool.`); return; }
-  const t={id,name:tbaLabel(role,shore),role,dept,shore,type:"tbh",start:null,cap:null};
-  state.tbh.push(t); tbaOpen.add(id); renderHiring(); renderKpis();
-  api("PUT","/api/tbh",{tbhKey:key,name:t.name,role,dept,shore,start:null,cap:null})
-    .then(()=>status("Saved")).catch(e=>toast("Role pool not saved: "+e.message));
+  if(existing){
+    const s=nextSeat(role,shore);
+    if(!window.confirm(`“${tbaLabel(role,shore)}” already exists.\n\nOK — add another pool for a second open seat (“${s.name}”).\nCancel — open the existing pool.`)){
+      tbaOpen.add(id); renderHiring(); toast(`Opened “${tbaLabel(role,shore)}”.`); return;
+    }
+    const t=createPool(s.key,s.name,role,dept,shore);
+    tbaOpen.add(String(t.id)); renderHiring(); renderKpis(); return;
+  }
+  createPool(key,tbaLabel(role,shore),role,dept,shore);
+  tbaOpen.add(id); renderHiring(); renderKpis();
 }
 
 /* ---------------------- KPI strip collapse ---------------------- */

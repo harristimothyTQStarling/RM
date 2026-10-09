@@ -381,16 +381,23 @@ const roleSlug = (role, shore) => {
   return "tba-" + (s || "unassigned") + "-" + normShore(shore);
 };
 const tbaName = (role, shore) => "TBA - " + (String(role || "").trim() || "Unassigned") + (normShore(shore) === "offshore" ? " (Offshore)" : " (Onshore)");
+/* A deliberate extra seat of a role: "<role slug>-<n>", n >= 2 — a base slug
+   always ends in the shore word, so a trailing number can only mean a seat. */
+const seatNo = (key, slug) => { const m = String(key).match(new RegExp("^" + slug + "-(\\d+)$")); return m ? Number(m[1]) : 0; };
 
 /**
  * To-Be-Assigned model: unstaffed demand lives against the ROLE, not a named
- * seat — exactly ONE pool per role, named "TBA - <role>", with no capacity or
- * start month of its own (demand-only). This normalizer converts historical
- * To-Be-Hired seats: every tbh row is renamed to the pool convention and rows
- * sharing a role are MERGED into the canonical pool — allocations move onto the
- * pool's key (summing where both had hours on the same project/month), bill
- * rates carry over where the pool has none, capacity overrides are dropped.
- * Idempotent; runs at every boot and is a no-op once normalized.
+ * seat — ONE pool per role, named "TBA - <role>", with no capacity or start
+ * month of its own (demand-only). Deliberately numbered extra seats of a role
+ * ("<slug>-2", named "TBA - <role> #2") are first-class pools too, so a project
+ * can carry several open positions of the same role side by side. This
+ * normalizer converts historical To-Be-Hired seats: every tbh row is renamed to
+ * the pool convention and rows sharing a role are MERGED into the canonical
+ * pool — EXCEPT numbered seats, which are preserved (only their name and
+ * demand-only shape are enforced). Allocations move onto the pool's key
+ * (summing where both had hours on the same project/month), bill rates carry
+ * over where the pool has none, capacity overrides are dropped. Idempotent;
+ * runs at every boot and is a no-op once normalized.
  */
 async function normalizeTbaPools(db) {
   /* Move every allocation and bill rate from one resource key onto another,
@@ -436,7 +443,19 @@ async function normalizeTbaPools(db) {
     }
     const groups = new Map();   // scenario|slug(role+shore) -> [rows]
     for (const r of rows) {
-      const key = `${r.scenario}|${roleSlug(r.role, r.shore)}`;
+      const slug = roleSlug(r.role, r.shore);
+      const n = seatNo(r.tbh_key, slug);
+      if (n >= 2) {
+        // A numbered seat is already canonical — never merged, just kept in shape.
+        const wantName = tbaName(r.role, r.shore) + " #" + n;
+        if (r.name !== wantName || r.shore !== normShore(r.shore) || r.start_month != null || r.capacity != null) {
+          await db.run("DELETE FROM capacity_override WHERE scenario=? AND resource_key=?", [r.scenario, `tbh:${r.tbh_key}`]);
+          await db.run("UPDATE tbh SET name=?, shore=?, start_month=NULL, capacity=NULL WHERE id=?", [wantName, normShore(r.shore), r.id]);
+          out.renamed++;
+        }
+        continue;
+      }
+      const key = `${r.scenario}|${slug}`;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(r);
     }

@@ -91,6 +91,51 @@ test("no rates -> onshore; blank role pools as Unassigned", async () => {
   ]);
 });
 
+test("numbered seat pools of the same role survive normalization un-merged", async () => {
+  const db = open({ driver: "sqlite", file: ":memory:" });
+  // Base pool + a deliberate second open seat, both on the SAME project — the
+  // whole point of seats. The normalizer must never fold #2 back into the base.
+  seedSeat(db, "tba-technical-consultant-onshore", "TBA - Technical Consultant (Onshore)", "Technical Consultant", { shore: "onshore" });
+  seedSeat(db, "tba-technical-consultant-onshore-2", "TBA - Technical Consultant (Onshore) #2", "Technical Consultant", { shore: "onshore" });
+  seedAlloc(db, "tbh:tba-technical-consultant-onshore", "prj:101", "2026-11", 160);
+  seedAlloc(db, "tbh:tba-technical-consultant-onshore-2", "prj:101", "2026-11", 120);
+  seedRate(db, "tbh:tba-technical-consultant-onshore", "prj:101", 150);
+  seedRate(db, "tbh:tba-technical-consultant-onshore-2", "prj:101", 165);
+
+  const r = await normalizeTbaPools(db);
+  assert.deepEqual({ merged: r.merged, renamed: r.renamed }, { merged: 0, renamed: 0 }, "nothing to fix");
+  const pools = db.all("SELECT tbh_key, name FROM tbh ORDER BY tbh_key");
+  assert.deepEqual(pools, [
+    { tbh_key: "tba-technical-consultant-onshore", name: "TBA - Technical Consultant (Onshore)" },
+    { tbh_key: "tba-technical-consultant-onshore-2", name: "TBA - Technical Consultant (Onshore) #2" },
+  ], "both pools remain");
+  const cells = db.all("SELECT resource_key, hours FROM allocation ORDER BY resource_key");
+  assert.deepEqual(cells.map(c => [c.resource_key, c.hours]),
+    [["tbh:tba-technical-consultant-onshore", 160], ["tbh:tba-technical-consultant-onshore-2", 120]],
+    "two lines of the same role coexist on one project");
+});
+
+test("a seat pool out of shape is re-named and made demand-only, not merged", async () => {
+  const db = open({ driver: "sqlite", file: ":memory:" });
+  seedSeat(db, "tba-senior-qa-onshore", "TBA - Senior QA (Onshore)", "Senior QA", { shore: "onshore" });
+  seedSeat(db, "tba-senior-qa-onshore-3", "my extra QA seat", "Senior QA", { shore: "onshore", start: "2026-09-01", cap: 160 });
+  const r = await normalizeTbaPools(db);
+  assert.deepEqual({ merged: r.merged, renamed: r.renamed }, { merged: 0, renamed: 1 });
+  const seat = db.get("SELECT name, start_month, capacity FROM tbh WHERE tbh_key='tba-senior-qa-onshore-3'");
+  assert.deepEqual(seat, { name: "TBA - Senior QA (Onshore) #3", start_month: null, capacity: null });
+});
+
+test("a role whose NAME ends in a number is not mistaken for a seat", async () => {
+  const db = open({ driver: "sqlite", file: ":memory:" });
+  // slug ends in the shore word, so "...-2" can only come from the seat suffix
+  seedSeat(db, "x1", "TBH seat", "Consultant Level 2", { shore: "onshore" });
+  seedSeat(db, "x2", "TBH seat b", "Consultant Level 2", { shore: "onshore" });
+  const r = await normalizeTbaPools(db);
+  assert.equal(r.merged, 1, "duplicate pools of the literal role still merge");
+  const p = db.all("SELECT tbh_key FROM tbh");
+  assert.deepEqual(p, [{ tbh_key: "tba-consultant-level-2-onshore" }]);
+});
+
 test("moveTbaTarget: one project moves to the other-shore pool, rest stays", async () => {
   const db = open({ driver: "sqlite", file: ":memory:" });
   seedSeat(db, "tba-technical-consultant-onshore", "TBA - Technical Consultant (Onshore)", "Technical Consultant", { shore: "onshore", dept: "Delivery" });
