@@ -2284,10 +2284,6 @@ const monLab=mk=>{ const m=MONTHS.find(x=>x.key===mk); return m?m.label:mk; };
 const sgnH=n=> Math.abs(n)<0.05? "0h" : (n>0?"+":"−") + fmt(Math.abs(n)) + "h";
 const sgnD=n=> Math.abs(n)<0.5? "$0" : (n>0?"+":"−") + money(Math.abs(n));
 function renderChanges(){
-  if(!ME||!ME.canEdit){
-    document.getElementById("viewRoot").innerHTML=`<div class="panel"><div class="panel-hd"><h2>Restricted</h2></div><div style="padding:18px" class="muted">Change history is limited to editors.</div></div>`;
-    return;
-  }
   if(!CHG.from){ const t=new Date();
     CHG.from=`${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}-01`;
     CHG.to=t.toISOString().slice(0,10); }
@@ -3501,7 +3497,7 @@ async function bootstrap(){
   const tabPM = document.getElementById("tabProjMargin");
   if (tabPM) tabPM.hidden = !ME.canCost;
   const tabChg = document.getElementById("tabChanges");
-  if (tabChg) tabChg.hidden = !ME.canEdit;
+  if (tabChg) tabChg.hidden = false;   // change history is open to every signed-in user
   COST.rates = null;
   CHG.data = null;
   const who=document.getElementById("whoami");

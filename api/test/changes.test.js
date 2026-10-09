@@ -4,7 +4,7 @@
  *   - daily plan_snapshot rows written idempotently per day
  *   - GET /api/changes diffs the snapshots nearest on-or-before the two dates
  *     (today's snapshot is taken lazily) and returns the audit feed between
- *   - editors only: the view names who changed what
+ *   - open to every signed-in user (same plan detail viewers already see)
  */
 const test = require("node:test");
 const assert = require("node:assert");
@@ -18,9 +18,9 @@ const JANE = as("jane@tqstarling.com");
 const iso = (d) => d.toISOString().slice(0, 10);
 const yesterday = () => { const d = new Date(); d.setUTCDate(d.getUTCDate() - 1); return iso(d); };
 
-test("changes are editor-only", async () => {
+test("changes are open to every signed-in user", async () => {
   const db = fresh();
-  assert.equal((await call(db, "GET", "/api/changes", null, JANE)).status, 403, "viewers are refused");
+  assert.equal((await call(db, "GET", "/api/changes", null, JANE)).status, 200, "viewers can read the history");
   assert.equal((await call(db, "GET", "/api/changes", null, TIM)).status, 200);
 });
 

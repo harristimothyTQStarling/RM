@@ -122,10 +122,10 @@ async function handle(db, req) {
     }
   }
 
-  // Change history between two dates (editors only — it names who changed
-  // what, and carries the same plan detail editors already see).
+  // Change history between two dates. Open to every signed-in user: it carries
+  // the same plan detail and audit attribution the rest of the app already
+  // shows viewers — no cost data.
   if (method === "GET" && path === "/api/changes") {
-    if (!canEdit(user)) return FORBID;
     const day = /^\d{4}-\d{2}-\d{2}$/;
     const from = day.test(String(q.from || "")) ? q.from : null;
     const to = day.test(String(q.to || "")) ? q.to : null;
