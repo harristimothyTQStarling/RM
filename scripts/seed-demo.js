@@ -36,13 +36,23 @@ const run = (sql, p) => db.run(sql, p);
     await run("INSERT INTO ref_holiday (id,name,date_from,date_to) VALUES (?,?,?,?)", [id, name, d, d]);
 
   const projects = [
-    [101, "Northwind - IRM Implementation", "Northwind Bank", 1],
-    [102, "Contoso - BCM Upgrade", "Contoso Energy", 1],
-    [103, "Fabrikam - CMDB Advisory", "Fabrikam Pharma", 1],
-    [104, "Non-Billable Time", "Internal", 0],
+    [101, "Northwind - IRM Implementation", "Northwind Bank", 1, "tm"],
+    [102, "Contoso - BCM Upgrade", "Contoso Energy", 1, "tm"],
+    [103, "Fabrikam - CMDB Advisory", "Fabrikam Pharma", 1, "tm"],
+    [104, "Non-Billable Time", "Internal", 0, "tm"],
+    [105, "Lamna - BCM Design and Implementation", "Lamna Healthcare", 1, "milestone"],
   ];
-  for (const [id, name, client, billable] of projects)
-    await run("INSERT INTO ref_project (id,name,client,billable,active) VALUES (?,?,?,?,1)", [id, name, client, billable]);
+  for (const [id, name, client, billable, btype] of projects)
+    await run("INSERT INTO ref_project (id,name,client,billable,active,billing_type) VALUES (?,?,?,?,1,?)", [id, name, client, billable, btype]);
+
+  const milestones = [
+    [1, 105, "Phase 0-1: Enablement & Requirements", 0, 1],
+    [2, 105, "Phase 2: Data Shaping & Validation", 46500, 0],
+    [3, 105, "Phase 3: Configuration & Wave Execution", 27000, 0],
+    [4, 105, "SOW Execution", 38500, 0],
+  ];
+  for (const [id, pid2, name, amount, reached] of milestones)
+    await run("INSERT INTO ref_milestone (id,project_id,name,amount,reached) VALUES (?,?,?,?,?)", [id, pid2, name, amount, reached]);
 
   const opps = [
     [201, "Adventure Works - SPM Implementation", "Adventure Works", "Negotiate", 1, 0, "2026-09-01", 4],
@@ -91,6 +101,9 @@ const run = (sql, p) => db.run(sql, p);
   F("emp:1", "crm:201", mk(10), 60); F("emp:1", "crm:201", mk(11), 80); F("emp:2", "crm:201", mk(12), 80);
   F("emp:4", "crm:203", mk(11), 40); F("emp:4", "crm:203", mk(12), 40);
   F("emp:3", "crm:204", mk(8), 60); F("emp:3", "crm:204", mk(9), 60);
+  // fixed-fee milestone project: hours are staffed normally, revenue comes from
+  // the milestone schedule (no bill_rate rows for these pairs on purpose)
+  for (let m = 10; m <= 12; m++) { F("emp:1", "prj:105", mk(m), 40); F("emp:7", "prj:105", mk(m), 60); }
   await run("INSERT INTO tbh (scenario,tbh_key,name,role,dept,shore,start_month,capacity,updated_by,updated_at,version) VALUES ('baseline','tba-technical-consultant-onshore','TBA - Technical Consultant (Onshore)','Technical Consultant','Delivery','onshore',NULL,NULL,?,?,1)", [U, now]);
   await run("INSERT INTO tbh (scenario,tbh_key,name,role,dept,shore,start_month,capacity,updated_by,updated_at,version) VALUES ('baseline','tba-technical-consultant-offshore','TBA - Technical Consultant (Offshore)','Technical Consultant','Delivery','offshore',NULL,NULL,?,?,1)", [U, now]);
   for (let m = 9; m <= 12; m++) F("tbh:tba-technical-consultant-onshore", "prj:102", mk(m), 120);

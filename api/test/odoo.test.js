@@ -19,7 +19,10 @@ test("readActuals computes realized bill rates from the linked SO lines", async 
         { employee_id: [110, "Ken"], project_id: [119, "Bain"], date: "2026-05-20", unit_amount: 20, so_line: false },   // non-billable
         { employee_id: [110, "Ken"], project_id: [119, "Bain"], date: "2026-06-02", unit_amount: 10, so_line: [8, "S00099"] },
       ];
-      if (model === "sale.order.line") return [ { id: 7, price_unit: 145 }, { id: 8, price_unit: 200 } ];
+      if (model === "sale.order.line") return [
+        { id: 7, price_unit: 145, qty_delivered_method: "timesheet" },
+        { id: 8, price_unit: 200, qty_delivered_method: "timesheet" },
+      ];
       return [];
     },
   };
@@ -30,6 +33,58 @@ test("readActuals computes realized bill rates from the linked SO lines", async 
   assert.equal(may.bill_rate, 145, "rate = revenue / billable hours (not total hours)");
   const jun = out.find((a) => a.month === "2026-06-01");
   assert.deepEqual({ h: jun.hours, r: jun.bill_rate }, { h: 10, r: 200 }, "months keep their own rate");
+});
+
+/* Fixed-fee guard: on a milestone SO line, price_unit is the PHASE price, not
+   an hourly rate — those hours must never be valued hours × price_unit. */
+test("readActuals treats milestone-line hours as hours only (no hourly revenue)", async () => {
+  const fakeOdoo = {
+    searchRead: async (model) => {
+      if (model === "account.analytic.line") return [
+        { employee_id: [110, "Ken"], project_id: [128, "Advocate"], date: "2026-11-05", unit_amount: 8, so_line: [171, "Phase 2"] },
+        { employee_id: [110, "Ken"], project_id: [119, "Bain"], date: "2026-11-06", unit_amount: 10, so_line: [7, "T&M"] },
+      ];
+      if (model === "sale.order.line") return [
+        { id: 171, price_unit: 46500, qty_delivered_method: "milestones" },
+        { id: 7, price_unit: 145, qty_delivered_method: "timesheet" },
+      ];
+      return [];
+    },
+  };
+  const out = await readActuals(fakeOdoo, "2026-01-01", "2026-12-31");
+  const ms = out.find((a) => a.project_id === 128);
+  assert.deepEqual({ h: ms.hours, rev: ms.revenue, rate: ms.bill_rate }, { h: 8, rev: 0, rate: 0 },
+    "8h on a $46,500 milestone is NOT $372,000 of revenue");
+  const tm = out.find((a) => a.project_id === 119);
+  assert.deepEqual({ h: tm.hours, rev: tm.revenue, rate: tm.bill_rate }, { h: 10, rev: 1450, rate: 145 },
+    "T&M lines still price normally");
+});
+
+/* readMilestones: milestone-billed projects + each milestone's dollar amount. */
+test("readMilestones detects milestone projects and prices their milestones", async () => {
+  const { readMilestones } = require("../src/odoo");
+  const fakeOdoo = {
+    hasFields: async () => ({ quantity_percentage: true }),
+    searchRead: async (model, domain) => {
+      if (model === "sale.order.line") return [
+        { id: 171, price_unit: 46500, product_uom_qty: 1 },
+        { id: 172, price_unit: 27000, product_uom_qty: 1 },
+      ];
+      if (model === "project.project") return [{ id: 128 }];
+      if (model === "project.task") return [{ id: 900, project_id: [131, "Other MS Project"] }];
+      if (model === "project.milestone") return [
+        { id: 2, project_id: [128, "Advocate"], sale_line_id: [171, "Phase 2"], is_reached: false, quantity_percentage: 1 },
+        { id: 3, project_id: [128, "Advocate"], sale_line_id: [172, "Phase 3"], is_reached: true, quantity_percentage: 0.5 },
+      ];
+      return [];
+    },
+  };
+  const out = await readMilestones(fakeOdoo);
+  assert.deepEqual([...out.projectIds].sort(), [128, 131], "projects found via sale_line_id AND tasks");
+  assert.deepEqual(out.milestones, [
+    { id: 2, project_id: 128, name: "", amount: 46500, reached: false },
+    { id: 3, project_id: 128, name: "", amount: 13500, reached: true },
+  ], "amount = quantity_percentage × line value; reached carried");
 });
 
 test("many2one fields decode to id + display name", () => {
@@ -171,7 +226,7 @@ test("syncAll caches reference data and scopes actuals to the roster", async () 
   const a = await db.all("SELECT employee_id, project_id, month, hours FROM ref_actual");
   assert.deepEqual(a, [{ employee_id: 110, project_id: 119, month: "2026-05-01", hours: 10 }]);
   const sync = await db.all("SELECT source FROM sync_state ORDER BY source");
-  assert.deepEqual(sync.map((s) => s.source), ["ref_actual", "ref_holiday", "ref_opportunity", "ref_person", "ref_project"]);
+  assert.deepEqual(sync.map((s) => s.source), ["ref_actual", "ref_holiday", "ref_milestone", "ref_opportunity", "ref_person", "ref_project"]);
 
   // The reference payload carries the capacity-proration inputs to the client.
   const ref = await require("../src/store").getReference(db);

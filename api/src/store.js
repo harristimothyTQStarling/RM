@@ -89,6 +89,44 @@ async function putProposedHire(db, user, p) {
   return { name };
 }
 
+/* ------------------------------------------------- milestone billing plan -- */
+/** Place a synced milestone's revenue in a forecast month (null clears it). */
+async function putMilestoneMonth(db, user, m) {
+  const id = Number(m.milestoneId);
+  const ms = await db.get("SELECT id, name FROM ref_milestone WHERE id = ?", [id]);
+  if (!ms) { const e = new Error("no such milestone"); e.code = "bad_request"; throw e; }
+  const cur = await db.get("SELECT milestone_id, month FROM milestone_month WHERE milestone_id = ?", [id]);
+  const old = cur ? String(cur.month).slice(0, 7) : null;
+  if (!m.month) {
+    if (cur) { await db.run("DELETE FROM milestone_month WHERE milestone_id = ?", [id]);
+      await audit(db, user.upn, "milestone", String(id), "unschedule", old, null); }
+    return { month: null };
+  }
+  const month = monthKey(m.month);
+  if (cur) await db.run("UPDATE milestone_month SET month=?, updated_by=?, updated_at=? WHERE milestone_id=?", [month, user.upn, nowIso(), id]);
+  else await db.run("INSERT INTO milestone_month (milestone_id, month, updated_by, updated_at) VALUES (?,?,?,?)", [id, month, user.upn, nowIso()]);
+  if (old !== month.slice(0, 7)) await audit(db, user.upn, "milestone", String(id), "schedule", old, month.slice(0, 7));
+  return { month: month.slice(0, 7) };
+}
+
+/** Force a target's billing type ('tm' | 'milestone'); null returns to auto. */
+async function putBillingType(db, user, b) {
+  const key = String(b.targetKey || "");
+  if (!/^(prj|crm):\d+$/.test(key)) { const e = new Error("targetKey must be prj:<id> or crm:<id>"); e.code = "bad_request"; throw e; }
+  const btype = b.btype == null ? null : String(b.btype);
+  if (btype !== null && btype !== "tm" && btype !== "milestone") { const e = new Error("btype must be 'tm', 'milestone' or null"); e.code = "bad_request"; throw e; }
+  const cur = await db.get("SELECT target_key, btype FROM billing_override WHERE target_key = ?", [key]);
+  if (btype === null) {
+    if (cur) { await db.run("DELETE FROM billing_override WHERE target_key = ?", [key]);
+      await audit(db, user.upn, "billing", key, "auto", cur.btype, null); }
+    return { btype: null };
+  }
+  if (cur) await db.run("UPDATE billing_override SET btype=?, updated_by=?, updated_at=? WHERE target_key=?", [btype, user.upn, nowIso(), key]);
+  else await db.run("INSERT INTO billing_override (target_key, btype, updated_by, updated_at) VALUES (?,?,?,?)", [key, btype, user.upn, nowIso()]);
+  if (!cur || cur.btype !== btype) await audit(db, user.upn, "billing", key, "override", cur ? cur.btype : null, btype);
+  return { btype };
+}
+
 /* ------------------------------------------------------- reference (Odoo) -- */
 /**
  * The Odoo-derived reference data the UI renders against: who exists, what they
@@ -101,13 +139,15 @@ async function putProposedHire(db, user, p) {
 async function getReference(db) {
   // Non-billable projects (and their timesheet actuals) are hidden from the app
   // — see getPlan. Their rows stay cached so the filter is reversible.
-  const [people, projects, opportunities, actuals, holidays, sync] = await Promise.all([
+  const [people, projects, opportunities, actuals, holidays, sync, milestones, overrides] = await Promise.all([
     db.all("SELECT id, name, role, dept, type, hire_date, end_date FROM ref_person WHERE active = 1 ORDER BY name"),
-    db.all("SELECT id, name, client, billable FROM ref_project WHERE active = 1 AND billable = 1 ORDER BY name"),
+    db.all("SELECT id, name, client, billable, billing_type FROM ref_project WHERE active = 1 AND billable = 1 ORDER BY name"),
     db.all("SELECT id, name, client, stage, needs_project, expected_start, expected_months FROM ref_opportunity WHERE active = 1 ORDER BY name"),
     db.all("SELECT employee_id, project_id, month, hours, bill_rate, revenue FROM ref_actual a WHERE NOT EXISTS (SELECT 1 FROM ref_project np WHERE np.billable = 0 AND np.id = a.project_id)"),
     db.all("SELECT id, name, date_from, date_to FROM ref_holiday ORDER BY date_from"),
     db.all("SELECT source, synced_at, row_count, ok, message FROM sync_state"),
+    db.all("SELECT m.id, m.project_id, m.name, m.amount, m.reached, mm.month FROM ref_milestone m LEFT JOIN milestone_month mm ON mm.milestone_id = m.id ORDER BY m.id"),
+    db.all("SELECT target_key, btype FROM billing_override"),
   ]);
   return {
     people: people.map(p => ({
@@ -118,12 +158,26 @@ async function getReference(db) {
     holidays: holidays.map(h => ({
       name: h.name || "", from: String(h.date_from).slice(0, 10), to: String(h.date_to || h.date_from).slice(0, 10),
     })),
-    projects: projects.map(p => ({ id: p.id, name: p.name, client: p.client || "", billable: !!p.billable })),
-    opportunities: opportunities.map(o => ({
-      id: o.id, name: o.name, client: o.client || "", stage: o.stage || "", needsProject: !!o.needs_project,
-      expectedStart: o.expected_start ? String(o.expected_start).slice(0, 7) : null,   // YYYY-MM
-      expectedMonths: Number(o.expected_months) || 0,
+    // Effective billing type = editor override, else what the sync detected.
+    projects: projects.map(p => {
+      const ov = overrides.find(o => o.target_key === `prj:${p.id}`);
+      return { id: p.id, name: p.name, client: p.client || "", billable: !!p.billable,
+        billingType: (ov && ov.btype) || p.billing_type || "tm" };
+    }),
+    milestones: milestones.map(m => ({
+      id: m.id, projectId: m.project_id, name: m.name || "", amount: Number(m.amount) || 0,
+      reached: !!m.reached, month: m.month ? String(m.month).slice(0, 7) : null,
     })),
+    billingOverrides: overrides.reduce((acc, o) => { acc[o.target_key] = o.btype; return acc; }, {}),
+    opportunities: opportunities.map(o => {
+      const ov = overrides.find(x => x.target_key === `crm:${o.id}`);
+      return {
+        id: o.id, name: o.name, client: o.client || "", stage: o.stage || "", needsProject: !!o.needs_project,
+        expectedStart: o.expected_start ? String(o.expected_start).slice(0, 7) : null,   // YYYY-MM
+        expectedMonths: Number(o.expected_months) || 0,
+        billingType: (ov && ov.btype) || "tm",   // no SO yet, so only an override can mark it
+      };
+    }),
     actuals: actuals.map(a => ({
       employeeId: a.employee_id, projectId: a.project_id,
       month: String(a.month).slice(0, 7), hours: Number(a.hours),
@@ -260,6 +314,12 @@ async function reassignAllocations(db, user, fromKey, toKey) {
         [pr.scenario, pr.resource_key, toKey]);
       if (dst) await db.run("DELETE FROM proposed_hire WHERE id=?", [pr.id]);
       else await db.run("UPDATE proposed_hire SET target_key=?, updated_by=?, updated_at=? WHERE id=?", [toKey, user.upn, nowIso(), pr.id]);
+    }
+    const bov = await db.get("SELECT target_key, btype FROM billing_override WHERE target_key = ?", [fromKey]);
+    if (bov) {
+      const dst = await db.get("SELECT target_key FROM billing_override WHERE target_key = ?", [toKey]);
+      if (dst) await db.run("DELETE FROM billing_override WHERE target_key = ?", [fromKey]);
+      else await db.run("UPDATE billing_override SET target_key=?, updated_by=?, updated_at=? WHERE target_key=?", [toKey, user.upn, nowIso(), fromKey]);
     }
     return { moved, merged, ratesMoved };
   });
@@ -746,4 +806,4 @@ async function getChanges(db, from, to) {
       oldValue: e.old_value == null ? null : String(e.old_value), newValue: e.new_value == null ? null : String(e.new_value) })) };
 }
 
-module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, mapOpportunityToProject, putCapacity, putRate, putTbh, deleteTbh, shiftTbhForecast, moveTbaTarget, transferHours, normalizeTbaPools, roleSlug, tbaName, normShore, putImportMap, putProposedHire, takeSnapshot, getChanges, Conflict, PastMonth, monthKey, currentMonthStart };
+module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, mapOpportunityToProject, putCapacity, putRate, putTbh, deleteTbh, shiftTbhForecast, moveTbaTarget, transferHours, normalizeTbaPools, roleSlug, tbaName, normShore, putImportMap, putProposedHire, putMilestoneMonth, putBillingType, takeSnapshot, getChanges, Conflict, PastMonth, monthKey, currentMonthStart };

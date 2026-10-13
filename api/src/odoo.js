@@ -268,18 +268,24 @@ async function readOppsByIds(odoo, ids) {
  * Σ(hours × price_unit), then bill_rate = revenue / billable hours — the true
  * rate on billed work. Hours without an SO line are non-billable: they count in
  * `hours` but neither in revenue nor in the rate.
+ *
+ * Only TIME-BILLED SO lines (qty_delivered_method='timesheet') price this way.
+ * On a fixed-fee milestone line, price_unit is the PHASE price — 8h on a
+ * $46,500 milestone is not $372,000 of revenue — so hours linked to any other
+ * delivery method count as hours only; their revenue comes from the milestone
+ * schedule, not the timesheet.
  */
 async function readActuals(odoo, from, to) {
   const rows = await odoo.searchRead("account.analytic.line",
     [["date", ">=", from], ["date", "<", to], ["project_id", "!=", false], ["employee_id", "!=", false]],
     ["employee_id", "project_id", "date", "unit_amount", "so_line"]);
 
-  // one batched fetch of every referenced SO line's unit price
+  // one batched fetch of every referenced SO line's unit price + billing method
   const solIds = [...new Set(rows.map((r) => m2oId(r.so_line)).filter(Boolean))];
   const priceBySol = new Map();
   if (solIds.length) {
-    const sols = await odoo.searchRead("sale.order.line", [["id", "in", solIds]], ["price_unit"]);
-    sols.forEach((s) => priceBySol.set(s.id, Number(s.price_unit) || 0));
+    const sols = await odoo.searchRead("sale.order.line", [["id", "in", solIds]], ["price_unit", "qty_delivered_method"]);
+    sols.forEach((s) => { if (s.qty_delivered_method === "timesheet") priceBySol.set(s.id, Number(s.price_unit) || 0); });
   }
 
   const agg = new Map();   // key -> {hours, billable, revenue}
@@ -303,6 +309,51 @@ async function readActuals(odoo, from, to) {
       revenue: r2(a.revenue),
     };
   });
+}
+
+/**
+ * Fixed-fee milestone billing: which projects are milestone-billed, and the
+ * milestones themselves. A project is milestone-billed when any sale order
+ * line backing it (via project.sale_line_id or its tasks' sale_line_id) has
+ * qty_delivered_method='milestones'. Each milestone's amount is its share
+ * (quantity_percentage, default 100%) of its SO line's value. Read-only; the
+ * month a milestone's revenue lands in is planner knowledge kept app-side.
+ */
+async function readMilestones(odoo) {
+  const sols = await odoo.searchRead("sale.order.line",
+    [["qty_delivered_method", "=", "milestones"]], ["price_unit", "product_uom_qty"]);
+  if (!sols.length) return { milestones: [], projectIds: new Set() };
+  const valBySol = new Map(sols.map((s) => [s.id, (Number(s.price_unit) || 0) * (Number(s.product_uom_qty) || 1)]));
+  const solIds = [...valBySol.keys()];
+
+  const projectIds = new Set();
+  try {
+    (await odoo.searchRead("project.project", [["sale_line_id", "in", solIds]], ["id"]))
+      .forEach((p) => projectIds.add(p.id));
+  } catch { /* field layout without project.sale_line_id — tasks still cover it */ }
+  try {
+    (await odoo.searchRead("project.task", [["sale_line_id", "in", solIds]], ["project_id"]))
+      .forEach((t) => { const id = m2oId(t.project_id); if (id) projectIds.add(id); });
+  } catch { /* ditto */ }
+
+  const avail = await odoo.hasFields("project.milestone", ["quantity_percentage"]);
+  const fields = ["name", "project_id", "sale_line_id", "is_reached",
+    ...(avail.quantity_percentage ? ["quantity_percentage"] : [])];
+  const mss = await odoo.searchRead("project.milestone", [["sale_line_id", "in", solIds]], fields);
+  const milestones = mss
+    .map((m) => {
+      const pct = (m.quantity_percentage == null || m.quantity_percentage === false) ? 1 : Number(m.quantity_percentage);
+      return {
+        id: m.id,
+        project_id: m2oId(m.project_id),
+        name: String(m.name || "").replace(/\s+/g, " ").trim(),
+        amount: Math.round(pct * (valBySol.get(m2oId(m.sale_line_id)) || 0) * 100) / 100,
+        reached: !!m.is_reached,
+      };
+    })
+    .filter((m) => m.project_id);
+  milestones.forEach((m) => projectIds.add(m.project_id));
+  return { milestones, projectIds };
 }
 
 /* ------------------------------------------------------------------ sync -- */
@@ -392,7 +443,22 @@ async function syncAll(db, odoo, { actualsFrom, actualsTo } = {}) {
   const projects = await readProjects(odoo);
   const opps = await readOpportunities(odoo);
   out.ref_person = await replaceAll(db, "ref_person", people, ["id", "name", "role", "dept", "type", "active", "hire_date", "end_date"]);
-  out.ref_project = await replaceAll(db, "ref_project", projects, ["id", "name", "client", "billable", "active"]);
+  // Milestone billing detection BEFORE the project refresh, so billing_type
+  // lands with the projects. If the read fails, keep each project's previously
+  // detected type rather than silently reverting everything to T&M.
+  let msProjects = null;
+  try {
+    const ms = await readMilestones(odoo);
+    msProjects = ms.projectIds;
+    out.ref_milestone = await replaceAll(db, "ref_milestone", ms.milestones, ["id", "project_id", "name", "amount", "reached"]);
+  } catch (e) { out.ref_milestone = `skipped (${e.message})`; }
+  if (msProjects) {
+    projects.forEach((p) => { p.billing_type = msProjects.has(p.id) ? "milestone" : "tm"; });
+  } else {
+    const prev = new Map((await db.all("SELECT id, billing_type FROM ref_project")).map((r) => [Number(r.id), r.billing_type]));
+    projects.forEach((p) => { p.billing_type = prev.get(p.id) || "tm"; });
+  }
+  out.ref_project = await replaceAll(db, "ref_project", projects, ["id", "name", "client", "billable", "active", "billing_type"]);
   // Holidays feed capacity proration; an install without the resource module
   // just keeps whatever was cached rather than failing the whole sync.
   try { out.ref_holiday = await replaceAll(db, "ref_holiday", await readHolidays(odoo), ["id", "name", "date_from", "date_to"]); }
@@ -418,6 +484,6 @@ async function syncAll(db, odoo, { actualsFrom, actualsTo } = {}) {
 module.exports = {
   Odoo, OdooError, syncAll, reconcileClosedCrm,
   readPeople, readProjects, readOpportunities, readOppsByIds, readActuals,
-  readEmploymentDates, readHolidays,
+  readEmploymentDates, readHolidays, readMilestones,
   shapePeople, m2oName, m2oId,
 };

@@ -222,6 +222,16 @@ async function handle(db, req) {
       if (!proj) return json(400, { error: "no such active billable project" });
       return json(200, await store.mapOpportunityToProject(db, user, oppId, projectId));
     }
+    if (method === "PUT" && path === "/api/milestone/month") {
+      // Place a synced milestone's revenue in a forecast month (null clears).
+      if (!Number.isInteger(Number(body.milestoneId))) return json(400, { error: "milestoneId required" });
+      if (body.month != null && !/^\d{4}-\d{2}(-\d{2})?$/.test(String(body.month))) return json(400, { error: "month must be YYYY-MM" });
+      return json(200, await store.putMilestoneMonth(db, user, body));
+    }
+    if (method === "PUT" && path === "/api/billing-type") {
+      // Force a project/opportunity's billing type; null returns to auto.
+      return json(200, await store.putBillingType(db, user, body));
+    }
     if (method === "PUT" && path === "/api/proposed") {
       // Proposed-hire name for one (TBA pool × project) pair; blank clears it.
       if (!body.resourceKey || !body.targetKey) return json(400, { error: "resourceKey and targetKey required" });

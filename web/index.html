@@ -156,6 +156,15 @@
   .badge.tbh{background:var(--tbh-wash);color:var(--tbh);}
   .badge.prj{background:var(--accent-wash);color:var(--accent-ink);}
   .badge.crm{background:var(--tbh-wash);color:var(--tbh);}
+  .badge.ms{background:var(--u-full);color:var(--u-full-ink);}
+  /* fixed-fee milestone schedule strip inside a project body */
+  .msched{display:flex;flex-direction:column;gap:5px;padding:9px 12px;border-bottom:1px solid var(--line);background:var(--surface-2);}
+  .msched .msrow{display:flex;align-items:center;gap:9px;font-size:12px;flex-wrap:wrap;}
+  .msched .msrow .nm{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .msched .msrow .amt{font-variant-numeric:tabular-nums;font-weight:600;flex:none;}
+  .msched .msrow select{font-size:11.5px;padding:3px 5px;border:1px solid var(--line-strong);border-radius:6px;background:var(--surface);color:var(--ink);}
+  .msched .mshd{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--muted);}
+  body.viewer .msched select,body.viewer .msched [data-btype]{display:none!important;}
   .badge.np{background:var(--u-full-wash,#fbe9d0);color:var(--u-full-ink,#8a4b00);border:1px solid currentColor;cursor:help;}
   .np-map{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;margin:2px 0 6px;
     background:var(--u-full-wash,#fbe9d0);border:1px solid var(--u-full-ink,#8a4b00);border-radius:8px;}
@@ -563,6 +572,8 @@ let ACTUALS = new Map();          // "empId|projId|YYYY-MM" -> hours (closed mon
 let ACT_PERSON_PROJ = new Map();  // "empId" -> Set of projId (strings) they logged actuals on
 let ACT_RATES = new Map();        // "empId|projId|YYYY-MM" -> actual realized $/hr from Odoo (billable rev / billable hrs)
 let ACT_REV = new Map();          // "empId|projId|YYYY-MM" -> actual billable revenue $ from Odoo (costing tab)
+let MILESTONES = [];              // fixed-fee milestones synced from Odoo (+ app-side month placement)
+let BILL_OV = {};                 // targetKey -> forced billing type ('tm'|'milestone')
 let SYNC = [];                    // ref_* freshness, shown in the footer
 function rebuildProjects(){ ALL_PROJECTS = PROJECTS.concat(CRM_PROJECTS); }
 function projRank(p){ return p.src==="CRM" ? 1 : 0; }                       // PRJ first, CRM second
@@ -570,6 +581,7 @@ function projLabel(p){ return (p.src==="CRM" ? "CRM - " : "PRJ - ") + p.name; }
 /* Badge for a closed CRM opp whose forecast could not be matched to a project yet.
    The forecast stays put and re-matches on the next Odoo sync. */
 function npBadge(p){ return p && p.needsProject ? ` <span class="badge np" title="This opportunity has closed in Odoo, but the sync found no matching delivery project. Its forecast stays here and will move to the project automatically on the next sync once a match is found.">needs project</span>` : ""; }
+function msBadge(p){ return p && p.billingType==="milestone" ? ` <span class="badge ms" title="Fixed-fee milestone billing — revenue comes from the milestone schedule, not hours × rate. Hours are still allocated for staffing and utilization.">Milestone</span>` : ""; }
 
 /* ---- CRM window cross-check: does the planner forecast agree with the CRM's
    expected start date and projected number of months? -------------------------
@@ -907,10 +919,25 @@ function setPairRateLocal(pid,projid,rate){
   if(rate>0) state.rates[pid][projid]=rate;
   else { delete state.rates[pid][projid]; if(!Object.keys(state.rates[pid]).length) delete state.rates[pid]; }
 }
+/* ---- Fixed-fee milestone billing -------------------------------------------
+   A milestone project's revenue is its milestone schedule, not hours × rate.
+   Hours are still allocated normally (staffing/utilization are unaffected);
+   dollars flow through an IMPLIED monthly rate = revenue placed in the month ÷
+   the project's total hours that month, so every person-level dollar view
+   attributes fixed-fee revenue pro-rata by hours and sums back to the schedule. */
+function isMsProj(projid){ const p=projById(projid); return !!(p && p.billingType==="milestone"); }
+function msOf(projid){ return MILESTONES.filter(m=>String(m.projectId)===String(projid)); }
+function msRev(projid,mkey){ let t=0; MILESTONES.forEach(m=>{ if(String(m.projectId)===String(projid) && m.month===mkey) t+=m.amount; }); return t; }
+function msProjHours(projid,mkey){ let t=0; allPeople().forEach(p=>{ t+=alloc(p.id,projid,mkey); }); return t; }   // unfiltered denominator
+function msRate(projid,mkey){ const r=msRev(projid,mkey); if(!r) return 0; const h=msProjHours(projid,mkey); return h>0? r/h : 0; }
+
 /* Month-aware rate: closed months use the ACTUAL realized rate synced from Odoo
    (billable revenue / billable hours on that person × project × month); open
-   months use the manually-entered forecast rate. */
+   months use the manually-entered forecast rate. Milestone projects use the
+   implied fixed-fee rate for ALL months — their timesheet lines carry no hourly
+   revenue in Odoo, and the schedule is the only revenue truth. */
 function rateAt(pid,projid,mkey){
+  if(isMsProj(projid)) return msRate(projid,mkey);
   const mi=MONTHS.findIndex(m=>m.key===mkey);
   if(mi>=0 && isPastMi(mi)){ const r=ACT_RATES.get(`${pid}|${projid}|${mkey}`); return r||0; }
   return pairRate(pid,projid);
@@ -984,9 +1011,12 @@ function renderKpis(){
   // use realized Odoo rates, open months forecast rates; unrated hours are
   // reported separately rather than diluting either average.
   const SHORE_RATE=100;
-  const rateFor=(mk)=>{ const b={on:{rev:0,h:0},off:{rev:0,h:0},uh:0};
+  const rateFor=(mk)=>{ const b={on:{rev:0,h:0},off:{rev:0,h:0},uh:0,msh:0};
     ppl.forEach(p=>personProjects(p.id).forEach(pr=>{
       const h=alloc(p.id,pr,mk); if(!h) return;
+      // Fixed-fee milestone hours have no hourly rate of their own — including
+      // their implied rate would distort the T&M average, so they sit out.
+      if(isMsProj(pr)){ b.msh+=h; return; }
       const r=rateAt(p.id,pr,mk);
       if(!(r>0)){ b.uh+=h; return; }
       const t=r<SHORE_RATE? b.off : b.on; t.rev+=h*r; t.h+=h;
@@ -1014,7 +1044,7 @@ function renderKpis(){
     {label:curM.label+" · avg rate onshore"+deptTag,val:(R.on.h?"$"+fmt0(Math.round(R.on.avg)):"—")+rmomF(R.on,Rp&&Rp.on),
       meta:R.on.h? `${money(R.on.rev)} over ${fmt0(R.on.h)}h at ≥ $${SHORE_RATE}/hr`+vsPrev : `no hours ≥ $${SHORE_RATE}/hr`},
     {label:curM.label+" · avg rate offshore"+deptTag,val:(R.off.h?"$"+fmt0(Math.round(R.off.avg)):"—")+rmomF(R.off,Rp&&Rp.off),
-      meta:(R.off.h? `${money(R.off.rev)} over ${fmt0(R.off.h)}h at < $${SHORE_RATE}/hr` : `no hours < $${SHORE_RATE}/hr`)+(R.uh?` · ${fmt0(R.uh)}h unrated`:"")+(R.off.h?vsPrev:"")},
+      meta:(R.off.h? `${money(R.off.rev)} over ${fmt0(R.off.h)}h at < $${SHORE_RATE}/hr` : `no hours < $${SHORE_RATE}/hr`)+(R.uh?` · ${fmt0(R.uh)}h unrated`:"")+(R.msh?` · ${fmt0(R.msh)}h fixed-fee excluded`:"")+(R.off.h?vsPrev:"")},
     {label:"Attention"+deptTag,val:over,meta:over===1?"person over-allocated":"people over-allocated"},
   ];
   document.getElementById("kpis").innerHTML=kpi.map(k=>
@@ -1219,10 +1249,12 @@ function allocLine(p,projid){
   });
   const pr8=pairRate(p.id,projid);
   return `<div class="a-line" data-line="${p.id}:${projid}">`+
-    `<div class="a-proj"><div style="min-width:0"><div class="pn" title="${esc(projLabel(pr))}${pr.client?" · "+esc(pr.client):""}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""}">${esc(projLabel(pr))}${npBadge(pr)}${mmBadge(pr)}</div>`+
+    `<div class="a-proj"><div style="min-width:0"><div class="pn" title="${esc(projLabel(pr))}${pr.client?" · "+esc(pr.client):""}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""}">${esc(projLabel(pr))}${npBadge(pr)}${msBadge(pr)}${mmBadge(pr)}</div>`+
       `<div class="cl">${esc(pr.client||"")}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""}${p.type==="tbh"&&proposedFor(p.id,projid)?` · <b>proposed: ${esc(proposedFor(p.id,projid))}</b>`:""}</div></div>`+
       actRateHint(p.id,projid)+
-      `<span class="prate" title="Forecast bill rate for ${esc(p.name)} on this project ($/hr) — closed months use the actual rate from Odoo">$<input type="number" min="0" step="1" placeholder="0" value="${pr8||""}" data-prate="${p.id}|${projid}">/hr</span>`+
+      (isMsProj(projid)
+        ? `<span class="prate" style="color:var(--muted)" title="Fixed-fee milestone project — revenue comes from the milestone schedule, not an hourly rate">fixed fee</span>`
+        : `<span class="prate" title="Forecast bill rate for ${esc(p.name)} on this project ($/hr) — closed months use the actual rate from Odoo">$<input type="number" min="0" step="1" placeholder="0" value="${pr8||""}" data-prate="${p.id}|${projid}">/hr</span>`)+
       `<button class="btn" data-xfer="${p.id}|${projid}" style="font-size:10px;padding:2px 7px;margin-left:6px;flex:none" title="Transfer all or part of these hours to another person or TBA pool…">⇄</button>`+
       `<button class="rm" data-rmproj="${p.id}|${projid}" title="Remove project" aria-label="Remove">×</button></div>`+
     `<div class="a-inputs">`+withYearCols(inputs,yTots)+`<div class="rowtot" data-rt="${p.id}:${projid}">${rt?fmtHD0(rt,lineDollars(p.id,projid)):""}</div></div>`+
@@ -1430,7 +1462,12 @@ function renderByRole(){
 /* Project-scope sums respect the department / employee-type dropdowns, so the
    Allocate·Project and By Customer views show only the filtered people's hours. */
 function projMonthTotal(projid,mkey){ let t=0; allPeople().forEach(p=>{ if(passDeptType(p)) t+=alloc(p.id,projid,mkey); }); return t; }
-function projMonthDollars(projid,mkey){ let t=0; allPeople().forEach(p=>{ if(passDeptType(p)) t+=alloc(p.id,projid,mkey)*rateAt(p.id,projid,mkey); }); return t; }
+function projMonthDollars(projid,mkey){
+  // A milestone project's month is worth its placed milestones — even when no
+  // hours are allocated that month (fixed fee is not earned by the hour).
+  if(isMsProj(projid)) return msRev(projid,mkey);
+  let t=0; allPeople().forEach(p=>{ if(passDeptType(p)) t+=alloc(p.id,projid,mkey)*rateAt(p.id,projid,mkey); }); return t;
+}
 // project-scope display value for the current mode
 function projV(projid,mkey){ return isD()? projMonthDollars(projid,mkey) : projMonthTotal(projid,mkey); }
 function fmtProj(projid,mkey){ const h=projMonthTotal(projid,mkey); if(!h) return ""; return isD()? money(projMonthDollars(projid,mkey)) : fmt(h); }
@@ -1488,7 +1525,7 @@ function projectRow(pr){
     `<div class="p-head">`+
       `<div class="p-ident" data-ptoggle="${id}">`+
         `<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>`+
-        `<div style="min-width:0"><div class="p-name" title="${esc(pr.name)}${pr.client?" · "+esc(pr.client):""}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""}">${badge} ${esc(pr.name)}${npBadge(pr)}${mmBadge(pr)}</div>`+
+        `<div style="min-width:0"><div class="p-name" title="${esc(pr.name)}${pr.client?" · "+esc(pr.client):""}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""}">${badge} ${esc(pr.name)}${npBadge(pr)}${msBadge(pr)}${mmBadge(pr)}</div>`+
         `<div class="p-role">${esc(pr.client||"—")}${pr.src==="CRM"&&pr.stage?" · "+esc(pr.stage):""} · ${people.length} resource${people.length===1?"":"s"}</div></div>`+
       `</div>`+
       `<div class="mgrid p-meta">`+withYearCols(cells,yCells)+`<div class="mcell tot" data-pyr="${id}">${yr?(isD()?money(yrD):fmt0(yr)):"·"}</div></div>`+
@@ -1515,7 +1552,29 @@ function projectBody(pr){
     const s=nextSeat(e.src.role,e.src.shore);
     return `<option value="seat:${esc(String(e.src.id))}">➕ Another open seat — ${esc(s.name)}</option>`; }).join("");
   const mapBanner=(pr.needsProject && canEdit())? npMapBanner(pr) : "";
-  return mapBanner+rows+`<div class="addproj"><select data-addres="${String(pr.id)}"><option value="">+ Add resource…</option>${opts}${seatOpts}</select></div>`;
+  const msPanel = isMsProj(pr.id)? msSchedHtml(pr) : "";
+  const btOv=BILL_OV[tgtKey(pr.id)]||"";
+  const btCtl = canEdit()? ` <label class="muted" style="font-size:11px;display:inline-flex;align-items:center;gap:5px;margin-left:10px" title="Billing model — Auto follows Odoo's sale order (milestone lines ⇒ Milestone); forcing overrides it">Billing <select data-btype="${esc(tgtKey(pr.id))}">`+
+    `<option value=""${!btOv?" selected":""}>Auto</option><option value="tm"${btOv==="tm"?" selected":""}>T&amp;M</option><option value="milestone"${btOv==="milestone"?" selected":""}>Milestone</option></select></label>` : "";
+  return mapBanner+msPanel+rows+`<div class="addproj"><select data-addres="${String(pr.id)}"><option value="">+ Add resource…</option>${opts}${seatOpts}</select>${btCtl}</div>`;
+}
+/* Fixed-fee schedule strip: the project's synced milestones, each placed into a
+   forecast month by the planner. Revenue views read exactly this placement. */
+function msMonthOpts(sel){ return `<option value="">— not scheduled —</option>`+MONTHS.map(m=>`<option value="${m.key}"${sel===m.key?" selected":""}>${m.label}</option>`).join(""); }
+function msSchedHtml(pr){
+  const list=msOf(pr.id);
+  const tot=list.reduce((s,m)=>s+m.amount,0);
+  const unsch=list.filter(m=>!m.month).length;
+  const rows=list.map(m=>`<div class="msrow">`+
+    `<span class="nm" title="${esc(m.name)}">${m.reached?"✓ ":""}${esc(m.name)||("Milestone "+m.id)}${m.reached?` <span class="muted">(reached in Odoo)</span>`:""}</span>`+
+    `<span class="amt">${money(m.amount)}</span>`+
+    `<select data-msmonth="${m.id}"${canEdit()?"":" disabled"} title="Month this milestone's revenue lands in the forecast">${msMonthOpts(m.month)}</select>`+
+  `</div>`).join("");
+  return `<div class="msched"><div class="mshd"><span class="badge ms">Milestone</span><b>Fixed-fee schedule</b> · ${money(tot)} total`+
+    (list.length? (unsch?` · <b>${unsch} unscheduled</b> — that revenue is not in the plan until placed`:" · all scheduled") : "")+
+    ` · hours below are staffing only</div>`+
+    (list.length? rows : `<div class="msrow" style="color:var(--muted)">No milestones synced from Odoo yet — they appear after the sale order's milestones exist and a sync runs.</div>`)+
+  `</div>`;
 }
 /* Editor control shown inside a closed-but-unmatched CRM opportunity: pick the
    real delivery project and move this forecast onto it. */
@@ -1540,7 +1599,9 @@ function resLine(p,pr){
     `<div class="a-proj"><div style="min-width:0"><div class="pn" title="${esc(p.name)} · ${esc(p.role||deptLabel(p.dept))}">${esc(p.name)}${badge}</div>`+
       `<div class="cl">${esc(p.role||deptLabel(p.dept))}${p.type==="tbh"&&proposedFor(p.id,pr.id)?` · <b>proposed: ${esc(proposedFor(p.id,pr.id))}</b>`:""}</div></div>`+
       actRateHint(p.id,pr.id)+
-      `<span class="prate" title="Forecast bill rate for ${esc(p.name)} on ${esc(pr.name)} ($/hr) — closed months use the actual rate from Odoo">$<input type="number" min="0" step="1" placeholder="0" value="${pr8||""}" data-prate="${p.id}|${pr.id}">/hr</span>`+
+      (isMsProj(pr.id)
+        ? `<span class="prate" style="color:var(--muted)" title="Fixed-fee milestone project — revenue comes from the milestone schedule, not an hourly rate">fixed fee</span>`
+        : `<span class="prate" title="Forecast bill rate for ${esc(p.name)} on ${esc(pr.name)} ($/hr) — closed months use the actual rate from Odoo">$<input type="number" min="0" step="1" placeholder="0" value="${pr8||""}" data-prate="${p.id}|${pr.id}">/hr</span>`)+
       `<button class="btn" data-xfer="${p.id}|${pr.id}" style="font-size:10px;padding:2px 7px;margin-left:6px;flex:none" title="Transfer all or part of these hours to another person or TBA pool…">⇄</button>`+
       `<button class="rm" data-rmres="${p.id}|${pr.id}" title="Remove resource" aria-label="Remove">×</button></div>`+
     `<div class="a-inputs">`+withYearCols(inputs,yTots)+`<div class="rowtot" data-rt="${p.id}:${pr.id}">${rt?fmtHD0(rt,lineDollars(p.id,pr.id)):""}</div></div>`+
@@ -1597,7 +1658,7 @@ function renderByCust(){
       const per=MKEYS.map(k=>projV(pr.id,k)), t=per.reduce((a,b)=>a+b,0);
       const badge=pr.src==="CRM"?`<span class="badge crm">CRM</span>`:`<span class="badge prj">PRJ</span>`;
       const ptds=per.map(h=>`<td class="mcelln">${fV(h)}</td>`);
-      body+=`<tr class="lvl2"><td class="lbl lvl2i">${badge} ${esc(pr.name)}${npBadge(pr)}`+
+      body+=`<tr class="lvl2"><td class="lbl lvl2i">${badge} ${esc(pr.name)}${npBadge(pr)}${msBadge(pr)}`+
         `${pr.src==="CRM"&&pr.stage?` <span class="muted">· ${esc(pr.stage)}</span>`:""}</td>`+
         withYearCols(ptds,yrCells(per))+`<td class="mcelln col-tot">${fV0(t)}</td></tr>`;
     });
@@ -2181,7 +2242,10 @@ function pmCell(rev,cost,extra,flag){
 /* One person's month on one project: hours, revenue and 1:1 hourly cost. */
 function pmPersonMonth(pid,projid,m){
   const h=alloc(pid,projid,m.key); if(!h) return {rev:0,cost:0,h:0,missing:false};
-  const rev = isPastMi(m.mi) ? (ACT_REV.get(`${pid}|${projid}|${m.key}`)||0) : h*rateAt(pid,projid,m.key);
+  // Milestone projects: fixed-fee revenue pro-rata by hours in every month —
+  // Odoo's timesheet revenue is deliberately 0 on milestone lines.
+  const rev = isMsProj(projid) ? h*msRate(projid,m.key)
+    : isPastMi(m.mi) ? (ACT_REV.get(`${pid}|${projid}|${m.key}`)||0) : h*rateAt(pid,projid,m.key);
   const r=costRateOf(pid), hc = r&&r.hourly!=null ? r.hourly : null;
   return { rev, cost: hc!=null? h*hc : 0, h, missing: hc==null };
 }
@@ -2542,6 +2606,20 @@ document.getElementById("viewRoot").addEventListener("change",e=>{
   if(el.dataset.addproj!==undefined && el.value){ const pid=el.dataset.addproj, projid=el.value;
     if(!state.alloc[pid]) state.alloc[pid]={}; if(!state.alloc[pid][projid]) state.alloc[pid][projid]={};
     /*saved via API*/ keepScroll(renderAllocate); // keep this person open, stay where we were
+  }
+  if(el.dataset.msmonth!==undefined){ // place a fixed-fee milestone's revenue in a month
+    if(!canEdit()) return;
+    const id=Number(el.dataset.msmonth), month=el.value||null;
+    const m=MILESTONES.find(x=>x.id===id); if(m) m.month=month;
+    api("PUT","/api/milestone/month",{milestoneId:id, month})
+      .then(()=>status("Saved")).catch(e=>{ toast("Milestone not saved: "+e.message); bootstrap(); });
+    keepScroll(render); renderKpis(); return;
+  }
+  if(el.dataset.btype!==undefined){ // force / un-force a target's billing model
+    if(!canEdit()) return;
+    api("PUT","/api/billing-type",{targetKey:el.dataset.btype, btype:el.value||null})
+      .then(()=>bootstrap()).catch(e=>{ toast("Billing type not saved: "+e.message); bootstrap(); });
+    return;
   }
   if(el.dataset.addres!==undefined && el.value){ const projid=el.dataset.addres; let pid=el.value;
     if(pid.startsWith("seat:")){ // create the next numbered TBA seat pool and staff it here
@@ -3173,10 +3251,14 @@ function applyImport(records,pmap,prmap,sheetName,rolemap){
       const M=MONTHS[mi]; if(!M) return;
       setAlloc(pid,prj,M.key, alloc(pid,prj,M.key)+r.months[mi]); applied++; });
   });
-  // bill rates from the workbook (dollars ÷ hours, weighted across a pair's SO lines) — per person × project
-  let rated=0;
+  // bill rates from the workbook (dollars ÷ hours, weighted across a pair's SO lines) — per person × project.
+  // Fixed-fee milestone projects take no hourly rates: their revenue is the
+  // milestone schedule, and a sheet-derived rate would forecast phantom dollars.
+  let rated=0, msSkipped=0;
   Object.keys(rateHrs).forEach(k=>{ if(rateHrs[k]>0 && rateDol[k]>0){ const i=k.indexOf("||"), pid=k.slice(0,i), prj=k.slice(i+2);
+    if(isMsProj(prj)){ msSkipped++; return; }
     setPairRateLocal(pid,prj,Math.round(rateDol[k]/rateHrs[k])); rated++; } });
+  if(msSkipped) toast(`${msSkipped} sheet rate${msSkipped===1?"":"s"} skipped — milestone project revenue comes from its schedule, not hourly rates.`);
   state.lastImport={sheet:sheetName,date:today(),count:applied}; bannerDismissed=false;
   closeModal(); render();
   const batch=[];
@@ -3443,10 +3525,12 @@ async function bootstrap(){
   PEOPLE = reference.people.map(p=>({ ...p, id:p.id }));
   HOLIDAYS = reference.holidays || [];
   CAL = {};   // capacity calendar depends on holidays — rebuild after every sync
-  PROJECTS = reference.projects.map(p=>({ ...p, src:"PRJ" }));
+  PROJECTS = reference.projects.map(p=>({ ...p, src:"PRJ", billingType:p.billingType||"tm" }));
   CRM_PROJECTS = reference.opportunities.map(o=>({ id:"crm-"+o.id, name:o.name, client:o.client, stage:o.stage, src:"CRM", billable:true, needsProject:!!o.needsProject,
-    expectedStart:o.expectedStart||null, expectedMonths:o.expectedMonths||0 }));
+    expectedStart:o.expectedStart||null, expectedMonths:o.expectedMonths||0, billingType:o.billingType||"tm" }));
   rebuildProjects();
+  MILESTONES = (reference.milestones||[]).map(m=>({ ...m }));
+  BILL_OV = reference.billingOverrides||{};
   SYNC = reference.sync || [];
 
   ACTUALS = new Map(); ACT_PERSON_PROJ = new Map(); ACT_RATES = new Map(); ACT_REV = new Map();

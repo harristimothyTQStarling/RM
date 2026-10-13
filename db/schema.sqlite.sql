@@ -137,7 +137,38 @@ CREATE TABLE IF NOT EXISTS ref_project (
   name     TEXT NOT NULL,
   client   TEXT NOT NULL DEFAULT '',
   billable INTEGER NOT NULL DEFAULT 1,
-  active   INTEGER NOT NULL DEFAULT 1
+  active   INTEGER NOT NULL DEFAULT 1,
+  -- 'tm' | 'milestone', detected from the sale order lines backing the project
+  -- (qty_delivered_method='milestones'); billing_override can force either.
+  billing_type TEXT NOT NULL DEFAULT 'tm'
+);
+
+-- Fixed-fee milestones synced read-only from Odoo (project.milestone joined to
+-- its sale order line for the amount). Which MONTH a milestone's revenue lands
+-- in is planner knowledge, not Odoo's — that lives in milestone_month below.
+CREATE TABLE IF NOT EXISTS ref_milestone (
+  id         INTEGER PRIMARY KEY,         -- odoo project_milestone.id
+  project_id INTEGER NOT NULL,
+  name       TEXT NOT NULL DEFAULT '',
+  amount     REAL NOT NULL DEFAULT 0,     -- quantity_percentage x line price x qty
+  reached    INTEGER NOT NULL DEFAULT 0
+);
+
+-- App-owned placement of a synced milestone into a forecast month.
+CREATE TABLE IF NOT EXISTS milestone_month (
+  milestone_id INTEGER PRIMARY KEY,       -- ref_milestone.id
+  month        TEXT NOT NULL,             -- 'YYYY-MM-01'
+  updated_by   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
+);
+
+-- Editor override of a target's billing type ('tm' | 'milestone'); absence
+-- means "use what the sync detected". Works for projects AND CRM opps.
+CREATE TABLE IF NOT EXISTS billing_override (
+  target_key TEXT PRIMARY KEY,            -- 'prj:128' | 'crm:222'
+  btype      TEXT NOT NULL,
+  updated_by TEXT NOT NULL,
+  updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS ref_opportunity (

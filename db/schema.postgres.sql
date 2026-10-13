@@ -177,7 +177,38 @@ CREATE TABLE IF NOT EXISTS ref_project (
   name      VARCHAR(256) NOT NULL,
   client    VARCHAR(256) NOT NULL DEFAULT '',
   billable  SMALLINT     NOT NULL DEFAULT 1,
-  active    SMALLINT     NOT NULL DEFAULT 1
+  active    SMALLINT     NOT NULL DEFAULT 1,
+  -- 'tm' | 'milestone', detected from the sale order lines backing the project
+  -- (qty_delivered_method='milestones'); billing_override can force either.
+  billing_type VARCHAR(16) NOT NULL DEFAULT 'tm'
+);
+
+-- Fixed-fee milestones synced read-only from Odoo (project.milestone joined to
+-- its sale order line for the amount). Which MONTH a milestone's revenue lands
+-- in is planner knowledge, not Odoo's — that lives in milestone_month below.
+CREATE TABLE IF NOT EXISTS ref_milestone (
+  id         INT          PRIMARY KEY,           -- odoo project_milestone.id
+  project_id INT          NOT NULL,
+  name       VARCHAR(256) NOT NULL DEFAULT '',
+  amount     NUMERIC(12,2) NOT NULL DEFAULT 0,   -- quantity_percentage x line price x qty
+  reached    SMALLINT     NOT NULL DEFAULT 0
+);
+
+-- App-owned placement of a synced milestone into a forecast month.
+CREATE TABLE IF NOT EXISTS milestone_month (
+  milestone_id INT         PRIMARY KEY,          -- ref_milestone.id
+  month        DATE        NOT NULL,
+  updated_by   VARCHAR(256) NOT NULL,
+  updated_at   TIMESTAMPTZ NOT NULL
+);
+
+-- Editor override of a target's billing type ('tm' | 'milestone'); absence
+-- means "use what the sync detected". Works for projects AND CRM opps.
+CREATE TABLE IF NOT EXISTS billing_override (
+  target_key VARCHAR(64)  PRIMARY KEY,           -- 'prj:128' | 'crm:222'
+  btype      VARCHAR(16)  NOT NULL,
+  updated_by VARCHAR(256) NOT NULL,
+  updated_at TIMESTAMPTZ  NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS ref_opportunity (
@@ -241,6 +272,7 @@ CREATE TABLE IF NOT EXISTS cost_rate (
   updated_at  TIMESTAMPTZ   NOT NULL DEFAULT now()
 );
 ALTER TABLE cost_rate ADD COLUMN IF NOT EXISTS annual NUMERIC(12,2);
+ALTER TABLE ref_project ADD COLUMN IF NOT EXISTS billing_type VARCHAR(16) NOT NULL DEFAULT 'tm';
 
 -- Daily snapshot of the baseline plan (allocations + pair rates), written by
 -- the nightly job and lazily on demand. The Changes view diffs two snapshot
