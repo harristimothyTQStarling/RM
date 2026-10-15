@@ -186,6 +186,17 @@ function scheduleNightlySync() {
   } catch (e) { console.error(`  tba    : pool normalization FAILED: ${e.message}`); }
   let odooMsg = "skipped";
   try { odooMsg = await initialSyncIfEmpty(); } catch (e) { odooMsg = `initial sync FAILED: ${e.message}`; console.error(odooMsg); }
+  // Heal names for ids the plan/snapshots reference but the ref cache lost
+  // (departed people, closed opps) without waiting for the next sync. Cheap
+  // and idempotent: no missing ids means no Odoo call at all.
+  try {
+    const { Odoo, backfillNames } = require("./odoo");
+    const odoo = new Odoo();
+    if (odoo.configured) {
+      const b = await backfillNames(db, odoo);
+      if (b.people || b.opportunities) console.log(`  names  : backfilled ${b.people} people, ${b.opportunities} opportunities`);
+    }
+  } catch (e) { console.error(`  names  : backfill FAILED (next sync retries): ${e.message}`); }
   const syncMsg = scheduleNightlySync();
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`resource-planner listening on :${PORT}`);

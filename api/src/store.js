@@ -808,23 +808,23 @@ async function getChanges(db, from, to) {
   const rk = new Set(), tk = new Set();
   for (const c of changes) { rk.add(c.resourceKey); tk.add(c.targetKey); }
   for (const e of events) { const p = String(e.entity_key).split("|"); if (p.length >= 4) { rk.add(p[1]); tk.add(p[2]); } }
-  const labels = {};
+  const labels = {}, clients = {};
   const idsOf = (set, pre) => [...set].filter(k => k.startsWith(pre)).map(k => parseInt(k.slice(pre.length), 10)).filter(Number.isInteger);
-  const fill = async (ids, table, pre) => {
+  const fill = async (ids, table, pre, withClient) => {
     if (!ids.length) return;
-    const rows = await db.all(`SELECT id, name FROM ${table} WHERE id IN (${ids.map(() => "?").join(",")})`, ids);
-    rows.forEach(r => { labels[pre + r.id] = r.name; });
+    const rows = await db.all(`SELECT id, name${withClient ? ", client" : ""} FROM ${table} WHERE id IN (${ids.map(() => "?").join(",")})`, ids);
+    rows.forEach(r => { labels[pre + r.id] = r.name; if (withClient && r.client) clients[pre + r.id] = r.client; });
   };
   await fill(idsOf(rk, "emp:"), "ref_person", "emp:");
-  await fill(idsOf(tk, "prj:"), "ref_project", "prj:");
-  await fill(idsOf(tk, "crm:"), "ref_opportunity", "crm:");
+  await fill(idsOf(tk, "prj:"), "ref_project", "prj:", true);
+  await fill(idsOf(tk, "crm:"), "ref_opportunity", "crm:", true);
   const tbhKeys = [...rk].filter(k => k.startsWith("tbh:"));
   if (tbhKeys.length) {
     const rows = await db.all(`SELECT tbh_key, name FROM tbh WHERE tbh_key IN (${tbhKeys.map(() => "?").join(",")})`, tbhKeys.map(k => k.slice(4)));
     rows.forEach(r => { labels["tbh:" + r.tbh_key] = r.name; });
   }
 
-  return { fromSnap, toSnap, changes, labels,
+  return { fromSnap, toSnap, changes, labels, clients,
     events: events.map(e => ({ at: String(e.at), actor: e.actor, key: e.entity_key, action: e.action,
       oldValue: e.old_value == null ? null : String(e.old_value), newValue: e.new_value == null ? null : String(e.new_value) })) };
 }
