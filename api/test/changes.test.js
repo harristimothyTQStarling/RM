@@ -82,6 +82,32 @@ test("labels name departed people and closed opportunities (inactive rows)", asy
   assert.equal(r.body.labels["crm:222"], "Advocate - SPM", "closed opportunity still has a name");
 });
 
+test("a CRM -> project conversion reads as a zero-net transfer, not add+remove", async () => {
+  const db = fresh();
+  db.run("INSERT INTO ref_opportunity (id,name,client,stage,active) VALUES (9,'Advocate Health - BCM','Advocate','Won',1)");
+  db.run("INSERT INTO ref_project (id,name,client,billable,active) VALUES (777,'Advocate Health - BCM Design','Advocate Health, Inc.',1,1)");
+  const put = (tgt, mon, hours, version) => call(db, "PUT", "/api/allocation",
+    { resourceKey: "emp:1", targetKey: tgt, month: mon, hours, version }, TIM);
+  assert.equal((await put("crm:9", fm(1), 100, 0)).status, 200);
+  assert.equal((await put("crm:9", fm(2), 60, 0)).status, 200);
+  await store.takeSnapshot(db, yesterday());
+
+  // The win converts: forecast moves crm:9 -> prj:777 (audited reassign + map)...
+  assert.equal((await call(db, "POST", "/api/opportunity/map", { oppId: 9, projectId: 777 }, TIM)).status, 200);
+  // ...and afterwards someone genuinely adds 10h to the first month.
+  db.run("UPDATE allocation SET hours = 110 WHERE target_key='prj:777' AND month = ?", [`${fm(1)}-01`]);
+
+  const r = await call(db, "GET", "/api/changes", null, TIM, { from: yesterday(), to: iso(new Date()) });
+  assert.equal(r.status, 200);
+  const trs = r.body.transfers.map(t => [t.fromKey, t.toKey, t.month, t.hours]).sort();
+  assert.deepEqual(trs, [["crm:9", "prj:777", fm(1), 100], ["crm:9", "prj:777", fm(2), 60]],
+    "the carried-over hours are transfers");
+  assert.deepEqual(r.body.changes.map(c => [c.targetKey, c.month, c.before, c.after]),
+    [["prj:777", fm(1), 0, 10]], "only the genuine post-move edit remains a change");
+  assert.equal(r.body.labels["crm:9"], "Advocate Health - BCM");
+  assert.equal(r.body.labels["prj:777"], "Advocate Health - BCM Design");
+});
+
 test("a range before any snapshot falls back to the earliest one", async () => {
   const db = fresh();
   await call(db, "PUT", "/api/allocation", { resourceKey: "emp:1", targetKey: "prj:9", month: fm(1), hours: 25, version: 0 }, TIM);

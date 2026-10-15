@@ -309,6 +309,8 @@
   .chgchip{display:inline-block;border-radius:999px;padding:1px 8px;margin:1px 4px 1px 0;font-size:10.5px;font-variant-numeric:tabular-nums;background:var(--surface-3);color:var(--ink-2);}
   .chgchip.up{background:var(--u-good);color:var(--u-good-ink);}
   .chgchip.down{background:var(--u-over);color:var(--u-over-ink);}
+  .chgchip.nt{background:var(--u-none);color:var(--u-none-ink);}
+  .badge.mv{background:var(--tbh-wash);color:var(--tbh);}
   table.pivot tr.lvl2 td{background:var(--surface-2);}
   table.pivot tr.lvl2 td.lbl{background:var(--surface-2);}
   table.pivot tr.lvl3 td{background:var(--surface-3);}
@@ -2419,6 +2421,26 @@ function renderChanges(){
   const projs=[...byProj.values()].sort((a,b)=>Math.abs(b.netD)-Math.abs(a.netD)||Math.abs(b.net)-Math.abs(a.net));
   const tot=projs.reduce((t,g)=>({add:t.add+g.add,rem:t.rem+g.rem,net:t.net+g.net,netD:t.netD+g.netD}),{add:0,rem:0,net:0,netD:0});
 
+  // CRM -> project conversions arrive as zero-net TRANSFERS from the server:
+  // the won deal's forecast carried onto the delivery project unchanged.
+  const tname=(key)=>{ const pr=projById(fromTgtKey(key)); return pr? pr.name : (LBL[key]||key); };
+  const byMove=new Map();
+  (CHG.data.transfers||[]).map(t=>{
+    const pid=fromResKey(t.resourceKey), p=personById(pid);
+    return {...t, pid:String(pid), p, pName:p?p.name:(LBL[t.resourceKey]||String(pid))};
+  }).filter(t=>!(t.p && !passDeptType(t.p)))
+    .filter(t=>{ if(!q) return true;
+      return (tname(t.toKey)+" "+tname(t.fromKey)+" "+t.pName).toLowerCase().includes(q); })
+    .forEach(t=>{
+      const k=`${t.fromKey}|${t.toKey}`;
+      const g=byMove.get(k)||{fromKey:t.fromKey,toKey:t.toKey,hours:0,people:new Map()};
+      g.hours+=t.hours;
+      const pg=g.people.get(t.pid)||{pName:t.pName,p:t.p,pid:t.pid,hours:0,months:[]};
+      pg.hours+=t.hours; pg.months.push(t); g.people.set(t.pid,pg);
+      byMove.set(k,g);
+    });
+  const moves=[...byMove.values()].sort((a,b)=>b.hours-a.hours);
+
   // One classification per person-line, shared by the row badges AND the
   // digest above the grid so they can never disagree.
   const classify=(pg)=>{
@@ -2450,6 +2472,7 @@ function renderChanges(){
   }));
   const capList=(arr,render)=>arr.slice(0,3).map(render).join(" · ")+(arr.length>3?` <span class="muted">+ ${arr.length-3} more</span>`:"");
   const sumRows=[];
+  if(moves.length) sumRows.push(`<div class="csrow"><span class="cstag sh">${moves.length} transferred</span><span>${capList(moves,m=>`<b>${esc(tname(m.toKey))}</b> — won-deal forecast moved to the project (${fmt(m.hours)}h, ${m.people.size} ${m.people.size===1?"person":"people"}, no net change)`)}</span></div>`);
   const grew=projs.filter(g=>g.net>0.05).sort((a,b)=>b.netD-a.netD||b.net-a.net);
   const shrank=projs.filter(g=>g.net<-0.05).sort((a,b)=>a.netD-b.netD||a.net-b.net);
   if(grew.length) sumRows.push(`<div class="csrow"><span class="cstag up">grew</span><span>${capList(grew,g=>`<b>${esc(g.prName)}</b> ${sgnH(g.net)} (${sgnD(g.netD)})`)}</span></div>`);
@@ -2458,12 +2481,12 @@ function renderChanges(){
   if(remA.length) sumRows.push(`<div class="csrow"><span class="cstag rm">${remA.length} removed</span><span>${capList(remA.sort((a,b)=>a.pg.net-b.pg.net),x=>`<b>${esc(x.pg.pName)}</b> off ${esc(x.g.prName)} (−${fmt(-x.pg.net)}h)`)}</span></div>`);
   if(shf.length) sumRows.push(`<div class="csrow"><span class="cstag sh">${shf.length} shifted</span><span>${capList(shf.sort((a,b)=>b.c.moved-a.c.moved),x=>`<b>${esc(x.pg.pName)}</b> · ${esc(x.g.prName)} — ${fmt(x.c.moved)}h ${monLab(x.c.from)} → ${monLab(x.c.to)}`)}</span></div>`);
   if(edits.length) sumRows.push(`<div class="csrow"><span class="cstag ed">${edits.length} adjusted</span><span class="muted">other lines with hour changes (see the grid below)</span></div>`);
-  const digest = projs.length? `<div class="chgsum">${sumRows.join("")}</div>` : "";
+  const digest = (projs.length||moves.length)? `<div class="chgsum">${sumRows.join("")}</div>` : "";
   const chips=(pg)=>pg.months.slice().sort((a,b)=>a.month.localeCompare(b.month))
     .map(m=>`<span class="chgchip ${m.d>0?"up":"down"}" title="${monLab(m.month)}: ${fmt(m.before)}h → ${fmt(m.after)}h">${monLab(m.month)} ${m.d>0?"+":""}${fmt(m.d)}</span>`).join("");
 
   let body="";
-  if(!projs.length) body=`<tr><td colspan="6" class="muted" style="padding:16px">No allocation changes between ${esc(CHG.data.fromSnap)} and ${esc(CHG.data.toSnap)} match the filters.</td></tr>`;
+  if(!projs.length && !moves.length) body=`<tr><td colspan="6" class="muted" style="padding:16px">No allocation changes between ${esc(CHG.data.fromSnap)} and ${esc(CHG.data.toSnap)} match the filters.</td></tr>`;
   projs.forEach(g=>{
     const isOpen=chgOpen.has(g.jid);
     const badge=g.src==="CRM"?`<span class="badge crm">CRM</span>`:`<span class="badge prj">PRJ</span>`;
@@ -2479,6 +2502,23 @@ function renderChanges(){
         `<div style="padding:2px 0 2px 0">${chips(pg)}</div></td>`+
         `<td class="num up2">${pg.add?"+"+fmt(pg.add):"·"}</td><td class="num dn2">${pg.rem?"−"+fmt(pg.rem):"·"}</td>`+
         `<td class="num">${sgnH(pg.net)}</td><td class="num">${sgnD(pg.netD)}</td><td></td></tr>`;
+    });
+  });
+  // zero-net conversion groups at the bottom — recorded, but not noise
+  moves.forEach(m=>{
+    const key="mv:"+m.fromKey+"|"+m.toKey;
+    const isOpen=chgOpen.has(key);
+    body+=`<tr class="lvl1${isOpen?" open":""}" data-chg="${esc(key)}"><td class="lbl"><span class="tw">${chev()}</span><span class="badge mv">⇄ transfer</span> <b>${esc(tname(m.toKey))}</b>`+
+      `<div class="muted" style="font-size:11px;padding-left:18px">won-deal forecast moved CRM → project · ${fmt(m.hours)}h carried over unchanged · ${m.people.size} ${m.people.size===1?"person":"people"}</div></td>`+
+      `<td class="num">·</td><td class="num">·</td><td class="num"><b>0h</b></td><td class="num"><b>$0</b></td><td></td></tr>`;
+    if(!isOpen) return;
+    [...m.people.values()].sort((a,b)=>b.hours-a.hours).forEach(pg=>{
+      const cb=pg.p? (pg.p.type==="contractor"?" <span class='badge contractor'>Con</span>":pg.p.type==="tbh"?" <span class='badge tbh'>TBA</span>":"") : "";
+      const mchips=pg.months.slice().sort((a,b)=>a.month.localeCompare(b.month))
+        .map(t=>`<span class="chgchip nt" title="${monLab(t.month)}: ${fmt(t.hours)}h carried over">${monLab(t.month)} ${fmt(t.hours)}</span>`).join("");
+      body+=`<tr class="lvl2"><td class="lbl lvl2i">${esc(pg.pName)}${cb} <span class="muted">${fmt(pg.hours)}h moved</span>`+
+        `<div style="padding:2px 0 2px 0">${mchips}</div></td>`+
+        `<td class="num">·</td><td class="num">·</td><td class="num">0h</td><td class="num">$0</td><td></td></tr>`;
     });
   });
 
@@ -2522,6 +2562,12 @@ function exportChangesCSV(){
     const rate=(p&&pr)? rateAt(pid,jid,c.month):(c.rate||0);
     lines.push([prName, pr?pr.client||"":(LBLC[c.targetKey]||""), src, p?p.name:(LBL[c.resourceKey]||pid), p?p.type:"",
       c.month, c.before, c.after, Math.round((c.after-c.before)*10)/10, rate, Math.round((c.after-c.before)*rate)].map(csvEsc).join(","));
+  });
+  (CHG.data.transfers||[]).forEach(t=>{
+    const pid=fromResKey(t.resourceKey), p=personById(pid);
+    const toJid=fromTgtKey(t.toKey), toPr=projById(toJid);
+    lines.push([toPr?projLabel(toPr):("PRJ - "+(LBL[t.toKey]||toJid)), toPr?toPr.client||"":(LBLC[t.toKey]||""), "CRM→PRJ",
+      p?p.name:(LBL[t.resourceKey]||pid), p?p.type:"", t.month, t.hours, t.hours, 0, "", 0].map(csvEsc).join(","));
   });
   download(`tqs-plan-changes-${CHG.data.fromSnap}-to-${CHG.data.toSnap}.csv`, lines.join("\n"), "text/csv");
   toast("Change log exported");

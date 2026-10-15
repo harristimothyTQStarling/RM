@@ -797,16 +797,55 @@ async function getChanges(db, from, to) {
     changes.push({ resourceKey, targetKey, month, before, after,
       rate: (b && b.rate) || (a && a.rate) || 0 });
   }
+  const winFrom = `${fromSnap}T00:00:00`, winTo = `${to || today}T23:59:59.999Z`;
   const events = await db.all(
     `SELECT at, actor, entity_key, action, old_value, new_value FROM audit_log
      WHERE entity = 'allocation' AND at >= ? AND at <= ? ORDER BY at DESC LIMIT 1000`,
-    [`${fromSnap}T00:00:00`, `${to || today}T23:59:59.999Z`]);
+    [winFrom, winTo]);
+
+  // ---- fold CRM -> project conversions into TRANSFERS, not add+remove ------
+  // A won deal's forecast moving onto its delivery project is a key change,
+  // not a plan change: the hours are the same work. The move is audited
+  // ('reassign' rows and the opportunity 'map' entry both carry from -> to),
+  // so pair each drop on the old key with the matching gain on the new key for
+  // the same person + month and report the overlap as a transfer; only what
+  // does NOT pair up (a genuine edit made during or after the move) remains a
+  // change. Queried directly rather than from `events` (that list is capped).
+  const movedPairs = await db.all(
+    `SELECT DISTINCT old_value AS f, new_value AS t FROM audit_log
+     WHERE entity = 'allocation' AND action = 'reassign' AND at >= ? AND at <= ?
+     UNION SELECT DISTINCT old_value, new_value FROM audit_log
+     WHERE entity = 'opportunity' AND action = 'map' AND at >= ? AND at <= ?`,
+    [winFrom, winTo, winFrom, winTo]);
+  const transfers = [];
+  {
+    const keyRx = /^(prj|crm):\d+$/;
+    const idx = new Map();
+    changes.forEach(c => idx.set(`${c.resourceKey}|${c.targetKey}|${c.month}`, c));
+    for (const mp of movedPairs) {
+      const fromKey = String(mp.f || ""), toKey = String(mp.t || "");
+      if (!keyRx.test(fromKey) || !keyRx.test(toKey) || fromKey === toKey) continue;
+      for (const c of changes) {
+        if (c.targetKey !== fromKey) continue;
+        const drop = c.before - c.after; if (drop <= 0.001) continue;
+        const b = idx.get(`${c.resourceKey}|${toKey}|${c.month}`); if (!b) continue;
+        const gain = b.after - b.before; if (gain <= 0.001) continue;
+        const moved = Math.round(Math.min(drop, gain) * 100) / 100;
+        c.before -= moved; b.after -= moved;
+        transfers.push({ resourceKey: c.resourceKey, fromKey, toKey, month: c.month, hours: moved });
+      }
+    }
+    if (transfers.length)
+      for (let i = changes.length - 1; i >= 0; i--)
+        if (Math.abs(changes[i].before - changes[i].after) < 0.001) changes.splice(i, 1);
+  }
 
   // Names for every key the window touches, resolved server-side REGARDLESS of
   // active state: history outlives the roster — a departed person or a closed
   // opportunity drops out of the UI's reference but must still read by name.
   const rk = new Set(), tk = new Set();
   for (const c of changes) { rk.add(c.resourceKey); tk.add(c.targetKey); }
+  for (const t of transfers) { rk.add(t.resourceKey); tk.add(t.fromKey); tk.add(t.toKey); }
   for (const e of events) { const p = String(e.entity_key).split("|"); if (p.length >= 4) { rk.add(p[1]); tk.add(p[2]); } }
   const labels = {}, clients = {};
   const idsOf = (set, pre) => [...set].filter(k => k.startsWith(pre)).map(k => parseInt(k.slice(pre.length), 10)).filter(Number.isInteger);
@@ -824,7 +863,7 @@ async function getChanges(db, from, to) {
     rows.forEach(r => { labels["tbh:" + r.tbh_key] = r.name; });
   }
 
-  return { fromSnap, toSnap, changes, labels, clients,
+  return { fromSnap, toSnap, changes, transfers, labels, clients,
     events: events.map(e => ({ at: String(e.at), actor: e.actor, key: e.entity_key, action: e.action,
       oldValue: e.old_value == null ? null : String(e.old_value), newValue: e.new_value == null ? null : String(e.new_value) })) };
 }
