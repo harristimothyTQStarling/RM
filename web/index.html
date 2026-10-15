@@ -157,6 +157,16 @@
   .badge.prj{background:var(--accent-wash);color:var(--accent-ink);}
   .badge.crm{background:var(--tbh-wash);color:var(--tbh);}
   .badge.ms{background:var(--u-full);color:var(--u-full-ink);}
+  /* Changes tab: plain-language digest above the grid */
+  .chgsum{margin:8px 16px 10px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2);display:flex;flex-direction:column;gap:6px;font-size:12.3px;}
+  .chgsum .csrow{display:flex;gap:9px;align-items:baseline;flex-wrap:wrap;}
+  .chgsum .cstag{flex:none;font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:1px 8px;border-radius:999px;white-space:nowrap;}
+  .cstag.up{background:var(--u-good);color:var(--u-good-ink);}
+  .cstag.dn{background:var(--u-over);color:var(--u-over-ink);}
+  .cstag.nw{background:var(--accent-wash);color:var(--accent-ink);}
+  .cstag.rm{background:var(--u-full);color:var(--u-full-ink);}
+  .cstag.sh{background:var(--tbh-wash);color:var(--tbh);}
+  .cstag.ed{background:var(--u-none);color:var(--u-none-ink);}
   /* fixed-fee milestone schedule strip inside a project body */
   .msched{display:flex;flex-direction:column;gap:5px;padding:9px 12px;border-bottom:1px solid var(--line);background:var(--surface-2);}
   .msched .msrow{display:flex;align-items:center;gap:9px;font-size:12px;flex-wrap:wrap;}
@@ -2408,16 +2418,46 @@ function renderChanges(){
   const projs=[...byProj.values()].sort((a,b)=>Math.abs(b.netD)-Math.abs(a.netD)||Math.abs(b.net)-Math.abs(a.net));
   const tot=projs.reduce((t,g)=>({add:t.add+g.add,rem:t.rem+g.rem,net:t.net+g.net,netD:t.netD+g.netD}),{add:0,rem:0,net:0,netD:0});
 
-  const lineNote=(pg)=>{
-    if(pg.add>0 && pg.rem===0 && pg.months.every(m=>m.before===0)) return `<span class="badge prj">new</span>`;
-    if(pg.rem>0 && pg.add===0 && pg.months.every(m=>m.after===0)) return `<span class="badge np">removed</span>`;
+  // One classification per person-line, shared by the row badges AND the
+  // digest above the grid so they can never disagree.
+  const classify=(pg)=>{
+    if(pg.add>0 && pg.rem===0 && pg.months.every(m=>m.before===0)) return {kind:"new"};
+    if(pg.rem>0 && pg.add===0 && pg.months.every(m=>m.after===0)) return {kind:"removed"};
     const neg=pg.months.filter(m=>m.d<0).sort((a,b)=>a.d-b.d), pos=pg.months.filter(m=>m.d>0).sort((a,b)=>b.d-a.d);
     if(neg.length&&pos.length){
       const moved=Math.min(-neg.reduce((s,m)=>s+m.d,0), pos.reduce((s,m)=>s+m.d,0));
-      if(moved>0) return `<span class="muted">⇄ ${fmt(moved)}h moved ${monLab(neg[0].month)} → ${monLab(pos[0].month)}${neg.length+pos.length>2?" (+ more)":""}</span>`;
+      if(moved>0) return {kind:"shift",moved,from:neg[0].month,to:pos[0].month,more:neg.length+pos.length>2};
     }
+    return {kind:"edit"};
+  };
+  const lineNote=(pg)=>{
+    const c=classify(pg);
+    if(c.kind==="new") return `<span class="badge prj">new</span>`;
+    if(c.kind==="removed") return `<span class="badge np">removed</span>`;
+    if(c.kind==="shift") return `<span class="muted">⇄ ${fmt(c.moved)}h moved ${monLab(c.from)} → ${monLab(c.to)}${c.more?" (+ more)":""}</span>`;
     return "";
   };
+
+  /* Plain-language digest of the window, rendered above the grid. */
+  const newA=[],remA=[],shf=[],edits=[];
+  projs.forEach(g=>[...g.people.values()].forEach(pg=>{
+    const c=classify(pg);
+    if(c.kind==="new") newA.push({g,pg});
+    else if(c.kind==="removed") remA.push({g,pg});
+    else if(c.kind==="shift") shf.push({g,pg,c});
+    else edits.push({g,pg});
+  }));
+  const capList=(arr,render)=>arr.slice(0,3).map(render).join(" · ")+(arr.length>3?` <span class="muted">+ ${arr.length-3} more</span>`:"");
+  const sumRows=[];
+  const grew=projs.filter(g=>g.net>0.05).sort((a,b)=>b.netD-a.netD||b.net-a.net);
+  const shrank=projs.filter(g=>g.net<-0.05).sort((a,b)=>a.netD-b.netD||a.net-b.net);
+  if(grew.length) sumRows.push(`<div class="csrow"><span class="cstag up">grew</span><span>${capList(grew,g=>`<b>${esc(g.prName)}</b> ${sgnH(g.net)} (${sgnD(g.netD)})`)}</span></div>`);
+  if(shrank.length) sumRows.push(`<div class="csrow"><span class="cstag dn">shrank</span><span>${capList(shrank,g=>`<b>${esc(g.prName)}</b> ${sgnH(g.net)} (${sgnD(g.netD)})`)}</span></div>`);
+  if(newA.length) sumRows.push(`<div class="csrow"><span class="cstag nw">${newA.length} new</span><span>${capList(newA.sort((a,b)=>b.pg.net-a.pg.net),x=>`<b>${esc(x.pg.pName)}</b> → ${esc(x.g.prName)} (+${fmt(x.pg.net)}h)`)}</span></div>`);
+  if(remA.length) sumRows.push(`<div class="csrow"><span class="cstag rm">${remA.length} removed</span><span>${capList(remA.sort((a,b)=>a.pg.net-b.pg.net),x=>`<b>${esc(x.pg.pName)}</b> off ${esc(x.g.prName)} (−${fmt(-x.pg.net)}h)`)}</span></div>`);
+  if(shf.length) sumRows.push(`<div class="csrow"><span class="cstag sh">${shf.length} shifted</span><span>${capList(shf.sort((a,b)=>b.c.moved-a.c.moved),x=>`<b>${esc(x.pg.pName)}</b> · ${esc(x.g.prName)} — ${fmt(x.c.moved)}h ${monLab(x.c.from)} → ${monLab(x.c.to)}`)}</span></div>`);
+  if(edits.length) sumRows.push(`<div class="csrow"><span class="cstag ed">${edits.length} adjusted</span><span class="muted">other lines with hour changes (see the grid below)</span></div>`);
+  const digest = projs.length? `<div class="chgsum">${sumRows.join("")}</div>` : "";
   const chips=(pg)=>pg.months.slice().sort((a,b)=>a.month.localeCompare(b.month))
     .map(m=>`<span class="chgchip ${m.d>0?"up":"down"}" title="${monLab(m.month)}: ${fmt(m.before)}h → ${fmt(m.after)}h">${monLab(m.month)} ${m.d>0?"+":""}${fmt(m.d)}</span>`).join("");
 
@@ -2461,6 +2501,7 @@ function renderChanges(){
       `<span>Removed <b style="color:var(--u-over-ink)">−${fmt(tot.rem)}h</b></span>`+
       `<span>Net <b>${sgnH(tot.net)}</b> · <b>${sgnD(tot.netD)}</b></span>`+
       `<span>${projs.length} project${projs.length===1?"":"s"} touched</span></div>`+
+    digest+
     `<div class="scroll" style="max-height:unset"><table class="pivot chgtbl"><thead><tr>`+
       `<th class="lbl">Project · person</th><th class="num">Added</th><th class="num">Removed</th><th class="num">Net h</th><th class="num">Net $</th><th></th></tr></thead>`+
       `<tbody>${body}</tbody></table></div>`+
