@@ -62,6 +62,26 @@ test("takeSnapshot is idempotent per day and rate-stamped", async () => {
   assert.equal(Number(rows[0].rate), 150, "pair rate captured on the snapshot row");
 });
 
+test("labels name departed people and closed opportunities (inactive rows)", async () => {
+  const db = fresh();
+  // History references ids the live roster no longer carries: both rows are
+  // inactive, exactly as the mark-inactive sync leaves them.
+  db.run("INSERT INTO ref_person (id,name,role,dept,type,active) VALUES (155,'Donald Lort','','','contractor',0)");
+  db.run("INSERT INTO ref_opportunity (id,name,client,stage,active) VALUES (222,'Advocate - SPM','Advocate','Won',0)");
+  const y = yesterday(), t = iso(new Date());
+  db.run("INSERT INTO plan_snapshot (snap_date,resource_key,target_key,month,hours,rate) VALUES (?,?,?,?,?,?)",
+    [y, "emp:155", "crm:222", "2026-11-01", 100, 150]);
+  // one live row so the lazy "today" snapshot is non-empty (a real plan never is)
+  db.run("INSERT INTO allocation (scenario,resource_key,target_key,month,hours,updated_by,updated_at,version) VALUES ('baseline','emp:1','prj:9',?,10,'x','2026-01-01',1)", [`${fm(1)}-01`]);
+
+  const r = await call(db, "GET", "/api/changes", null, TIM, { from: y, to: t });
+  assert.equal(r.status, 200);
+  const c = r.body.changes.find(x => x.resourceKey === "emp:155");
+  assert.ok(c && c.before === 100 && c.after === 0, "the removal is in the diff");
+  assert.equal(r.body.labels["emp:155"], "Donald Lort", "departed person still has a name");
+  assert.equal(r.body.labels["crm:222"], "Advocate - SPM", "closed opportunity still has a name");
+});
+
 test("a range before any snapshot falls back to the earliest one", async () => {
   const db = fresh();
   await call(db, "PUT", "/api/allocation", { resourceKey: "emp:1", targetKey: "prj:9", month: fm(1), hours: 25, version: 0 }, TIM);

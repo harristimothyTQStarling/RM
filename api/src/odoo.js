@@ -357,6 +357,71 @@ async function readMilestones(odoo) {
 }
 
 /* ------------------------------------------------------------------ sync -- */
+/**
+ * Merge a fresh Odoo read into an identity table (people / projects / opps)
+ * WITHOUT deleting history: fresh rows are upserted, and rows Odoo no longer
+ * returns are marked active = 0 rather than removed. Plan history (snapshots,
+ * audit, the Changes view) refers to these ids long after a person departs or
+ * an opportunity closes — deleting the row deleted the only copy of the name.
+ */
+async function syncMerge(db, table, rows, columns) {
+  await db.tx(async () => {
+    for (const r of rows) {
+      const vals = columns.map((c) => { const v = r[c]; return typeof v === "boolean" ? (v ? 1 : 0) : v; });
+      const sets = columns.filter((c) => c !== "id").map((c) => `${c}=excluded.${c}`).join(", ");
+      await db.run(
+        `INSERT INTO ${table} (${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})
+         ON CONFLICT (id) DO UPDATE SET ${sets}`,
+        vals
+      );
+    }
+    const ids = rows.map((r) => r.id);
+    if (ids.length) await db.run(`UPDATE ${table} SET active = 0 WHERE id NOT IN (${ids.map(() => "?").join(",")})`, ids);
+    else await db.run(`UPDATE ${table} SET active = 0`);
+    await db.run("DELETE FROM sync_state WHERE source = ?", [table]);
+    await db.run(
+      "INSERT INTO sync_state (source, synced_at, row_count, ok, message) VALUES (?,?,?,?,?)",
+      [table, new Date().toISOString(), rows.length, 1, null]
+    );
+  });
+  return rows.length;
+}
+
+/**
+ * Heal names already lost to the old delete-and-replace sync: any emp:/crm: id
+ * the plan or its snapshots reference that has no ref row anymore is fetched
+ * from Odoo by id (archived records included) and stored inactive, so the
+ * Changes view can name it. Idempotent; a no-op once every id resolves.
+ */
+async function backfillNames(db, odoo) {
+  const out = { people: 0, opportunities: 0 };
+  const rkeys = (await db.all("SELECT DISTINCT resource_key AS k FROM allocation UNION SELECT DISTINCT resource_key FROM plan_snapshot")).map((r) => String(r.k));
+  const tkeys = (await db.all("SELECT DISTINCT target_key AS k FROM allocation UNION SELECT DISTINCT target_key FROM plan_snapshot")).map((r) => String(r.k));
+  const ids = (list, pre) => list.filter((k) => k.startsWith(pre)).map((k) => parseInt(k.slice(pre.length), 10)).filter(Number.isInteger);
+
+  const haveEmp = new Set((await db.all("SELECT id FROM ref_person")).map((r) => Number(r.id)));
+  const missEmp = ids(rkeys, "emp:").filter((id) => !haveEmp.has(id));
+  if (missEmp.length) {
+    const rows = await odoo.searchRead("hr.employee", [["id", "in", missEmp]], ["name"], { context: { active_test: false } });
+    for (const r of rows) {
+      await db.run("INSERT INTO ref_person (id, name, role, dept, type, active) VALUES (?,?,?,?,?,0)",
+        [r.id, String(r.name || `Employee #${r.id}`), "", "", "employee"]);
+      out.people++;
+    }
+  }
+  const haveOpp = new Set((await db.all("SELECT id FROM ref_opportunity")).map((r) => Number(r.id)));
+  const missOpp = ids(tkeys, "crm:").filter((id) => !haveOpp.has(id));
+  if (missOpp.length) {
+    const opps = await readOppsByIds(odoo, missOpp);
+    for (const o of opps) {
+      await db.run("INSERT INTO ref_opportunity (id, name, client, stage, active) VALUES (?,?,?,?,0)",
+        [o.id, o.name, o.client || "", o.stage || "Closed"]);
+      out.opportunities++;
+    }
+  }
+  return out;
+}
+
 /** Replace a ref_ table's contents inside one transaction. */
 async function replaceAll(db, table, rows, columns) {
   await db.tx(async () => {
@@ -442,7 +507,7 @@ async function syncAll(db, odoo, { actualsFrom, actualsTo } = {}) {
   const people = await readPeople(odoo);
   const projects = await readProjects(odoo);
   const opps = await readOpportunities(odoo);
-  out.ref_person = await replaceAll(db, "ref_person", people, ["id", "name", "role", "dept", "type", "active", "hire_date", "end_date"]);
+  out.ref_person = await syncMerge(db, "ref_person", people, ["id", "name", "role", "dept", "type", "active", "hire_date", "end_date"]);
   // Milestone billing detection BEFORE the project refresh, so billing_type
   // lands with the projects. If the read fails, keep each project's previously
   // detected type rather than silently reverting everything to T&M.
@@ -458,12 +523,15 @@ async function syncAll(db, odoo, { actualsFrom, actualsTo } = {}) {
     const prev = new Map((await db.all("SELECT id, billing_type FROM ref_project")).map((r) => [Number(r.id), r.billing_type]));
     projects.forEach((p) => { p.billing_type = prev.get(p.id) || "tm"; });
   }
-  out.ref_project = await replaceAll(db, "ref_project", projects, ["id", "name", "client", "billable", "active", "billing_type"]);
+  out.ref_project = await syncMerge(db, "ref_project", projects, ["id", "name", "client", "billable", "active", "billing_type"]);
   // Holidays feed capacity proration; an install without the resource module
   // just keeps whatever was cached rather than failing the whole sync.
   try { out.ref_holiday = await replaceAll(db, "ref_holiday", await readHolidays(odoo), ["id", "name", "date_from", "date_to"]); }
   catch (e) { out.ref_holiday = `skipped (${e.message})`; }
-  out.ref_opportunity = await replaceAll(db, "ref_opportunity", opps, ["id", "name", "client", "stage", "active", "expected_start", "expected_months"]);
+  // An opp that is open again is by definition not awaiting a project mapping,
+  // so the merge clears the flag; reconcile re-flags closed ones right after.
+  out.ref_opportunity = await syncMerge(db, "ref_opportunity", opps.map((o) => ({ ...o, needs_project: 0 })),
+    ["id", "name", "client", "stage", "active", "needs_project", "expected_start", "expected_months"]);
   if (actualsFrom && actualsTo) {
     // Keep only actuals for people/projects we actually show. Odoo returns
     // timesheet lines for everyone (incl. "Internal" admin time and non-delivery
@@ -478,12 +546,15 @@ async function syncAll(db, odoo, { actualsFrom, actualsTo } = {}) {
   // Migrate/flag forecast stranded on opportunities that have since closed. Runs
   // after the open-opp refresh so the "still open?" test uses fresh data.
   out.reconcile = await reconcileClosedCrm(db, odoo, projects, new Set(opps.map((o) => o.id)));
+  // Heal ids whose names were lost to the old delete-and-replace sync.
+  try { out.backfill = await backfillNames(db, odoo); }
+  catch (e) { out.backfill = `skipped (${e.message})`; }
   return out;
 }
 
 module.exports = {
   Odoo, OdooError, syncAll, reconcileClosedCrm,
   readPeople, readProjects, readOpportunities, readOppsByIds, readActuals,
-  readEmploymentDates, readHolidays, readMilestones,
+  readEmploymentDates, readHolidays, readMilestones, backfillNames,
   shapePeople, m2oName, m2oId,
 };

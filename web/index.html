@@ -2378,23 +2378,29 @@ function renderChanges(){
     root.innerHTML=head(`<div style="padding:18px" class="muted">Loading changes…</div>`); wire(); return; }
 
   const q=(F.search||"").toLowerCase();
+  // Names outlive the roster: a departed person or closed opportunity is no
+  // longer in PEOPLE/ALL_PROJECTS, so fall back to the server's label map
+  // (resolved from the ref tables regardless of active) before showing a key.
+  const LBL=CHG.data.labels||{};
   const rows=CHG.data.changes.map(c=>{
     const pid=fromResKey(c.resourceKey), jid=fromTgtKey(c.targetKey);
     const p=personById(pid), pr=projById(jid);
+    const pName=p? p.name : (LBL[c.resourceKey]||String(pid));
+    const src=pr? pr.src : (c.targetKey.startsWith("crm:")?"CRM":"PRJ");
+    const prName=pr? pr.name : (LBL[c.targetKey]||String(jid));
     const rate=(p&&pr)? rateAt(pid,jid,c.month) : (c.rate||0);
-    return {pid:String(pid),jid:String(jid),p,pr,month:c.month,before:c.before,after:c.after,d:c.after-c.before,rate};
+    return {pid:String(pid),jid:String(jid),p,pr,pName,prName,src,month:c.month,before:c.before,after:c.after,d:c.after-c.before,rate};
   }).filter(r=>!(r.p && !passDeptType(r.p)))
     .filter(r=>{ if(!q) return true;
-      const pn=(r.pr?projLabel(r.pr):r.jid).toLowerCase(), nm=(r.p?r.p.name:r.pid).toLowerCase();
-      return pn.includes(q)||nm.includes(q); });
+      return r.prName.toLowerCase().includes(q)||r.pName.toLowerCase().includes(q); });
 
   const byProj=new Map();
   rows.forEach(r=>{
-    const g=byProj.get(r.jid)||{pr:r.pr,jid:r.jid,add:0,rem:0,net:0,netD:0,people:new Map()};
+    const g=byProj.get(r.jid)||{pr:r.pr,prName:r.prName,src:r.src,jid:r.jid,add:0,rem:0,net:0,netD:0,people:new Map()};
     const dD=r.d*r.rate;
     if(r.d>0) g.add+=r.d; else g.rem-=r.d;
     g.net+=r.d; g.netD+=dD;
-    const pg=g.people.get(r.pid)||{p:r.p,pid:r.pid,add:0,rem:0,net:0,netD:0,months:[]};
+    const pg=g.people.get(r.pid)||{p:r.p,pName:r.pName,pid:r.pid,add:0,rem:0,net:0,netD:0,months:[]};
     if(r.d>0) pg.add+=r.d; else pg.rem-=r.d;
     pg.net+=r.d; pg.netD+=dD; pg.months.push(r);
     g.people.set(r.pid,pg); byProj.set(r.jid,g);
@@ -2419,15 +2425,16 @@ function renderChanges(){
   if(!projs.length) body=`<tr><td colspan="6" class="muted" style="padding:16px">No allocation changes between ${esc(CHG.data.fromSnap)} and ${esc(CHG.data.toSnap)} match the filters.</td></tr>`;
   projs.forEach(g=>{
     const isOpen=chgOpen.has(g.jid);
-    const badge=g.pr? (g.pr.src==="CRM"?`<span class="badge crm">CRM</span>`:`<span class="badge prj">PRJ</span>`) : "";
-    body+=`<tr class="lvl1${isOpen?" open":""}" data-chg="${esc(g.jid)}"><td class="lbl"><span class="tw">${chev()}</span>${badge} <b>${g.pr?esc(g.pr.name):esc(g.jid)}</b>`+
+    const badge=g.src==="CRM"?`<span class="badge crm">CRM</span>`:`<span class="badge prj">PRJ</span>`;
+    const closed=!g.pr&&g.src==="CRM"? ` <span class="badge np" title="This opportunity is no longer in the plan (closed in Odoo or its forecast moved to a project) — shown here because the window includes its changes">closed</span>`:"";
+    body+=`<tr class="lvl1${isOpen?" open":""}" data-chg="${esc(g.jid)}"><td class="lbl"><span class="tw">${chev()}</span>${badge} <b>${esc(g.prName)}</b>${closed}`+
       `<div class="muted" style="font-size:11px;padding-left:18px">${g.pr?esc(g.pr.client||"—"):""} · ${g.people.size} ${g.people.size===1?"person":"people"}</div></td>`+
       `<td class="num up2">${g.add?"+"+fmt(g.add):"·"}</td><td class="num dn2">${g.rem?"−"+fmt(g.rem):"·"}</td>`+
       `<td class="num"><b>${sgnH(g.net)}</b></td><td class="num"><b>${sgnD(g.netD)}</b></td><td></td></tr>`;
     if(!isOpen) return;
     [...g.people.values()].sort((a,b)=>Math.abs(b.netD)-Math.abs(a.netD)).forEach(pg=>{
       const cb=pg.p? (pg.p.type==="contractor"?" <span class='badge contractor'>Con</span>":pg.p.type==="tbh"?" <span class='badge tbh'>TBA</span>":"") : "";
-      body+=`<tr class="lvl2"><td class="lbl lvl2i">${pg.p?esc(pg.p.name):esc(pg.pid)}${cb} ${lineNote(pg)}`+
+      body+=`<tr class="lvl2"><td class="lbl lvl2i">${esc(pg.pName)}${cb} ${lineNote(pg)}`+
         `<div style="padding:2px 0 2px 0">${chips(pg)}</div></td>`+
         `<td class="num up2">${pg.add?"+"+fmt(pg.add):"·"}</td><td class="num dn2">${pg.rem?"−"+fmt(pg.rem):"·"}</td>`+
         `<td class="num">${sgnH(pg.net)}</td><td class="num">${sgnD(pg.netD)}</td><td></td></tr>`;
@@ -2439,7 +2446,9 @@ function renderChanges(){
     let who="", proj="", mon="";
     if(parts.length>=4){ const pid=fromResKey(parts[1]), jid=fromTgtKey(parts[2]);
       const p=personById(pid), pr=projById(jid);
-      who=p?p.name:parts[1]; proj=pr?projLabel(pr):parts[2]; mon=monLab(String(parts[3]).slice(0,7)); }
+      who=p?p.name:(LBL[parts[1]]||parts[1]);
+      proj=pr?projLabel(pr):(LBL[parts[2]]? (parts[2].startsWith("crm:")?"CRM - ":"PRJ - ")+LBL[parts[2]] : parts[2]);
+      mon=monLab(String(parts[3]).slice(0,7)); }
     return `<tr><td>${esc(String(e.at).slice(0,16).replace("T"," "))}</td><td>${esc(e.actor)}</td>`+
       `<td>${esc(who)}${proj?` · ${esc(proj)}`:""}${mon?` · ${esc(mon)}`:""}</td><td>${esc(e.action)}</td>`+
       `<td class="num">${esc(e.oldValue==null?"·":e.oldValue)} → ${esc(e.newValue==null?"·":e.newValue)}</td></tr>`;
@@ -2462,11 +2471,14 @@ function renderChanges(){
 function exportChangesCSV(){
   if(!CHG.data) return;
   const lines=[["Project","Client","Source","Person","Type","Month","Before h","After h","Delta h","Rate","Delta $"].join(",")];
+  const LBL=CHG.data.labels||{};
   CHG.data.changes.forEach(c=>{
     const pid=fromResKey(c.resourceKey), jid=fromTgtKey(c.targetKey);
     const p=personById(pid), pr=projById(jid);
+    const src=pr? pr.src : (c.targetKey.startsWith("crm:")?"CRM":"PRJ");
+    const prName=pr? projLabel(pr) : (LBL[c.targetKey]? (src==="CRM"?"CRM - ":"PRJ - ")+LBL[c.targetKey] : String(jid));
     const rate=(p&&pr)? rateAt(pid,jid,c.month):(c.rate||0);
-    lines.push([pr?projLabel(pr):jid, pr?pr.client||"":"", pr?pr.src:"", p?p.name:pid, p?p.type:"",
+    lines.push([prName, pr?pr.client||"":"", src, p?p.name:(LBL[c.resourceKey]||pid), p?p.type:"",
       c.month, c.before, c.after, Math.round((c.after-c.before)*10)/10, rate, Math.round((c.after-c.before)*rate)].map(csvEsc).join(","));
   });
   download(`tqs-plan-changes-${CHG.data.fromSnap}-to-${CHG.data.toSnap}.csv`, lines.join("\n"), "text/csv");

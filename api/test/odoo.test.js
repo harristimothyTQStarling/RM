@@ -234,6 +234,50 @@ test("syncAll caches reference data and scopes actuals to the roster", async () 
   assert.ok(ref.people.every((p) => "hireDate" in p && "endDate" in p), "people expose hireDate/endDate (null when Odoo has no versions)");
 });
 
+/* History must keep its names: the sync marks rows Odoo no longer returns as
+   inactive instead of deleting them, and backfills names for ids the plan or
+   snapshots reference that were lost to the old delete-and-replace sync. */
+test("sync keeps departed people / closed opps as inactive rows, and backfills lost names", async () => {
+  const DIRECT = new Set(["name", "active", "job_title", "department_id", "partner_id", "stage_id", "type", "employee_id", "project_id", "date", "unit_amount"]);
+  const fakeOdoo = {
+    login: async () => 1,
+    hasFields: async (_m, names) => Object.fromEntries(names.map((n) => [n, DIRECT.has(n)])),
+    searchRead: async (model, domain) => {
+      if (model === "hr.employee") {
+        const idIn = (domain.find((d) => d[0] === "id" && d[1] === "in") || [])[2];
+        if (idIn) return idIn.map((id) => ({ id, name: `Archived #${id}` }));   // backfill path (active_test:false)
+        return [{ id: 110, name: "Ken Sousa", job_title: "EM", department_id: [1, "Delivery"] }];
+      }
+      if (model === "crm.lead") {
+        const idIn = (domain.find((d) => d[0] === "id" && d[1] === "in") || [])[2];
+        if (idIn) return idIn.map((id) => ({ id, name: `Closed Deal #${id}`, partner_id: [9, "Client"], stage_id: [9, "Won"], active: false }));
+        return [];
+      }
+      if (model === "project.project") return [{ id: 119, name: "Bain Phase 2B", partner_id: [1, "Bain"] }];
+      return [];
+    },
+  };
+  const db = open({ driver: "sqlite", file: ":memory:" });
+  // Previously synced rows that the fresh read no longer returns:
+  db.run("INSERT INTO ref_person (id,name,role,dept,type,active) VALUES (155,'Donald Lort','TC','Contractor','contractor',1)");
+  db.run("INSERT INTO ref_project (id,name,client,billable,active) VALUES (777,'Finished Project','Old Client',1,1)");
+  // Plan history referencing ids with NO ref rows at all (lost to old syncs):
+  db.run("INSERT INTO plan_snapshot (snap_date,resource_key,target_key,month,hours,rate) VALUES ('2026-10-01','emp:88','crm:222','2026-11-01',100,150)");
+
+  const counts = await syncAll(db, fakeOdoo, {});
+  const lort = await db.get("SELECT name, active FROM ref_person WHERE id=155");
+  assert.deepEqual(lort, { name: "Donald Lort", active: 0 }, "departed person kept, inactive");
+  const fin = await db.get("SELECT name, active FROM ref_project WHERE id=777");
+  assert.deepEqual(fin, { name: "Finished Project", active: 0 }, "gone project kept, inactive");
+  assert.deepEqual(counts.backfill, { people: 1, opportunities: 1 });
+  assert.deepEqual(await db.get("SELECT name, active FROM ref_person WHERE id=88"), { name: "Archived #88", active: 0 });
+  assert.deepEqual(await db.get("SELECT name, active FROM ref_opportunity WHERE id=222"), { name: "Closed Deal #222", active: 0 });
+
+  const ref = await require("../src/store").getReference(db);
+  assert.ok(!ref.people.some((p) => p.id === 155 || p.id === 88), "inactive rows stay out of the roster");
+  assert.ok(!ref.projects.some((p) => p.id === 777), "inactive projects stay out of the pickers");
+});
+
 /* ---- capacity basis inputs: hire dates + company holidays (board-pack parity) ---- */
 
 test("employment window from hr.version: earliest date_version hires, latest version's departure ends", async () => {
