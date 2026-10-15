@@ -1904,6 +1904,43 @@ function renderVariance(){
   // only those with something to show in the covered months.
   const ppl=filteredPeople().filter(p=>p.type!=="tbh").filter(p=>
     VAR_MONTHS.some(m=> personForecastMonth(p.id,m.key) || personActualMonth(p.id,m.key)));
+
+  /* ---- digest of the major misses, rendered above the table --------------
+     Closed months only (the MTD column is neutral everywhere). "Significant"
+     uses the same tolerance as the cell shading: within ±5% (or 8h) is on
+     plan. People and projects are ranked by absolute hours missed. */
+  const sig=(f,a)=>Math.abs(a-f)>Math.max(8,f*0.05);
+  const closed=VAR_MONTHS.filter(m=>!isMTD(m));
+  const pStats=ppl.map(p=>{ let rf=0,ra=0;
+    closed.forEach(m=>{ rf+=personForecastMonth(p.id,m.key); ra+=personActualMonth(p.id,m.key); });
+    return {p,rf,ra,d:ra-rf}; });
+  const prStats=new Map();
+  ppl.forEach(p=>personProjects(p.id).forEach(projid=>{
+    let f=0,a=0;
+    closed.forEach(m=>{ f+=(state.alloc[p.id]&&state.alloc[p.id][projid]&&state.alloc[p.id][projid][m.key])||0;
+      a+=ACTUALS.get(`${p.id}|${projid}|${m.key}`)||0; });
+    if(!f&&!a) return;
+    const g=prStats.get(String(projid))||{projid:String(projid),f:0,a:0};
+    g.f+=f; g.a+=a; prStats.set(String(projid),g);
+  }));
+  const pcts=(f,d)=>f?` (${d>0?"+":""}${Math.round(d/f*100)}%)`:"";
+  const cap3=(arr,render)=>arr.slice(0,3).map(render).join(" · ")+(arr.length>3?` <span class="muted">+ ${arr.length-3} more</span>`:"");
+  const overP=pStats.filter(x=>x.d>0&&sig(x.rf,x.ra)).sort((a,b)=>b.d-a.d);
+  const underP=pStats.filter(x=>x.d<0&&x.ra>0&&sig(x.rf,x.ra)).sort((a,b)=>a.d-b.d);
+  const noLog=pStats.filter(x=>x.rf>8&&x.ra===0).sort((a,b)=>b.rf-a.rf);
+  const unplanned=pStats.filter(x=>x.rf===0&&x.ra>8).sort((a,b)=>b.ra-a.ra);
+  const offProj=[...prStats.values()].map(g=>({...g,d:g.a-g.f,pr:projById(g.projid)}))
+    .filter(g=>g.pr&&sig(g.f,g.a)).sort((a,b)=>Math.abs(b.d)-Math.abs(a.d));
+  const onCnt=pStats.filter(x=>(x.rf||x.ra)&&!sig(x.rf,x.ra)).length;
+  const totFd=pStats.reduce((s,x)=>s+x.rf,0), totAd=pStats.reduce((s,x)=>s+x.ra,0);
+  const vRows=[];
+  vRows.push(`<div class="csrow"><span class="cstag ed">accuracy</span><span>forecast <b>${fmt0(totFd)}h</b> · actual <b>${fmt0(totAd)}h</b> · <b>${totAd-totFd>0?"+":""}${fmt0(totAd-totFd)}h</b>${pcts(totFd,totAd-totFd)} overall · ${onCnt} of ${pStats.length} people on plan (±5%)</span></div>`);
+  if(offProj.length) vRows.push(`<div class="csrow"><span class="cstag sh">projects off plan</span><span>${cap3(offProj,g=>`<b>${esc(g.pr.name)}</b> ${g.d>0?"+":""}${fmt(g.d)}h${pcts(g.f,g.d)}`)}</span></div>`);
+  if(overP.length) vRows.push(`<div class="csrow"><span class="cstag up">over plan</span><span>${cap3(overP,x=>`<b>${esc(x.p.name)}</b> +${fmt(x.d)}h${pcts(x.rf,x.d)}`)}</span></div>`);
+  if(underP.length) vRows.push(`<div class="csrow"><span class="cstag dn">under plan</span><span>${cap3(underP,x=>`<b>${esc(x.p.name)}</b> ${fmt(x.d)}h${pcts(x.rf,x.d)}`)}</span></div>`);
+  if(noLog.length) vRows.push(`<div class="csrow"><span class="cstag rm">nothing logged</span><span>${cap3(noLog,x=>`<b>${esc(x.p.name)}</b> ${fmt0(x.rf)}h forecast, 0 actual`)}</span></div>`);
+  if(unplanned.length) vRows.push(`<div class="csrow"><span class="cstag nw">unforecasted work</span><span>${cap3(unplanned,x=>`<b>${esc(x.p.name)}</b> ${fmt(x.ra)}h logged with no forecast`)}</span></div>`);
+  const varDigest=`<div class="chgsum">${vRows.join("")}</div>`;
   const head=`<thead><tr class="mhd"><th class="lbl" rowspan="2">Person</th>`+
     VAR_MONTHS.map(m=>`<th class="actual mgrp" colspan="2">${m.label}${isMTD(m)?" · MTD":""}</th>`).join("")+
     `<th class="col-tot mgrp" rowspan="2">Forecast</th><th class="col-tot" rowspan="2">Actual</th><th class="col-tot" rowspan="2">Variance</th><th class="col-tot" rowspan="2">Var %</th></tr>`+
@@ -1977,6 +2014,7 @@ function renderVariance(){
   document.getElementById("viewRoot").innerHTML=
     `<div class="panel"><div class="panel-hd"><h2>Forecast vs actual variance</h2>`+
     `<span class="hint">closed months (${range})${MTD_MONTH?` + <b>${MTD_MONTH.label} month-to-date</b> (neutral, excluded from totals)`:""} · <b>Fcst</b> = retained forecast · <b>Act</b> = Odoo actual with actual − forecast beneath · ${ppl.length} people · click a person to drill into their projects</span></div>`+
+    varDigest+
     `<div class="scroll"><table class="pivot">${head}<tbody>${body}</tbody>${foot}</table></div>`+
     `<div class="legend"><span>Variance = Actual − Forecast</span>`+
     `<span class="sw"><span class="box v-on"></span>on plan (±5%)</span>`+
