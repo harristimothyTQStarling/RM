@@ -1893,6 +1893,8 @@ function mtdCell(f,a){
   const sub=(f||a)?`<span class="pct">${d>0?"+":""}${fmt(d)}h${f?` · ${d>0?"+":""}${Math.round(d/f*100)}%`:""}</span>`:"";
   return `<td class="mcelln mtd" title="Month to date — actuals synced so far vs the full-month forecast"><span class="h">${a?fmt(a):"·"}</span>${sub}</td>`;
 }
+/* Month range shown on the variance tab (keys "YYYY-MM"; null = everything). */
+const VF={from:null,to:null};
 function renderVariance(){
   if(!VAR_MONTHS.length){
     document.getElementById("viewRoot").innerHTML=
@@ -1900,17 +1902,40 @@ function renderVariance(){
       `<div class="empty-body" style="padding:28px">No closed months yet. Variance appears once a month completes and its Odoo actuals are synced.</div></div>`;
     return;
   }
+  // Same range controls as the Changes tab, at month granularity (variance is
+  // monthly data). The digest and the table both follow the selection.
+  const VMs=VAR_MONTHS.filter(m=>(!VF.from||m.key>=VF.from)&&(!VF.to||m.key<=VF.to));
+  const vfCtl=
+    `<input type="month" id="vfFrom" value="${VF.from||VAR_MONTHS[0].key}" min="${VAR_MONTHS[0].key}" max="${VAR_MONTHS[VAR_MONTHS.length-1].key}" style="padding:4px 7px"> → `+
+    `<input type="month" id="vfTo" value="${VF.to||VAR_MONTHS[VAR_MONTHS.length-1].key}" min="${VAR_MONTHS[0].key}" max="${VAR_MONTHS[VAR_MONTHS.length-1].key}" style="padding:4px 7px"> `+
+    `<button class="btn primary" id="vfShow" style="padding:5px 11px">Show</button> `+
+    `<button class="btn" id="vfThis" style="padding:5px 9px"${MTD_MONTH?"":" disabled"}>This month</button> `+
+    `<button class="btn" id="vfLast" style="padding:5px 9px"${CLOSED_MONTHS.length?"":" disabled"}>Last month</button> `+
+    `<button class="btn" id="vfAll" style="padding:5px 9px">All months</button>`;
+  const wire=()=>{
+    const go=(f,t)=>{ VF.from=f; VF.to=t; keepScroll(renderVariance); };
+    document.getElementById("vfShow")?.addEventListener("click",()=>go(document.getElementById("vfFrom").value||null, document.getElementById("vfTo").value||null));
+    document.getElementById("vfThis")?.addEventListener("click",()=>go(MTD_MONTH.key,MTD_MONTH.key));
+    document.getElementById("vfLast")?.addEventListener("click",()=>{ const lm=CLOSED_MONTHS[CLOSED_MONTHS.length-1].key; go(lm,lm); });
+    document.getElementById("vfAll")?.addEventListener("click",()=>go(null,null));
+  };
+  if(!VMs.length){
+    document.getElementById("viewRoot").innerHTML=
+      `<div class="panel"><div class="panel-hd"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h2>Forecast vs actual variance</h2>${vfCtl}</div></div>`+
+      `<div class="empty-body" style="padding:28px">No plan months in that range — pick dates between ${VAR_MONTHS[0].label} and ${VAR_MONTHS[VAR_MONTHS.length-1].label}.</div></div>`;
+    wire(); return;
+  }
   // Real people only (to-be-hired pools have no actuals to compare against), and
   // only those with something to show in the covered months.
   const ppl=filteredPeople().filter(p=>p.type!=="tbh").filter(p=>
-    VAR_MONTHS.some(m=> personForecastMonth(p.id,m.key) || personActualMonth(p.id,m.key)));
+    VMs.some(m=> personForecastMonth(p.id,m.key) || personActualMonth(p.id,m.key)));
 
   /* ---- digest of the major misses, rendered above the table --------------
      Closed months only (the MTD column is neutral everywhere). "Significant"
      uses the same tolerance as the cell shading: within ±5% (or 8h) is on
      plan. People and projects are ranked by absolute hours missed. */
   const sig=(f,a)=>Math.abs(a-f)>Math.max(8,f*0.05);
-  const closed=VAR_MONTHS.filter(m=>!isMTD(m));
+  const closed=VMs.filter(m=>!isMTD(m));
   const pStats=ppl.map(p=>{ let rf=0,ra=0;
     closed.forEach(m=>{ rf+=personForecastMonth(p.id,m.key); ra+=personActualMonth(p.id,m.key); });
     return {p,rf,ra,d:ra-rf}; });
@@ -1942,20 +1967,20 @@ function renderVariance(){
   if(unplanned.length) vRows.push(`<div class="csrow"><span class="cstag nw">unforecasted work</span><span>${cap3(unplanned,x=>`<b>${esc(x.p.name)}</b> ${fmt(x.ra)}h logged with no forecast`)}</span></div>`);
   const varDigest=`<div class="chgsum">${vRows.join("")}</div>`;
   const head=`<thead><tr class="mhd"><th class="lbl" rowspan="2">Person</th>`+
-    VAR_MONTHS.map(m=>`<th class="actual mgrp" colspan="2">${m.label}${isMTD(m)?" · MTD":""}</th>`).join("")+
+    VMs.map(m=>`<th class="actual mgrp" colspan="2">${m.label}${isMTD(m)?" · MTD":""}</th>`).join("")+
     `<th class="col-tot mgrp" rowspan="2">Forecast</th><th class="col-tot" rowspan="2">Actual</th><th class="col-tot" rowspan="2">Variance</th><th class="col-tot" rowspan="2">Var %</th></tr>`+
-    `<tr class="subhd">`+VAR_MONTHS.map(()=>`<th class="actual mgrp">Fcst</th><th class="actual">Act</th>`).join("")+`</tr></thead>`;
+    `<tr class="subhd">`+VMs.map(()=>`<th class="actual mgrp">Fcst</th><th class="actual">Act</th>`).join("")+`</tr></thead>`;
   const byDept={}; ppl.forEach(p=>{ const d=p.dept||""; (byDept[d]=byDept[d]||[]).push(p); });
-  const mkAcc=()=>({f:0,a:0,n:0, mf:VAR_MONTHS.map(()=>0), ma:VAR_MONTHS.map(()=>0)});
+  const mkAcc=()=>({f:0,a:0,n:0, mf:VMs.map(()=>0), ma:VMs.map(()=>0)});
   const acc={employee:mkAcc(), contractor:mkAcc()};
-  const colF=VAR_MONTHS.map(()=>0), colA=VAR_MONTHS.map(()=>0);
+  const colF=VMs.map(()=>0), colA=VMs.map(()=>0);
   let body="";
   deptsInOrder(ppl).forEach(d=>{ if(!byDept[d]) return;
-    body+=`<tr class="grp"><td class="lbl">${deptLabel(d)}</td>`+VAR_MONTHS.map(()=>`<td class="fcst"></td><td></td>`).join("")+`<td class="col-tot fcst"></td><td class="col-tot"></td><td class="col-tot"></td><td class="col-tot"></td></tr>`;
+    body+=`<tr class="grp"><td class="lbl">${deptLabel(d)}</td>`+VMs.map(()=>`<td class="fcst"></td><td></td>`).join("")+`<td class="col-tot fcst"></td><td class="col-tot"></td><td class="col-tot"></td><td class="col-tot"></td></tr>`;
     byDept[d].forEach(p=>{
       let rf=0, ra=0;
       const A=acc[p.type]||acc.employee;
-      const tds=VAR_MONTHS.map((m,i)=>{ const f=personForecastMonth(p.id,m.key), a=personActualMonth(p.id,m.key);
+      const tds=VMs.map((m,i)=>{ const f=personForecastMonth(p.id,m.key), a=personActualMonth(p.id,m.key);
         colF[i]+=f; colA[i]+=a; A.mf[i]+=f; A.ma[i]+=a;
         // the open month is display-only: it never counts toward the summary totals
         if(!isMTD(m)){ rf+=f; ra+=a; }
@@ -1976,9 +2001,9 @@ function renderVariance(){
         const pr=projById(projid); if(!pr) return;
         const fOf=mk=>(state.alloc[p.id] && state.alloc[p.id][projid] && state.alloc[p.id][projid][mk])||0;
         const aOf=mk=>ACTUALS.get(`${p.id}|${projid}|${mk}`)||0;
-        if(!VAR_MONTHS.some(m=>fOf(m.key)||aOf(m.key))) return;   // nothing in the covered months
+        if(!VMs.some(m=>fOf(m.key)||aOf(m.key))) return;   // nothing in the covered months
         let prf=0, pra=0;
-        const ptds=VAR_MONTHS.map(m=>{ const f=fOf(m.key), a=aOf(m.key);
+        const ptds=VMs.map(m=>{ const f=fOf(m.key), a=aOf(m.key);
           if(!isMTD(m)){ prf+=f; pra+=a; }
           return `<td class="mcelln fcst"><span class="h">${f?fmt(f):"·"}</span></td>`+(isMTD(m)? mtdCell(f,a) : varCell(f,a)); }).join("");
         const pbadge=pr.src==="CRM"?`<span class="badge crm">CRM</span>`:`<span class="badge prj">PRJ</span>`;
@@ -1996,7 +2021,7 @@ function renderVariance(){
     const vpct = f? `${a-f>0?"+":""}${Math.round((a-f)/f*100)}%` : (a?"—":"");
     // per-month tallies: forecast total plain, actual total with the same
     // delta/% and shading the person cells use
-    const mtds=VAR_MONTHS.map((m,i)=>
+    const mtds=VMs.map((m,i)=>
       `<td class="mcelln fcst"><span class="h">${mf[i]?fmt(mf[i]):"·"}</span></td>`+(isMTD(m)? mtdCell(mf[i],ma[i]) : varCell(mf[i],ma[i]))).join("");
     return `<tr class="${cls||""}"><td class="lbl">${label}</td>${mtds}`+
       `<td class="mcelln col-tot fcst"><span class="h">${fmt(f)}</span></td>`+
@@ -2005,21 +2030,24 @@ function renderVariance(){
       `<td class="mcelln col-tot ${varClass(f,a)}"><span class="h">${vpct}</span></td></tr>`;
   };
   // summary totals cover closed months only — the MTD column is display-only
-  const totF=VAR_MONTHS.reduce((s,m,i)=>s+(isMTD(m)?0:colF[i]),0), totA=VAR_MONTHS.reduce((s,m,i)=>s+(isMTD(m)?0:colA[i]),0);
+  const totF=VMs.reduce((s,m,i)=>s+(isMTD(m)?0:colF[i]),0), totA=VMs.reduce((s,m,i)=>s+(isMTD(m)?0:colA[i]),0);
   const foot=`<tfoot>`+
     (acc.employee.n? footRow(`Employees <span class="muted">· ${acc.employee.n}</span>`,acc.employee.f,acc.employee.a,"",acc.employee.mf,acc.employee.ma):"")+
     (acc.contractor.n? footRow(`Contractors <span class="muted">· ${acc.contractor.n}</span>`,acc.contractor.f,acc.contractor.a,"",acc.contractor.mf,acc.contractor.ma):"")+
     footRow("All shown",totF,totA,"grand",colF,colA)+`</tfoot>`;
-  const range=CLOSED_MONTHS.length? CLOSED_MONTHS[0].label+"–"+CLOSED_MONTHS[CLOSED_MONTHS.length-1].label : "none closed yet";
+  const shownClosed=VMs.filter(m=>!isMTD(m));
+  const range=shownClosed.length? shownClosed[0].label+"–"+shownClosed[shownClosed.length-1].label : "none closed in range";
+  const hasMtd=VMs.some(isMTD);
   document.getElementById("viewRoot").innerHTML=
-    `<div class="panel"><div class="panel-hd"><h2>Forecast vs actual variance</h2>`+
-    `<span class="hint">closed months (${range})${MTD_MONTH?` + <b>${MTD_MONTH.label} month-to-date</b> (neutral, excluded from totals)`:""} · <b>Fcst</b> = retained forecast · <b>Act</b> = Odoo actual with actual − forecast beneath · ${ppl.length} people · click a person to drill into their projects</span></div>`+
+    `<div class="panel"><div class="panel-hd"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h2>Forecast vs actual variance</h2>${vfCtl}</div>`+
+    `<span class="hint">closed months (${range})${hasMtd?` + <b>${MTD_MONTH.label} month-to-date</b> (neutral, excluded from totals)`:""} · <b>Fcst</b> = retained forecast · <b>Act</b> = Odoo actual with actual − forecast beneath · ${ppl.length} people · click a person to drill into their projects</span></div>`+
     varDigest+
     `<div class="scroll"><table class="pivot">${head}<tbody>${body}</tbody>${foot}</table></div>`+
     `<div class="legend"><span>Variance = Actual − Forecast</span>`+
     `<span class="sw"><span class="box v-on"></span>on plan (±5%)</span>`+
     `<span class="sw"><span class="box v-over"></span>over plan (actual &gt; forecast)</span>`+
     `<span class="sw"><span class="box v-under"></span>under plan (actual &lt; forecast)</span></div></div>`;
+  wire();
 }
 
 /* ==================== CRM MISMATCHES (forecast vs CRM window) ==================== */
