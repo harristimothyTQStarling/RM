@@ -2276,10 +2276,13 @@ function renderCosting(){
   if(COST.err){ root.innerHTML=head(`<div style="padding:18px"><p>⚠ ${esc(COST.err)}</p></div>`); return; }
   if(!COST.rates){ loadCost(); root.innerHTML=head(`<div style="padding:18px" class="muted">Loading cost data…</div>`); return; }
 
-  const typeRank=p=>p.type==="contractor"?1:0;
-  const ppl=filteredPeople().filter(p=>p.type!=="tbh").sort((a,b)=>typeRank(a)-typeRank(b));
+  // TBA role pools ride along: the practice's unfilled seats carry planned
+  // revenue but no cost card until someone is hired, so their margin reads
+  // as revenue — called out per row and in their own footer group.
+  const typeRank=p=>p.type==="contractor"?1:p.type==="tbh"?2:0;
+  const ppl=filteredPeople().sort((a,b)=>typeRank(a)-typeRank(b));
   const mkAcc=()=>({rev:MKEYS.map(()=>0),cost:MKEYS.map(()=>0),n:0});
-  const acc={employee:mkAcc(),contractor:mkAcc(),team:mkAcc()};
+  const acc={employee:mkAcc(),contractor:mkAcc(),tbh:mkAcc(),team:mkAcc()};
   let body="";
   ppl.forEach(p=>{
     const basis=costBasis(costRateOf(p.id));
@@ -2291,10 +2294,11 @@ function renderCosting(){
       a.rev[i]+=c.rev; a.cost[i]+=c.cost; acc.team.rev[i]+=c.rev; acc.team.cost[i]+=c.cost;
       return costCell(c.rev,c.cost,c.kind,"");
     });
-    const badge=p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
+    const badge=p.type==="tbh"?" <span class='badge tbh'>TBA</span>":p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
+    const subNote=p.type==="tbh"? `${esc(p.role||"—")} · unfilled seat — planned revenue, no cost until hired` : esc(p.role||"—");
     const ytds=YIDX.map(ix=>costCell(sumIdx(cells.map(c=>c.rev),ix),sumIdx(cells.map(c=>c.cost),ix),"","col-tot"));
     const isOpen=emOpen.has(String(p.id));
-    body+=`<tr class="lvl1${isOpen?" open":""}" data-em="${p.id}"><td class="lbl"><span class="tw">${chev()}</span><b>${esc(p.name)}</b>${badge}<div class="muted" style="font-size:11px;padding-left:18px">${esc(p.role||"—")}</div></td>`+withYearCols(tds,ytds)+`${costCell(rrev,rcost,"","col-tot")}</tr>`;
+    body+=`<tr class="lvl1${isOpen?" open":""}" data-em="${p.id}"><td class="lbl"><span class="tw">${chev()}</span><b>${esc(p.name)}</b>${badge}<div class="muted" style="font-size:11px;padding-left:18px">${subNote}</div></td>`+withYearCols(tds,ytds)+`${costCell(rrev,rcost,"","col-tot")}</tr>`;
     if(!isOpen) return;
     // Drill-down: the person's projects. Revenue is per project directly; the
     // person's monthly (salary-derived) cost is attributed pro-rata by hours.
@@ -2327,12 +2331,14 @@ function renderCosting(){
   const foot=`<tfoot>`+
     (acc.employee.n?footRow(`Employees <span class="muted">· ${acc.employee.n}</span>`,acc.employee):"")+
     (acc.contractor.n?footRow(`Contractors <span class="muted">· ${acc.contractor.n}</span>`,acc.contractor):"")+
-    footRow("Team total",acc.team,"grand")+`</tfoot>`;
+    (acc.tbh.n?footRow(`To be assigned <span class="muted">· ${acc.tbh.n} — planned revenue, no cost yet</span>`,acc.tbh):"")+
+    footRow(`Team total${acc.tbh.n?" <span class='muted'>· incl. TBA</span>":""}`,acc.team,"grand")+`</tfoot>`;
   const note=`<div class="legend" style="margin-top:6px"><span>`+
     (COST.rates.size? `${COST.rates.size} ${COST.rates.size===1?"person has":"people have"} a cost rate. `
                     : `<b>No cost data yet.</b> Use Resource costs to enter each person's fully loaded cost. `)+
     `A month's cost = the person's <b>monthly</b> rate if set, else <b>annual ÷ 12</b>, else <b>bi-weekly × 26 ÷ 12</b>, else <b>hourly × that month's hours</b> (actual hours for closed months, forecast onward). `+
-    `Costs are <b>prorated to the Odoo employment window</b>: nothing before the hire date or after the offboarding date, and the start/end months carry only the employed fraction. Revenue: closed months are actual billable revenue from Odoo; from the current month it is forecast hours × bill rate.`+
+    `Costs are <b>prorated to the Odoo employment window</b>: nothing before the hire date or after the offboarding date, and the start/end months carry only the employed fraction. Revenue: closed months are actual billable revenue from Odoo; from the current month it is forecast hours × bill rate. `+
+    `<b>TBA role pools</b> are included for the practice view: their planned revenue carries no cost until the seat is filled, so the team total's margin reads better than it will land — shift their forecast to the hire to true it up.`+
     `</span></div>`;
   root.innerHTML=head(`<div class="scroll"><table class="pivot">${pivotHead("Person")}<tbody>${body||`<tr><td class="lbl muted" style="padding:14px">No people with cost or revenue match the current filters.</td></tr>`}</tbody>${foot}</table></div>${note}`);
 }
