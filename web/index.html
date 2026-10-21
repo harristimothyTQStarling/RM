@@ -1886,12 +1886,37 @@ function varTotCell(f,a,extra){
   const d=a-f;
   return `<td class="mcelln ${varClass(f,a)}${extra?" "+extra:""}"><span class="h">${d>0?"+":""}${fmt(d)}</span></td>`;
 }
-/* Month-to-date cell: actuals so far this month next to the full-month forecast.
-   Neutral (no shading) — the month isn't over, so under-plan is expected. */
+/* Timesheet coverage of the current month. Timesheets are due MONDAYS for the
+   prior week, so mid-week the raw calendar proportion overstates what should
+   have been logged and every pace number looks skewed. The defensible basis is
+   the last fully-DUE week: elapsed = working days (net of holidays) through
+   the Sunday before the most recent Monday, over the month's working days. */
+function mtdCoverage(){
+  if(!MTD_MONTH) return null;
+  const t=new Date();
+  const cov=new Date(t.getFullYear(),t.getMonth(),t.getDate()-((t.getDay()+6)%7)-1);   // Sunday before the last due Monday
+  const covKey=`${cov.getFullYear()}-${String(cov.getMonth()+1).padStart(2,"0")}-${String(cov.getDate()).padStart(2,"0")}`;
+  const c=calFor(MTD_MONTH.key);
+  const work=c.days.filter(d=>!c.hol.has(d));
+  const due=work.filter(d=>d<=covKey).length;
+  return { covered:covKey, due, total:work.length, prop: work.length? due/work.length : 0 };
+}
+/* Month-to-date cell: actuals so far next to the full-month forecast. With at
+   least one timesheet week due, it also projects the month-end landing
+   (actual ÷ due proportion) and shades by the PROJECTED variance; before the
+   first due Monday it stays neutral — any shading would be noise. */
 function mtdCell(f,a){
-  const d=a-f;
-  const sub=(f||a)?`<span class="pct">${d>0?"+":""}${fmt(d)}h${f?` · ${d>0?"+":""}${Math.round(d/f*100)}%`:""}</span>`:"";
-  return `<td class="mcelln mtd" title="Month to date — actuals synced so far vs the full-month forecast"><span class="h">${a?fmt(a):"·"}</span>${sub}</td>`;
+  const cov=mtdCoverage();
+  if(!cov || cov.prop<=0){
+    const d=a-f;
+    const sub=(f||a)?`<span class="pct">${d>0?"+":""}${fmt(d)}h${f?` · ${d>0?"+":""}${Math.round(d/f*100)}%`:""}</span>`:"";
+    return `<td class="mcelln mtd" title="Month to date — actuals synced so far vs the full-month forecast (no full timesheet week due yet, so no projection)"><span class="h">${a?fmt(a):"·"}</span>${sub}</td>`;
+  }
+  const proj=a/cov.prop, pd=proj-f;
+  const cls=(f||a)? varClass(f,proj) : "v-zero";
+  const sub=(f||a)?`<span class="pct">→ ${fmt(proj)||0}h · ${pd>0?"+":""}${fmt(pd)||0}h${f?` · ${pd>0?"+":""}${Math.round(pd/f*100)}%`:""}</span>`:"";
+  const tip=`Month to date: ${fmt0(a)}h logged vs ${fmt0(f)}h full-month forecast. Timesheets due through ${cov.covered} cover ${cov.due} of ${cov.total} working days (${Math.round(cov.prop*100)}%), so this paces to ${fmt0(proj)}h — ${pd>0?"+":""}${fmt0(pd)}h vs forecast. Hours already logged for the current (not yet due) week are included and flatter the pace slightly.`;
+  return `<td class="mcelln mtd ${cls}" title="${tip}"><span class="h">${a?fmt(a):"·"}</span>${sub}</td>`;
 }
 /* Month range shown on the variance tab (keys "YYYY-MM"; null = everything). */
 const VF={from:null,to:null};
@@ -1965,6 +1990,18 @@ function renderVariance(){
   if(underP.length) vRows.push(`<div class="csrow"><span class="cstag dn">under plan</span><span>${cap3(underP,x=>`<b>${esc(x.p.name)}</b> ${fmt(x.d)}h${pcts(x.rf,x.d)}`)}</span></div>`);
   if(noLog.length) vRows.push(`<div class="csrow"><span class="cstag rm">nothing logged</span><span>${cap3(noLog,x=>`<b>${esc(x.p.name)}</b> ${fmt0(x.rf)}h forecast, 0 actual`)}</span></div>`);
   if(unplanned.length) vRows.push(`<div class="csrow"><span class="cstag nw">unforecasted work</span><span>${cap3(unplanned,x=>`<b>${esc(x.p.name)}</b> ${fmt(x.ra)}h logged with no forecast`)}</span></div>`);
+  // Current-month pace, on the timesheet-due basis (Mondays): project the
+  // month-end landing from the weeks that are actually DUE, never raw days.
+  const cov=VMs.some(isMTD)? mtdCoverage() : null;
+  if(cov && cov.prop>0){
+    let mF=0, mA=0;
+    const mtdP=ppl.map(p=>{ const f=personForecastMonth(p.id,MTD_MONTH.key), a=personActualMonth(p.id,MTD_MONTH.key);
+      mF+=f; mA+=a; return {p,f,a,exp:f*cov.prop}; });
+    const proj=mA/cov.prop, pd=proj-mF;
+    vRows.push(`<div class="csrow"><span class="cstag sh">${MTD_MONTH.label} pace</span><span>timesheets due through <b>${cov.covered}</b> (${cov.due} of ${cov.total} working days): <b>${fmt0(mA)}h</b> logged vs <b>${fmt0(mF*cov.prop)}h</b> expected · paces to <b>${fmt0(proj)}h</b> vs <b>${fmt0(mF)}h</b> forecast (<b>${pd>0?"+":""}${fmt0(pd)}h</b>${mF?`, ${pd>0?"+":""}${Math.round(pd/mF*100)}%`:""})</span></div>`);
+    const behind=mtdP.filter(x=>x.exp-x.a>Math.max(8,x.exp*0.05)).sort((a,b)=>(b.exp-b.a)-(a.exp-a.a));
+    if(behind.length) vRows.push(`<div class="csrow"><span class="cstag dn">behind pace</span><span>${cap3(behind,x=>`<b>${esc(x.p.name)}</b> ${fmt(x.a)||0}h of ${fmt(x.exp)}h due (−${fmt(x.exp-x.a)}h)`)}</span></div>`);
+  }
   const varDigest=`<div class="chgsum">${vRows.join("")}</div>`;
   const head=`<thead><tr class="mhd"><th class="lbl" rowspan="2">Person</th>`+
     VMs.map(m=>`<th class="actual mgrp" colspan="2">${m.label}${isMTD(m)?" · MTD":""}</th>`).join("")+
@@ -2040,7 +2077,7 @@ function renderVariance(){
   const hasMtd=VMs.some(isMTD);
   document.getElementById("viewRoot").innerHTML=
     `<div class="panel"><div class="panel-hd"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h2>Forecast vs actual variance</h2>${vfCtl}</div>`+
-    `<span class="hint">closed months (${range})${hasMtd?` + <b>${MTD_MONTH.label} month-to-date</b> (neutral, excluded from totals)`:""} · <b>Fcst</b> = retained forecast · <b>Act</b> = Odoo actual with actual − forecast beneath · ${ppl.length} people · click a person to drill into their projects</span></div>`+
+    `<span class="hint">closed months (${range})${hasMtd?` + <b>${MTD_MONTH.label} month-to-date</b> (projected from timesheet weeks due — Mondays; excluded from totals)`:""} · <b>Fcst</b> = retained forecast · <b>Act</b> = Odoo actual with actual − forecast beneath · ${ppl.length} people · click a person to drill into their projects</span></div>`+
     varDigest+
     `<div class="scroll"><table class="pivot">${head}<tbody>${body}</tbody>${foot}</table></div>`+
     `<div class="legend"><span>Variance = Actual − Forecast</span>`+
