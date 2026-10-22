@@ -1984,23 +1984,53 @@ function renderVariance(){
   const onCnt=pStats.filter(x=>(x.rf||x.ra)&&!sig(x.rf,x.ra)).length;
   const totFd=pStats.reduce((s,x)=>s+x.rf,0), totAd=pStats.reduce((s,x)=>s+x.ra,0);
   const vRows=[];
-  vRows.push(`<div class="csrow"><span class="cstag ed">accuracy</span><span>forecast <b>${fmt0(totFd)}h</b> · actual <b>${fmt0(totAd)}h</b> · <b>${totAd-totFd>0?"+":""}${fmt0(totAd-totFd)}h</b>${pcts(totFd,totAd-totFd)} overall · ${onCnt} of ${pStats.length} people on plan (±5%)</span></div>`);
-  if(offProj.length) vRows.push(`<div class="csrow"><span class="cstag sh">projects off plan</span><span>${cap3(offProj,g=>`<b>${esc(g.pr.name)}</b> ${g.d>0?"+":""}${fmt(g.d)}h${pcts(g.f,g.d)}`)}</span></div>`);
-  if(overP.length) vRows.push(`<div class="csrow"><span class="cstag up">over plan</span><span>${cap3(overP,x=>`<b>${esc(x.p.name)}</b> +${fmt(x.d)}h${pcts(x.rf,x.d)}`)}</span></div>`);
-  if(underP.length) vRows.push(`<div class="csrow"><span class="cstag dn">under plan</span><span>${cap3(underP,x=>`<b>${esc(x.p.name)}</b> ${fmt(x.d)}h${pcts(x.rf,x.d)}`)}</span></div>`);
-  if(noLog.length) vRows.push(`<div class="csrow"><span class="cstag rm">nothing logged</span><span>${cap3(noLog,x=>`<b>${esc(x.p.name)}</b> ${fmt0(x.rf)}h forecast, 0 actual`)}</span></div>`);
-  if(unplanned.length) vRows.push(`<div class="csrow"><span class="cstag nw">unforecasted work</span><span>${cap3(unplanned,x=>`<b>${esc(x.p.name)}</b> ${fmt(x.ra)}h logged with no forecast`)}</span></div>`);
+  if(closed.length){
+    vRows.push(`<div class="csrow"><span class="cstag ed">accuracy</span><span>forecast <b>${fmt0(totFd)}h</b> · actual <b>${fmt0(totAd)}h</b> · <b>${totAd-totFd>0?"+":""}${fmt0(totAd-totFd)}h</b>${pcts(totFd,totAd-totFd)} overall · ${onCnt} of ${pStats.length} people on plan (±5%)</span></div>`);
+    if(offProj.length) vRows.push(`<div class="csrow"><span class="cstag sh">projects off plan</span><span>${cap3(offProj,g=>`<b>${esc(g.pr.name)}</b> ${g.d>0?"+":""}${fmt(g.d)}h${pcts(g.f,g.d)}`)}</span></div>`);
+    if(overP.length) vRows.push(`<div class="csrow"><span class="cstag up">over plan</span><span>${cap3(overP,x=>`<b>${esc(x.p.name)}</b> +${fmt(x.d)}h${pcts(x.rf,x.d)}`)}</span></div>`);
+    if(underP.length) vRows.push(`<div class="csrow"><span class="cstag dn">under plan</span><span>${cap3(underP,x=>`<b>${esc(x.p.name)}</b> ${fmt(x.d)}h${pcts(x.rf,x.d)}`)}</span></div>`);
+    if(noLog.length) vRows.push(`<div class="csrow"><span class="cstag rm">nothing logged</span><span>${cap3(noLog,x=>`<b>${esc(x.p.name)}</b> ${fmt0(x.rf)}h forecast, 0 actual`)}</span></div>`);
+    if(unplanned.length) vRows.push(`<div class="csrow"><span class="cstag nw">unforecasted work</span><span>${cap3(unplanned,x=>`<b>${esc(x.p.name)}</b> ${fmt(x.ra)}h logged with no forecast`)}</span></div>`);
+  }
   // Current-month pace, on the timesheet-due basis (Mondays): project the
   // month-end landing from the weeks that are actually DUE, never raw days.
+  // With ONLY the current month shown (the "This month" filter), this becomes
+  // the whole commentary: submitted timesheets vs forecast prorated to the due
+  // weeks — who is ahead, behind, hasn't submitted, or is underforecasted.
   const cov=VMs.some(isMTD)? mtdCoverage() : null;
   if(cov && cov.prop>0){
     let mF=0, mA=0;
     const mtdP=ppl.map(p=>{ const f=personForecastMonth(p.id,MTD_MONTH.key), a=personActualMonth(p.id,MTD_MONTH.key);
       mF+=f; mA+=a; return {p,f,a,exp:f*cov.prop}; });
+    const sigP=(exp,a)=>Math.abs(a-exp)>Math.max(8,exp*0.05);
+    const onPace=mtdP.filter(x=>(x.f||x.a)&&!sigP(x.exp,x.a)).length;
+    const nShown=mtdP.filter(x=>x.f||x.a).length;
     const proj=mA/cov.prop, pd=proj-mF;
-    vRows.push(`<div class="csrow"><span class="cstag sh">${MTD_MONTH.label} pace</span><span>timesheets due through <b>${cov.covered}</b> (${cov.due} of ${cov.total} working days): <b>${fmt0(mA)}h</b> logged vs <b>${fmt0(mF*cov.prop)}h</b> expected · paces to <b>${fmt0(proj)}h</b> vs <b>${fmt0(mF)}h</b> forecast (<b>${pd>0?"+":""}${fmt0(pd)}h</b>${mF?`, ${pd>0?"+":""}${Math.round(pd/mF*100)}%`:""})</span></div>`);
-    const behind=mtdP.filter(x=>x.exp-x.a>Math.max(8,x.exp*0.05)).sort((a,b)=>(b.exp-b.a)-(a.exp-a.a));
+    vRows.push(`<div class="csrow"><span class="cstag sh">${MTD_MONTH.label} pace</span><span>timesheets due through <b>${cov.covered}</b> (${cov.due} of ${cov.total} working days): <b>${fmt0(mA)}h</b> logged vs <b>${fmt0(mF*cov.prop)}h</b> expected · paces to <b>${fmt0(proj)}h</b> vs <b>${fmt0(mF)}h</b> forecast (<b>${pd>0?"+":""}${fmt0(pd)}h</b>${mF?`, ${pd>0?"+":""}${Math.round(pd/mF*100)}%`:""}) · ${onPace} of ${nShown} people on pace (±5%)</span></div>`);
+    if(!closed.length){
+      // projects off pace: expected-by-now vs submitted, per project
+      const prj=new Map();
+      ppl.forEach(p=>personProjects(p.id).forEach(j=>{
+        const f=(state.alloc[p.id]&&state.alloc[p.id][j]&&state.alloc[p.id][j][MTD_MONTH.key])||0;
+        const a=ACTUALS.get(`${p.id}|${j}|${MTD_MONTH.key}`)||0;
+        if(!f&&!a) return;
+        const g=prj.get(String(j))||{j:String(j),f:0,a:0}; g.f+=f; g.a+=a; prj.set(String(j),g);
+      }));
+      const offPace=[...prj.values()].map(g=>({...g,exp:g.f*cov.prop,pr:projById(g.j)}))
+        .filter(g=>g.pr&&sigP(g.exp,g.a)).map(g=>({...g,d:g.a-g.exp}))
+        .sort((a,b)=>Math.abs(b.d)-Math.abs(a.d));
+      if(offPace.length) vRows.push(`<div class="csrow"><span class="cstag sh">projects off pace</span><span>${cap3(offPace,g=>`<b>${esc(g.pr.name)}</b> ${fmt(g.a)||0}h of ${fmt(g.exp)}h due (${g.d>0?"+":"−"}${fmt(Math.abs(g.d))}h)`)}</span></div>`);
+      const ahead=mtdP.filter(x=>x.f>0&&x.a-x.exp>Math.max(8,x.exp*0.05)).sort((a,b)=>(b.a-b.exp)-(a.a-a.exp));
+      if(ahead.length) vRows.push(`<div class="csrow"><span class="cstag up">ahead of pace</span><span>${cap3(ahead,x=>`<b>${esc(x.p.name)}</b> ${fmt(x.a)}h of ${fmt(x.exp)}h due (+${fmt(x.a-x.exp)}h)`)}</span></div>`);
+    }
+    const behind=mtdP.filter(x=>x.a>0&&x.exp-x.a>Math.max(8,x.exp*0.05)).sort((a,b)=>(b.exp-b.a)-(a.exp-a.a));
     if(behind.length) vRows.push(`<div class="csrow"><span class="cstag dn">behind pace</span><span>${cap3(behind,x=>`<b>${esc(x.p.name)}</b> ${fmt(x.a)||0}h of ${fmt(x.exp)}h due (−${fmt(x.exp-x.a)}h)`)}</span></div>`);
+    const noSheet=mtdP.filter(x=>x.exp>8&&x.a===0).sort((a,b)=>b.exp-a.exp);
+    if(noSheet.length) vRows.push(`<div class="csrow"><span class="cstag rm">nothing submitted</span><span>${cap3(noSheet,x=>`<b>${esc(x.p.name)}</b> ${fmt(x.exp)}h due, no timesheets`)}</span></div>`);
+    if(!closed.length){
+      const underF=mtdP.filter(x=>x.f===0&&x.a>8).sort((a,b)=>b.a-a.a);
+      if(underF.length) vRows.push(`<div class="csrow"><span class="cstag nw">underforecasted</span><span>${cap3(underF,x=>`<b>${esc(x.p.name)}</b> ${fmt(x.a)}h submitted with no forecast this month`)}</span></div>`);
+    }
   }
   const varDigest=`<div class="chgsum">${vRows.join("")}</div>`;
   const head=`<thead><tr class="mhd"><th class="lbl" rowspan="2">Person</th>`+
