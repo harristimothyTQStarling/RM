@@ -406,8 +406,33 @@ async function putTbh(db, user, t) {
   const shore = normShore(t.shore);
   const cur = await db.get("SELECT id, version FROM tbh WHERE scenario=? AND tbh_key=?", [scenario, t.tbhKey]);
   if (!cur) {
+    // A NEW pool must carry a projected cost (mandatory): either values in
+    // t.cost (salary- or hourly-based card) or t.costFrom (copy an existing
+    // costed pool's card — the seat-clone path). The bulk forecast import
+    // (t.source === "import") is exempt: it cannot prompt, and its uncosted
+    // pools are flagged in the margin views until costed on the sheet.
+    const c = t.cost || {};
+    const num = (v) => { if (v === null || v === undefined || v === "") return null;
+      const x = Number(v); return Number.isFinite(x) && x >= 0 ? Math.round(x * 100) / 100 : NaN; };
+    const vals = ["annual", "biweekly", "monthly", "hourly"].map(k => num(c[k]));
+    if (vals.some(Number.isNaN)) { const e = new Error("projected cost values must be numbers >= 0"); e.code = "bad_request"; throw e; }
+    const has = vals.some(v => v !== null && v > 0);
+    let src = null;
+    if (!has && t.costFrom) src = await db.get("SELECT annual, biweekly, monthly, hourly FROM cost_rate_tbh WHERE tbh_key = ?", [String(t.costFrom)]);
+    if (!has && !src && t.source !== "import") {
+      const e = new Error("a projected cost (salary or hourly) is required for a new TBA pool");
+      e.code = "bad_request"; throw e;
+    }
     await db.run("INSERT INTO tbh (scenario, tbh_key, name, role, dept, shore, start_month, capacity, updated_by, updated_at, version) VALUES (?,?,?,?,?,?,?,?,?,?,1)",
       [scenario, t.tbhKey, t.name, t.role || "", t.dept || "", shore, start, t.cap == null ? null : Number(t.cap), user.upn, nowIso()]);
+    const card = has ? vals : src ? [src.annual, src.biweekly, src.monthly, src.hourly] : null;
+    if (card) await db.run(
+      `INSERT INTO cost_rate_tbh (tbh_key, annual, biweekly, monthly, hourly, updated_by, updated_at)
+       VALUES (?,?,?,?,?,?,?)
+       ON CONFLICT (tbh_key) DO UPDATE SET
+         annual=excluded.annual, biweekly=excluded.biweekly, monthly=excluded.monthly, hourly=excluded.hourly,
+         updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
+      [t.tbhKey, ...card, user.upn, nowIso()]);
     await audit(db, user.upn, "tbh", `${scenario}|${t.tbhKey}`, "insert", null, t.name);
     return { version: 1 };
   }
@@ -614,6 +639,13 @@ async function moveTbaTarget(db, user, { tbhKey, targetKey, shore, scenario = "b
     if (!dest) {
       await db.run("INSERT INTO tbh (scenario, tbh_key, name, role, dept, shore, start_month, capacity, updated_by, updated_at, version) VALUES (?,?,?,?,?,?,NULL,NULL,?,?,1)",
         [scenario, destSlug, tbaName(src.role, destShore), src.role, src.dept || "", destShore, user.upn, nowIso()]);
+      // Projected cost is mandatory on new pools: the twin inherits the source
+      // pool's card (same role — best available estimate for the other shore).
+      await db.run(
+        `INSERT INTO cost_rate_tbh (tbh_key, annual, biweekly, monthly, hourly, updated_by, updated_at)
+         SELECT ?, annual, biweekly, monthly, hourly, ?, ? FROM cost_rate_tbh WHERE tbh_key = ?
+         ON CONFLICT (tbh_key) DO NOTHING`,
+        [destSlug, user.upn, nowIso(), tbhKey]);
       await audit(db, user.upn, "tbh", `${scenario}|${destSlug}`, "insert", null, tbaName(src.role, destShore));
     }
     let moved = 0, merged = 0;

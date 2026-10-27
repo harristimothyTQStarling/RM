@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 /**
  * Runs the real handlers against a real (in-memory) database.
  *   node --test api/test/
@@ -34,7 +34,7 @@ test("write then read round-trips", async () => {
 
 test("CRM opportunities and TBH resources are storable (no id collision)", async () => {
   const db = fresh();
-  await call(db, "PUT", "/api/tbh", { tbhKey: "resource-3", name: "RESOURCE 3", role: "Business Process Consultant", dept: "", start: "2026-07", cap: 160 });
+  await call(db, "PUT", "/api/tbh", { tbhKey: "resource-3", name: "RESOURCE 3", role: "Business Process Consultant", dept: "", start: "2026-07", cap: 160, cost: { hourly: 75 } });
   await call(db, "PUT", "/api/allocation", { resourceKey: "tbh:resource-3", targetKey: "crm:222", month: fm(1), hours: 80, version: 0 });
   const plan = await call(db, "GET", "/api/plan");
   assert.equal(plan.body.tbh[0].dept, "", "TBH with no department persists");
@@ -52,7 +52,7 @@ test("writes to a past month are rejected (400), even from an editor", async () 
   assert.equal((await call(db, "GET", "/api/plan")).body.allocations.length, 0, "nothing was written");
 });
 
-test("a batch containing a past month fails atomically — nothing is applied", async () => {
+test("a batch containing a past month fails atomically â€” nothing is applied", async () => {
   const db = fresh();
   const items = [
     { resourceKey: "emp:110", targetKey: "prj:119", month: fm(1), hours: 50, version: 0 },
@@ -125,7 +125,7 @@ test("editor can map a closed CRM opp's forecast onto a project; viewer cannot",
   assert.deepEqual(rows.map((a) => a.targetKey), ["prj:119"], "forecast now lives on the project");
 });
 
-/* ---- proposed hires (TBA pool × project) ---- */
+/* ---- proposed hires (TBA pool Ã— project) ---- */
 
 test("proposed hire: set, read back, overwrite, clear; viewers cannot write", async () => {
   const db = fresh();
@@ -164,7 +164,7 @@ test("/api/me reports role", async () => {
 
 /* ---- batch (bulk allocate / import) ---- */
 
-test("batch write is atomic — a conflict rolls the whole import back", async () => {
+test("batch write is atomic â€” a conflict rolls the whole import back", async () => {
   const db = fresh();
   await putAlloc(db, 100, 0);                       // existing cell at v1
   const items = [
@@ -195,14 +195,14 @@ test("import overrides are shared, and clearable so auto-match re-runs", async (
   assert.equal(plan.body.importMap.project["Advocate Health - BCM Implementation"], "crm:222");
   await call(db, "PUT", "/api/importmap", { kind: "project", sourceName: "Advocate Health - BCM Implementation", targetKey: null });
   plan = await call(db, "GET", "/api/plan");
-  assert.equal(plan.body.importMap.project["Advocate Health - BCM Implementation"], undefined, "cleared → matcher re-runs");
+  assert.equal(plan.body.importMap.project["Advocate Health - BCM Implementation"], undefined, "cleared â†’ matcher re-runs");
 });
 
 /* ---- TBH cleanup ---- */
 
 test("deleting a TBH removes its allocations (no orphan demand)", async () => {
   const db = fresh();
-  await call(db, "PUT", "/api/tbh", { tbhKey: "r3", name: "TBH r3" });
+  await call(db, "PUT", "/api/tbh", { tbhKey: "r3", name: "TBH r3", cost: { annual: 100000 } });
   await call(db, "PUT", "/api/allocation", { resourceKey: "tbh:r3", targetKey: "prj:119", month: fm(0), hours: 40, version: 0 });
   await call(db, "DELETE", "/api/tbh/r3");
   const plan = await call(db, "GET", "/api/plan");

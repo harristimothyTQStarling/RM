@@ -174,3 +174,50 @@ test("moveTbaTarget: merging into an existing pool sums collisions; same-shore m
   assert.equal(cell.hours, 50, "30 + 20 summed");
   await assert.rejects(() => moveTbaTarget(db, U, { tbhKey: "tba-senior-qa-offshore", targetKey: "prj:103", shore: "offshore" }), /already in the offshore pool/);
 });
+
+/* Projected cost is MANDATORY on new pools (salary or hourly), supplied at
+   creation or inherited via costFrom; updates to existing pools are exempt,
+   and the bulk forecast import is exempted explicitly. */
+const { as: asUser, call: callApi, fm: fmx } = require("./helpers");
+process.env.EDITOR_UPNS = process.env.EDITOR_UPNS || "tim@tqstarling.com";
+const TIMH = asUser("tim@tqstarling.com");
+
+test("a new TBA pool requires a projected cost; the card lands in cost_rate_tbh", async () => {
+  const db = open({ driver: "sqlite", file: ":memory:" });
+  const mk = (body) => callApi(db, "PUT", "/api/tbh", body, TIMH);
+
+  const bare = await mk({ tbhKey: "tba-architect-onshore", name: "TBA - Architect (Onshore)", role: "Architect" });
+  assert.equal(bare.status, 400, "no cost -> refused");
+  assert.match(bare.body.error, /projected cost/);
+
+  assert.equal((await mk({ tbhKey: "tba-architect-onshore", name: "TBA - Architect (Onshore)", role: "Architect", cost: { annual: 160000, hourly: 95.69 } })).status, 200);
+  const card = await db.get("SELECT annual, hourly FROM cost_rate_tbh WHERE tbh_key='tba-architect-onshore'");
+  assert.deepEqual(card, { annual: 160000, hourly: 95.69 }, "cost card written with the pool");
+
+  // updating the existing pool (e.g. dept change) needs no cost
+  assert.equal((await mk({ tbhKey: "tba-architect-onshore", name: "TBA - Architect (Onshore)", role: "Architect", dept: "Delivery" })).status, 200);
+
+  // a seat clone inherits via costFrom
+  assert.equal((await mk({ tbhKey: "tba-architect-onshore-2", name: "TBA - Architect (Onshore) #2", role: "Architect", costFrom: "tba-architect-onshore" })).status, 200);
+  const seat = await db.get("SELECT annual FROM cost_rate_tbh WHERE tbh_key='tba-architect-onshore-2'");
+  assert.equal(Number(seat.annual), 160000, "seat inherited the source card");
+
+  // costFrom pointing at an uncosted pool does not satisfy the rule
+  assert.equal((await mk({ tbhKey: "tba-dev-onshore", name: "TBA - Dev (Onshore)", role: "Dev", costFrom: "no-such-pool" })).status, 400);
+
+  // the bulk import path is exempt (cannot prompt) - pools stay uncosted + flagged
+  assert.equal((await mk({ tbhKey: "tba-imported-onshore", name: "TBA - Imported (Onshore)", role: "Imported", source: "import" })).status, 200);
+  assert.equal(await db.get("SELECT 1 AS x FROM cost_rate_tbh WHERE tbh_key='tba-imported-onshore'"), undefined);
+
+  assert.equal((await mk({ tbhKey: "tba-bad-onshore", name: "x", role: "x", cost: { hourly: -4 } })).status, 400, "negative cost refused");
+});
+
+test("a shore move's twin pool inherits the source projected-cost card", async () => {
+  const db = open({ driver: "sqlite", file: ":memory:" });
+  seedSeat(db, "tba-senior-qa-onshore", "TBA - Senior QA (Onshore)", "Senior QA", { shore: "onshore" });
+  db.run("INSERT INTO cost_rate_tbh (tbh_key,annual,biweekly,monthly,hourly,updated_by,updated_at) VALUES ('tba-senior-qa-onshore',120000,5422.22,12200,71.76,'x','2026-01-01')");
+  seedAlloc(db, "tbh:tba-senior-qa-onshore", "prj:103", "2099-09", 30);
+  await moveTbaTarget(db, U, { tbhKey: "tba-senior-qa-onshore", targetKey: "prj:103", shore: "offshore" });
+  const twin = await db.get("SELECT annual, hourly FROM cost_rate_tbh WHERE tbh_key='tba-senior-qa-offshore'");
+  assert.deepEqual(twin, { annual: 120000, hourly: 71.76 }, "twin pool costed from the source");
+});

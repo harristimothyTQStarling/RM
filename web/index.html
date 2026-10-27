@@ -1727,11 +1727,20 @@ function nextSeat(role,shore){
   while(state.tbh.some(t=>String(t.id)==="tbh-"+base+"-"+n)) n++;
   return { key: base+"-"+n, name: tbaLabel(role,shore)+" #"+n, n };
 }
-function createPool(key,name,role,dept,shore){
+function createPool(key,name,role,dept,shore,costOpts){
+  // Every new pool carries a projected cost (server-enforced): costOpts is
+  // {cost:{annual,biweekly,monthly,hourly}} from the form, or
+  // {costFrom:"<pool key>"} to inherit an existing pool's card (seat clones).
   const t={id:"tbh-"+key,name,role,dept:dept||"",shore,type:"tbh",start:null,cap:null};
   state.tbh.push(t);
-  api("PUT","/api/tbh",{tbhKey:key,name,role,dept:dept||"",shore,start:null,cap:null})
-    .then(()=>status("Saved")).catch(e=>toast("Role pool not saved: "+e.message));
+  api("PUT","/api/tbh",{tbhKey:key,name,role,dept:dept||"",shore,start:null,cap:null,...(costOpts||{})})
+    .then(()=>status("Saved"))
+    .catch(e=>{ toast("Role pool not saved: "+e.message); bootstrap(); });   // resync drops the phantom pool
+  if(COST.rates){ // keep the costing cache warm for the margin tabs
+    if(costOpts&&costOpts.cost) COST.rates.set("tbh-"+key,{tbhKey:key,...costOpts.cost});
+    else if(costOpts&&costOpts.costFrom&&COST.rates.has("tbh-"+costOpts.costFrom))
+      COST.rates.set("tbh-"+key,{...COST.rates.get("tbh-"+costOpts.costFrom),tbhKey:key});
+  }
   return t;
 }
 let tbaOpen = new Set();
@@ -1830,9 +1839,11 @@ function renderHiring(){
           `<div class="field"><label>Role / title</label><input type="text" id="tbhRole" list="roleList" placeholder="e.g. Senior Solution Consultant"><datalist id="roleList">${roleOpts.map(r=>`<option value="${r}">`).join("")}</datalist></div>`+
           `<div class="field"><label>Department</label><select id="tbhDept">${deptOpts}</select></div>`+
           `<div class="field"><label>Shore</label><select id="tbhShore"><option value="onshore">Onshore</option><option value="offshore">Offshore</option></select></div>`+
+          `<div class="field"><label>Projected annual salary $ <span class="muted">(required*)</span></label><input type="number" min="0" step="1000" id="tbhCostA" placeholder="e.g. 120000"></div>`+
+          `<div class="field"><label>…or projected hourly $ <span class="muted">(required*)</span></label><input type="number" min="0" step="1" id="tbhCostH" placeholder="e.g. 85"></div>`+
         `</div>`+
         `<button class="btn primary" id="tbhAdd">Add role pool</button>`+
-        `<div class="muted" style="font-size:11.5px;margin-top:6px">Named “TBA - &lt;role&gt;”. Adding an existing role offers a second numbered seat (“#2”) or opens the pool — so a project can carry several open positions of the same role.</div>`+
+        `<div class="muted" style="font-size:11.5px;margin-top:6px">Named “TBA - &lt;role&gt;”. Adding an existing role offers a second numbered seat (“#2”) or opens the pool. *A projected cost is required — enter either a salary (auto-loads ×1.22 like employees) or an hourly cost; margins use it until the seat is filled. Refine later on the Resource costs sheet.</div>`+
       `</div></div>`+
       `<div class="card"><h3>Suggested roles — capacity gaps</h3><div class="bd">${gapHtml}</div></div>`+
     `</div>`+
@@ -2877,7 +2888,8 @@ document.getElementById("viewRoot").addEventListener("change",e=>{
       if(!canEdit()) return;
       const src=state.tbh.find(t=>String(t.id)===pid.slice(5)); if(!src) return;
       const s=nextSeat(src.role,src.shore);
-      pid=String(createPool(s.key,s.name,src.role,src.dept,src.shore).id);
+      // projected cost is mandatory: the new seat inherits the source pool's card
+      pid=String(createPool(s.key,s.name,src.role,src.dept,src.shore,{costFrom:String(src.id).replace(/^tbh-/,"")}).id);
       renderKpis();
     }
     if(!state.alloc[pid]) state.alloc[pid]={}; if(!state.alloc[pid][projid]) state.alloc[pid][projid]={};
@@ -3034,17 +3046,29 @@ function addTbh(){
   if(!role){ document.getElementById("tbhRole").focus(); return; }
   // One BASE pool per (role, shore) — but extra open seats of the same role can
   // be added as numbered pools ("#2", "#3", …), each a full pool of its own.
+  // A projected cost (salary OR hourly) is mandatory for every new pool.
+  const ca=Number(document.getElementById("tbhCostA").value)||0;
+  const ch=Number(document.getElementById("tbhCostH").value)||0;
   const key=slugRole(role,shore), id="tbh-"+key;
   const existing=state.tbh.find(t=>String(t.id)===id);
+  if(!(ca>0)&&!(ch>0)){
+    if(existing){ tbaOpen.add(id); renderHiring(); toast(`Opened “${tbaLabel(role,shore)}”.`); return; }   // opening needs no cost
+    toast("Projected cost is required — enter an annual salary or an hourly cost.");
+    document.getElementById("tbhCostA").focus(); return;
+  }
+  const r2=n=>Math.round(n*100)/100;
+  const cost= ca>0
+    ? {annual:ca, biweekly:r2(ca/27*1.22), monthly:r2(ca/12*1.22), hourly: ch>0? r2(ch) : r2(ca/2040*1.22)}
+    : {hourly:r2(ch)};
   if(existing){
     const s=nextSeat(role,shore);
     if(!window.confirm(`“${tbaLabel(role,shore)}” already exists.\n\nOK — add another pool for a second open seat (“${s.name}”).\nCancel — open the existing pool.`)){
       tbaOpen.add(id); renderHiring(); toast(`Opened “${tbaLabel(role,shore)}”.`); return;
     }
-    const t=createPool(s.key,s.name,role,dept,shore);
+    const t=createPool(s.key,s.name,role,dept,shore,{cost});
     tbaOpen.add(String(t.id)); renderHiring(); renderKpis(); return;
   }
-  createPool(key,tbaLabel(role,shore),role,dept,shore);
+  createPool(key,tbaLabel(role,shore),role,dept,shore,{cost});
   tbaOpen.add(id); renderHiring(); renderKpis();
 }
 
@@ -3489,7 +3513,9 @@ function applyImport(records,pmap,prmap,sheetName,rolemap){
     const ex=state.tbh.find(t=>String(t.id)===String(s.id));
     if(ex){ ex.name=s.name; ex.role=s.role; ex.shore=s.shore; if(!ex.dept) ex.dept=s.dept; }
     else state.tbh.push({id:s.id,name:s.name,role:s.role,dept:s.dept,shore:s.shore,type:"tbh",start:null,cap:null});
-    api("PUT","/api/tbh",{tbhKey:String(s.id).replace(/^tbh-/,""),name:s.name,role:s.role,dept:s.dept,shore:s.shore,start:null,cap:null}).catch(()=>{});
+    // Bulk import cannot prompt for a projected cost — exempted server-side;
+    // uncosted pools stay flagged on the margin tabs until costed on the sheet.
+    api("PUT","/api/tbh",{tbhKey:String(s.id).replace(/^tbh-/,""),name:s.name,role:s.role,dept:s.dept,shore:s.shore,start:null,cap:null,source:"import"}).catch(()=>{});
   });
   let applied=0;
   const rateHrs={}, rateDol={};   // per mapped person|project pair: hours & dollars from rated rows → weighted avg bill rate

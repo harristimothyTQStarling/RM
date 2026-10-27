@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 /**
  * TBH -> employee forecast handover (POST /api/tbh/shift).
  * Months from the current month onward move; closed months stay; collisions and
@@ -17,7 +17,7 @@ const call = (db, method, path, body, headers = EDITOR, query = {}) => rawCall(d
 async function seed(db) {
   db.run("INSERT INTO ref_person (id,name,role,dept,type,active) VALUES (110,'Alex Rivera','Senior Technical Consultant','Delivery','employee',1)");
   db.run("INSERT INTO ref_person (id,name,role,dept,type,active) VALUES (111,'Jordan Lee','Technical Consultant','Delivery','employee',1)");
-  await call(db, "PUT", "/api/tbh", { tbhKey: "tc-1", name: "To Hire - TC #1", role: "Technical Consultant", dept: "Delivery", start: fm(0), cap: 160 });
+  await call(db, "PUT", "/api/tbh", { tbhKey: "tc-1", name: "To Hire - TC #1", role: "Technical Consultant", dept: "Delivery", start: fm(0), cap: 160, cost: { hourly: 80 } });
   await call(db, "PUT", "/api/allocation", { resourceKey: "tbh:tc-1", targetKey: "prj:101", month: fm(0), hours: 120, version: 0 });
   await call(db, "PUT", "/api/allocation", { resourceKey: "tbh:tc-1", targetKey: "prj:101", month: fm(1), hours: 140, version: 0 });
   await call(db, "PUT", "/api/allocation", { resourceKey: "tbh:tc-1", targetKey: "prj:102", month: fm(1), hours: 60, version: 0 });
@@ -70,7 +70,7 @@ test("a partial move leaves the unselected project on the seat", async () => {
 
 test("closed-month forecast stays behind", async () => {
   const db = fresh(); await seed(db);
-  // a retained past-month forecast row on the seat (inserted directly — the API
+  // a retained past-month forecast row on the seat (inserted directly â€” the API
   // rightly refuses to write past months)
   db.run("INSERT INTO allocation (scenario,resource_key,target_key,month,hours,updated_by,updated_at,version) VALUES ('baseline','tbh:tc-1','prj:101',?,80,'x','2026-01-01',1)", [`${fm(-2)}-01`]);
   await call(db, "POST", "/api/tbh/shift", { tbhKey: "tc-1", moves: [{ targetKey: "prj:101", employeeId: 110 }] });
