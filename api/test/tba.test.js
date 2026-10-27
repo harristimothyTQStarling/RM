@@ -221,3 +221,29 @@ test("a shore move's twin pool inherits the source projected-cost card", async (
   const twin = await db.get("SELECT annual, hourly FROM cost_rate_tbh WHERE tbh_key='tba-senior-qa-offshore'");
   assert.deepEqual(twin, { annual: 120000, hourly: 71.76 }, "twin pool costed from the source");
 });
+
+test("existing pools: cost revisions upsert the card; /api/tbh/cost is editor-gated", async () => {
+  const db = open({ driver: "sqlite", file: ":memory:" });
+  const mk = (body, who) => callApi(db, "PUT", "/api/tbh", body, who || TIMH);
+  assert.equal((await mk({ tbhKey: "tba-pm-onshore", name: "TBA - PM (Onshore)", role: "PM", cost: { annual: 140000, hourly: 83.73 } })).status, 200);
+
+  // revise the existing pool: hourly-only replaces the card
+  assert.equal((await mk({ tbhKey: "tba-pm-onshore", name: "TBA - PM (Onshore)", role: "PM", cost: { hourly: 95 } })).status, 200);
+  let card = await db.get("SELECT annual, hourly FROM cost_rate_tbh WHERE tbh_key='tba-pm-onshore'");
+  assert.deepEqual(card, { annual: null, hourly: 95 }, "revision replaced the card");
+
+  // an update WITHOUT cost leaves the card alone
+  assert.equal((await mk({ tbhKey: "tba-pm-onshore", name: "TBA - PM (Onshore)", role: "PM", dept: "Delivery" })).status, 200);
+  card = await db.get("SELECT hourly FROM cost_rate_tbh WHERE tbh_key='tba-pm-onshore'");
+  assert.equal(Number(card.hourly), 95, "dept change did not touch the card");
+
+  // bad revision values are refused
+  assert.equal((await mk({ tbhKey: "tba-pm-onshore", name: "TBA - PM (Onshore)", role: "PM", cost: { hourly: "nope" } })).status, 400);
+
+  // the read endpoint serves editors only, and only the two entry fields
+  const viewer = asUser("viewer@tqstarling.com");
+  assert.equal((await callApi(db, "GET", "/api/tbh/cost", null, viewer)).status, 403, "viewers refused");
+  const r = await callApi(db, "GET", "/api/tbh/cost", null, TIMH);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.tbhRates, [{ tbhKey: "tba-pm-onshore", annual: null, hourly: 95 }]);
+});

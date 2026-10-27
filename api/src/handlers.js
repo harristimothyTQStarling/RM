@@ -137,6 +137,17 @@ async function handle(db, req) {
     }
   }
 
+  // Projected costs of TBA pools, for the editing controls on the To Be
+  // Assigned tab. Editors only — these are planning assumptions for unfilled
+  // seats, not payroll — and only the two entry fields are served; full cards
+  // stay behind the costing role on /api/cost.
+  if (method === "GET" && path === "/api/tbh/cost") {
+    if (!canEdit(user)) return FORBID;
+    const rows = await db.all("SELECT tbh_key, annual, hourly FROM cost_rate_tbh");
+    const n = (v) => (v === null || v === undefined ? null : Number(v));
+    return json(200, { tbhRates: rows.map(r => ({ tbhKey: r.tbh_key, annual: n(r.annual), hourly: n(r.hourly) })) });
+  }
+
   // Change history between two dates. Open to every signed-in user: it carries
   // the same plan detail and audit attribution the rest of the app already
   // shows viewers — no cost data.

@@ -1741,9 +1741,27 @@ function createPool(key,name,role,dept,shore,costOpts){
     else if(costOpts&&costOpts.costFrom&&COST.rates.has("tbh-"+costOpts.costFrom))
       COST.rates.set("tbh-"+key,{...COST.rates.get("tbh-"+costOpts.costFrom),tbhKey:key});
   }
+  if(TBHCOST){ // and the hiring tab's edit fields
+    if(costOpts&&costOpts.cost) TBHCOST.set(key,{annual:costOpts.cost.annual??null,hourly:costOpts.cost.hourly??null});
+    else if(costOpts&&costOpts.costFrom&&TBHCOST.has(costOpts.costFrom)) TBHCOST.set(key,{...TBHCOST.get(costOpts.costFrom)});
+  }
   return t;
 }
 let tbaOpen = new Set();
+/* Projected costs of pools, for the edit fields on the To Be Assigned tab.
+   Editors only (served by /api/tbh/cost); annual + hourly, the two entry
+   options. Loaded lazily on first render of the tab. */
+let TBHCOST=null, TBHCOST_LOADING=false;
+async function loadTbhCost(){
+  if(TBHCOST_LOADING || TBHCOST || !canEdit()) return;
+  TBHCOST_LOADING=true;
+  try{
+    const r=await api("GET","/api/tbh/cost");
+    TBHCOST=new Map((r.tbhRates||[]).map(x=>[x.tbhKey,{annual:x.annual,hourly:x.hourly}]));
+  }catch(e){ TBHCOST=new Map(); }
+  TBHCOST_LOADING=false;
+  if(VIEW==="hiring") renderHiring();
+}
 const proposedFor = (pid,projid) => state.proposed[`${pid}|${projid}`] || "";
 /* Available capacity for a role in a month: what people who ALREADY have that
    role could still absorb — capacity minus allocated (actuals for closed months,
@@ -1799,6 +1817,7 @@ function tbaDrill(t){
   return html;
 }
 function renderHiring(){
+  if(canEdit() && !TBHCOST) loadTbhCost();   // projected-cost fields fill in once loaded
   const pools=state.tbh.slice().sort((a,b)=>(a.role||"~").localeCompare(b.role||"~"));
   const roleOpts=[...new Set(PEOPLE.map(p=>p.role).filter(Boolean))].sort();
   const gaps=detectGaps();
@@ -1818,6 +1837,10 @@ function renderHiring(){
       `<div class="info" style="cursor:pointer" data-tbaopen="${t.id}"><div class="r">${esc(t.name)} <span class="muted" style="font-weight:400;font-size:11px">${open?"▾":"▸"} click to ${open?"collapse":"drill into projects & capacity"}</span></div>`+
         `<div class="d">${esc(t.role||"—")} · ${t.shore==="offshore"?"Offshore":"Onshore"} · ${isD()? money(personDollars(t.id))+" planned" : fmt0(yr)+"h planned"}</div></div>`+
       `<label class="tba-dept" title="Department this pool is associated with — change it any time, or leave unassigned">Dept <select data-tbadept="${t.id}">${poolDeptOpts(t.dept)}</select></label>`+
+      (()=>{ const k=String(t.id).replace(/^tbh-/,""), c=(TBHCOST&&TBHCOST.get(k))||{};
+        return `<label class="tba-dept" title="Projected cost of this unfilled seat — annual salary (auto-loads ×1.22 like employees) or hourly. Margins use it until the seat is filled; refine on the Resource costs sheet.">Cost `+
+          `$<input type="number" min="0" step="1000" data-tbacost="${t.id}|annual" value="${c.annual??""}" placeholder="salary" style="width:88px;padding:4px 6px">/yr · `+
+          `$<input type="number" min="0" step="1" data-tbacost="${t.id}|hourly" value="${c.hourly??""}" placeholder="hr" style="width:64px;padding:4px 6px">/hr</label>`; })()+
       (fut>0?`<button class="btn primary" data-shifttbh="${t.id}" style="padding:5px 9px" title="Someone was hired/assigned — move this role's forecast onto the real person">Shift forecast → employee</button>`:"")+
       `<button class="btn" data-deltbh="${t.id}" style="padding:5px 9px">Remove</button>`+
       (open?`<div style="flex-basis:100%;min-width:0">${tbaDrill(t)}</div>`:"")+
@@ -2845,6 +2868,28 @@ document.getElementById("viewRoot").addEventListener("change",e=>{
     if(name) state.proposed[`${pid}|${projid}`]=name; else delete state.proposed[`${pid}|${projid}`];
     api("PUT","/api/proposed",{resourceKey:resKey(pid),targetKey:tgtKey(projid),name})
       .then(()=>status("Saved")).catch(err=>toast("Proposed hire not saved: "+err.message));
+    return;
+  }
+  if(el.dataset.tbacost!==undefined){ // revise an existing pool's projected cost (salary or hourly)
+    if(!canEdit()) return;
+    const [tid]=el.dataset.tbacost.split("|");
+    const t=state.tbh.find(x=>String(x.id)===String(tid)); if(!t) return;
+    const key=String(tid).replace(/^tbh-/,"");
+    const gv=f=>{ const i=document.querySelector(`[data-tbacost="${tid}|${f}"]`); const v=i&&i.value!==""?Number(i.value):null;
+      return v!=null&&Number.isFinite(v)&&v>=0? v:null; };
+    const ca=gv("annual"), ch=gv("hourly");
+    if(!(ca>0)&&!(ch>0)){ const c=(TBHCOST&&TBHCOST.get(key))||{};
+      el.value=(el.dataset.tbacost.endsWith("annual")?c.annual:c.hourly)??"";
+      toast("Projected cost stays mandatory — enter a salary or an hourly cost."); return; }
+    const r2=n=>Math.round(n*100)/100;
+    const cost= ca>0? {annual:ca,biweekly:r2(ca/27*1.22),monthly:r2(ca/12*1.22),hourly:ch>0?r2(ch):r2(ca/2040*1.22)} : {hourly:r2(ch)};
+    api("PUT","/api/tbh",{tbhKey:key,name:t.name,role:t.role,dept:t.dept,shore:t.shore,start:t.start,cap:t.cap,cost})
+      .then(()=>{ if(TBHCOST) TBHCOST.set(key,{annual:cost.annual??null,hourly:cost.hourly??null});
+        if(COST.rates) COST.rates.set("tbh-"+key,{tbhKey:key,...cost});
+        const hi=document.querySelector(`[data-tbacost="${tid}|hourly"]`);
+        if(hi && !(ch>0) && cost.hourly) hi.value=cost.hourly;   // show the salary-derived hourly
+        status("Saved"); })
+      .catch(e=>toast("Projected cost not saved: "+e.message));
     return;
   }
   if(el.dataset.tbadept!==undefined){ const t=state.tbh.find(x=>String(x.id)===String(el.dataset.tbadept));

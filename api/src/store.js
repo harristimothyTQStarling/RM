@@ -439,6 +439,22 @@ async function putTbh(db, user, t) {
   const next = cur.version + 1;
   await db.run("UPDATE tbh SET name=?, role=?, dept=?, shore=?, start_month=?, capacity=?, updated_by=?, updated_at=?, version=? WHERE id=?",
     [t.name, t.role || "", t.dept || "", shore, start, t.cap == null ? null : Number(t.cap), user.upn, nowIso(), next, cur.id]);
+  // Editors may revise an EXISTING pool's projected cost too: a cost object
+  // with at least one positive value replaces the card. Absent/empty cost
+  // leaves the card alone (deleting one stays on the Resource costs sheet).
+  if (t.cost) {
+    const num = (v) => { if (v === null || v === undefined || v === "") return null;
+      const x = Number(v); return Number.isFinite(x) && x >= 0 ? Math.round(x * 100) / 100 : NaN; };
+    const vals = ["annual", "biweekly", "monthly", "hourly"].map(k => num(t.cost[k]));
+    if (vals.some(Number.isNaN)) { const e = new Error("projected cost values must be numbers >= 0"); e.code = "bad_request"; throw e; }
+    if (vals.some(v => v !== null && v > 0)) await db.run(
+      `INSERT INTO cost_rate_tbh (tbh_key, annual, biweekly, monthly, hourly, updated_by, updated_at)
+       VALUES (?,?,?,?,?,?,?)
+       ON CONFLICT (tbh_key) DO UPDATE SET
+         annual=excluded.annual, biweekly=excluded.biweekly, monthly=excluded.monthly, hourly=excluded.hourly,
+         updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
+      [t.tbhKey, ...vals, user.upn, nowIso()]);
+  }
   await audit(db, user.upn, "tbh", `${scenario}|${t.tbhKey}`, "update", null, t.name);
   return { version: next };
 }
