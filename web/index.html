@@ -2524,7 +2524,7 @@ function renderProjMargin(){
    window. Dollar impact is valued at CURRENT rates (realized for closed
    months, forecast pair rate otherwise). Editors only. */
 let chgOpen=new Set();
-const CHG={from:null,to:null,data:null,loading:false,err:null};
+const CHG={from:null,to:null,month:null,data:null,loading:false,err:null};
 async function loadChanges(from,to){
   CHG.loading=true; CHG.err=null; CHG.from=from; CHG.to=to; CHG.data=null;
   try{ CHG.data=await api("GET",`/api/changes?from=${from}&to=${to}`); }
@@ -2546,6 +2546,10 @@ function renderChanges(){
     `<button class="btn primary" id="chgApply" style="padding:5px 11px">Show</button>`+
     `<button class="btn" id="chgThisMo" style="padding:5px 9px">This month</button>`+
     `<button class="btn" id="chgLastMo" style="padding:5px 9px">Last month</button>`+
+    `<label class="muted" style="display:inline-flex;align-items:center;gap:5px;font-size:12px" title="Narrow the view to how these changes moved ONE plan month's forecast — e.g. edits made this window that shifted November">Impact on <select id="chgMonth" style="padding:4px 6px">`+
+      `<option value=""${CHG.month?"":" selected"}>all months</option>`+
+      MONTHS.map(m=>`<option value="${m.key}"${CHG.month===m.key?" selected":""}>${m.label}</option>`).join("")+
+    `</select></label>`+
     `<button class="btn" id="chgExport" style="padding:5px 9px">Export CSV</button></div>`+
     `<span class="hint">what moved in the plan between two dates · hours per person × project × month, valued at current rates · daily snapshots (changes same-day net out until tomorrow's snapshot)</span></div>${bodyHtml}</div>`;
   const root=document.getElementById("viewRoot");
@@ -2560,6 +2564,7 @@ function renderChanges(){
       const d=x=>`${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,"0")}-${String(x.getDate()).padStart(2,"0")}`;
       loadChanges(d(lm), d(le)); });
     document.getElementById("chgExport")?.addEventListener("click",exportChangesCSV);
+    document.getElementById("chgMonth")?.addEventListener("change",e=>{ CHG.month=e.target.value||null; keepScroll(renderChanges); });
   };
   if(CHG.err){ root.innerHTML=head(`<div style="padding:18px"><p>⚠ ${esc(CHG.err)}</p></div>`); wire(); return; }
   if(!CHG.data){ if(!CHG.loading) loadChanges(CHG.from,CHG.to);
@@ -2579,7 +2584,8 @@ function renderChanges(){
     const client=pr? (pr.client||"") : (LBLC[c.targetKey]||"");
     const rate=(p&&pr)? rateAt(pid,jid,c.month) : (c.rate||0);
     return {pid:String(pid),jid:String(jid),p,pr,pName,prName,client,src,month:c.month,before:c.before,after:c.after,d:c.after-c.before,rate};
-  }).filter(r=>!(r.p && !passDeptType(r.p)))
+  }).filter(r=>!CHG.month || r.month===CHG.month)   // "Impact on <month>" narrows to that plan month
+    .filter(r=>!(r.p && !passDeptType(r.p)))
     .filter(r=>{ if(!q) return true;
       return r.prName.toLowerCase().includes(q)||r.pName.toLowerCase().includes(q); });
 
@@ -2604,7 +2610,8 @@ function renderChanges(){
   (CHG.data.transfers||[]).map(t=>{
     const pid=fromResKey(t.resourceKey), p=personById(pid);
     return {...t, pid:String(pid), p, pName:p?p.name:(LBL[t.resourceKey]||String(pid))};
-  }).filter(t=>!(t.p && !passDeptType(t.p)))
+  }).filter(t=>!CHG.month || t.month===CHG.month)
+    .filter(t=>!(t.p && !passDeptType(t.p)))
     .filter(t=>{ if(!q) return true;
       return (tname(t.toKey)+" "+tname(t.fromKey)+" "+t.pName).toLowerCase().includes(q); })
     .forEach(t=>{
@@ -2720,6 +2727,22 @@ function renderChanges(){
       `<span>${projs.length} project${projs.length===1?"":"s"} touched</span>`+
       (moves.length?`<span title="Won-deal forecast carried from CRM onto delivery projects unchanged — recorded as transfers, not in Added/Removed">Won deals → projects <b style="color:var(--tbh)">⇄ ${fmt(moves.reduce((s,m)=>s+m.hours,0))}h</b> (${moves.length} deal${moves.length===1?"":"s"})</span>`:"")+
       `</div>`+
+    (CHG.month? (()=>{   // impact line for the one selected plan month
+      let curH=0,curD=0;
+      allPeople().forEach(p=>{ if(!passDeptType(p)) return;
+        const a=state.alloc[p.id]||{};   // retained plan, never the actuals overlay
+        for(const j in a){ const h=a[j][CHG.month]; if(!h) continue; curH+=h; curD+=h*rateAt(p.id,j,CHG.month); } });
+      const beforeH=curH-tot.net, beforeD=curD-tot.netD;
+      const mi=MONTHS.findIndex(m=>m.key===CHG.month);
+      let act="";
+      if(mi>=0 && (isPastMi(mi)||mi===CURRENT_MI)){ let ah=0,ad=0;
+        ACTUALS.forEach((h,k)=>{ if(k.endsWith("|"+CHG.month)) ah+=h; });
+        ACT_REV.forEach((v,k)=>{ if(k.endsWith("|"+CHG.month)) ad+=v; });
+        act=` · actuals${mi===CURRENT_MI?" so far":""}: <b>${fmt0(ah)}h · ${money(ad)}</b>${curH?` (${Math.round(ah/curH*100)}% of the forecast)`:""}`;
+      }
+      return `<div style="padding:0 16px 8px;font-size:12.5px;color:var(--ink-2)" title="How this window's edits moved ${monLab(CHG.month)}: forecast at the window start vs now (valued at current rates)${act?", with what Odoo actually recorded":""}">`+
+        `<b>${monLab(CHG.month)}</b> forecast: <b>${fmt0(beforeH)}h · ${money(beforeD)}</b> at window start → <b>${fmt0(curH)}h · ${money(curD)}</b> now (<b>${sgnH(tot.net)} · ${sgnD(tot.netD)}</b>)${act}</div>`;
+    })() : "")+
     digest+
     `<div class="scroll" style="max-height:unset"><table class="pivot chgtbl"><thead><tr>`+
       `<th class="lbl">Project · person</th><th class="num">Added</th><th class="num">Removed</th><th class="num">Net h</th><th class="num">Net $</th><th></th></tr></thead>`+
@@ -2732,7 +2755,7 @@ function exportChangesCSV(){
   if(!CHG.data) return;
   const lines=[["Project","Client","Source","Person","Type","Month","Before h","After h","Delta h","Rate","Delta $"].join(",")];
   const LBL=CHG.data.labels||{}, LBLC=CHG.data.clients||{};
-  CHG.data.changes.forEach(c=>{
+  CHG.data.changes.filter(c=>!CHG.month||c.month===CHG.month).forEach(c=>{
     const pid=fromResKey(c.resourceKey), jid=fromTgtKey(c.targetKey);
     const p=personById(pid), pr=projById(jid);
     const src=pr? pr.src : (c.targetKey.startsWith("crm:")?"CRM":"PRJ");
@@ -2741,7 +2764,7 @@ function exportChangesCSV(){
     lines.push([prName, pr?pr.client||"":(LBLC[c.targetKey]||""), src, p?p.name:(LBL[c.resourceKey]||pid), p?p.type:"",
       c.month, c.before, c.after, Math.round((c.after-c.before)*10)/10, rate, Math.round((c.after-c.before)*rate)].map(csvEsc).join(","));
   });
-  (CHG.data.transfers||[]).forEach(t=>{
+  (CHG.data.transfers||[]).filter(t=>!CHG.month||t.month===CHG.month).forEach(t=>{
     const pid=fromResKey(t.resourceKey), p=personById(pid);
     const toJid=fromTgtKey(t.toKey), toPr=projById(toJid);
     lines.push([toPr?projLabel(toPr):("PRJ - "+(LBL[t.toKey]||toJid)), toPr?toPr.client||"":(LBLC[t.toKey]||""), "CRM→PRJ",
