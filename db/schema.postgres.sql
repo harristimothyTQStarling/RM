@@ -272,6 +272,19 @@ CREATE TABLE IF NOT EXISTS cost_rate (
   updated_at  TIMESTAMPTZ   NOT NULL DEFAULT now()
 );
 ALTER TABLE cost_rate ADD COLUMN IF NOT EXISTS annual NUMERIC(12,2);
+
+-- Projected fully loaded cost of an UNFILLED seat: one card per TBA role pool
+-- (tbh.tbh_key), entered as salary or hourly like a person's. Lets margins
+-- carry the expected cost of planned hires instead of pretending they're free.
+CREATE TABLE IF NOT EXISTS cost_rate_tbh (
+  tbh_key    VARCHAR(80)   PRIMARY KEY,
+  annual     NUMERIC(12,2),
+  biweekly   NUMERIC(12,2),
+  monthly    NUMERIC(12,2),
+  hourly     NUMERIC(12,2),
+  updated_by VARCHAR(256) NOT NULL,
+  updated_at TIMESTAMPTZ  NOT NULL
+);
 ALTER TABLE ref_project ADD COLUMN IF NOT EXISTS billing_type VARCHAR(16) NOT NULL DEFAULT 'tm';
 
 -- Daily snapshot of the baseline plan (allocations + pair rates), written by

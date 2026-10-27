@@ -104,3 +104,30 @@ test("the retired import endpoint is gone", async () => {
   const r = await call(db, "POST", "/api/cost/import", { rows: [] }, TIM);
   assert.equal(r.status, 404, "per-month import was replaced by the rate card");
 });
+
+test("TBA pool projected-cost cards: round-trip, gating, delete-on-empty, validation", async () => {
+  const db = fresh();
+  const card = { tbhKey: "tba-technical-consultant-onshore", annual: 150000, biweekly: 6777.78, monthly: 15250, hourly: 89.71 };
+
+  assert.equal((await put(db, AMY, card)).status, 403, "non-costing editors cannot write pool cards");
+  assert.equal((await put(db, as("melissa@tqstarling.com"), card)).status, 403, "read-only costing role cannot write pool cards");
+  assert.equal((await put(db, TIM, { tbhKey: "Bad Key!", hourly: 90 })).status, 400, "key must be a slug");
+  assert.equal((await put(db, TIM, { tbhKey: card.tbhKey, hourly: -5 })).status, 400, "negative cost rejected");
+
+  assert.equal((await put(db, TIM, card)).status, 200);
+  let r = await call(db, "GET", "/api/cost", null, TIM);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.tbhRates.map(x => [x.tbhKey, x.annual, x.hourly]),
+    [["tba-technical-consultant-onshore", 150000, 89.71]], "pool card served alongside person cards");
+  assert.deepEqual(r.body.rates, [], "pool cards never masquerade as person cards");
+
+  // hourly-only entry works too (the 'salary or hourly' options)
+  assert.equal((await put(db, TIM, { tbhKey: "tba-senior-qa-offshore", hourly: 45 })).status, 200);
+  r = await call(db, "GET", "/api/cost", null, TIM);
+  assert.equal(r.body.tbhRates.length, 2);
+
+  // clearing every field deletes the card
+  assert.equal((await put(db, TIM, { tbhKey: card.tbhKey })).status, 200);
+  r = await call(db, "GET", "/api/cost", null, TIM);
+  assert.deepEqual(r.body.tbhRates.map(x => x.tbhKey), ["tba-senior-qa-offshore"], "cleared pool card removed");
+});

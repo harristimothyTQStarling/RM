@@ -126,6 +126,8 @@ const run = (sql, p) => db.run(sql, p);
   for (const [id, annual, bw, mo, hr] of cards)
     await run("INSERT INTO cost_rate (employee_id,annual,biweekly,monthly,hourly,updated_by,updated_at) VALUES (?,?,?,?,?,?,?)",
       [id, annual, bw, mo, hr, U, now]);
+  // projected cost of one unfilled seat (the offshore pool stays uncosted on purpose)
+  await run("INSERT INTO cost_rate_tbh (tbh_key,annual,biweekly,monthly,hourly,updated_by,updated_at) VALUES ('tba-technical-consultant-onshore',130000,5874.07,13216.67,77.75,?,?)", [U, now]);
 
   for (const s of ["ref_person", "ref_project", "ref_opportunity", "ref_actual"])
     await run("INSERT INTO sync_state (source,synced_at,row_count,ok) VALUES (?,?,?,1)", [s, "2026-08-01T07:00:00Z", 42]);

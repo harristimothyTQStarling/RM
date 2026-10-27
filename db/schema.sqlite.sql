@@ -217,6 +217,19 @@ CREATE TABLE IF NOT EXISTS cost_rate (
   updated_at  TEXT NOT NULL
 );
 
+-- Projected fully loaded cost of an UNFILLED seat: one card per TBA role pool
+-- (tbh.tbh_key), entered as salary or hourly like a person's. Lets margins
+-- carry the expected cost of planned hires instead of pretending they're free.
+CREATE TABLE IF NOT EXISTS cost_rate_tbh (
+  tbh_key    TEXT PRIMARY KEY,
+  annual     REAL,
+  biweekly   REAL,
+  monthly    REAL,
+  hourly     REAL,
+  updated_by TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 -- Daily snapshot of the baseline plan (allocations + pair rates), written by
 -- the nightly job and lazily on demand. The Changes view diffs two snapshot
 -- dates; the audit_log supplies the who/when detail between them.
