@@ -63,15 +63,29 @@ const server = http.createServer(async (req, res) => {
     /* --------------------------------------------------------------- auth -- */
     if (p === "/auth/login") {
       if (!oidc.isConfigured()) return json(500, { error: "sign-in is not configured (AAD_* / PUBLIC_URL / SESSION_SECRET)" });
-      const { location, cookie } = oidc.beginLogin(url.searchParams.get("returnTo") || "/");
+      const { location, cookie } = oidc.beginLogin(url.searchParams.get("returnTo") || "/", req.headers);
       return redirect(location, [cookie]);
     }
     if (p === "/auth/callback") {
+      const RETRY = "tqsp_retry";
+      const retryCookie = (v, age) => `${RETRY}=${v}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=${age}`;
       try {
         const q = Object.fromEntries(url.searchParams);
         const { cookies, location } = await oidc.completeLogin(q, req.headers);
-        return redirect(location, cookies);
+        return redirect(location, [...cookies, retryCookie("", 0)]);
       } catch (e) {
+        // A lost/raced/expired state is not worth a dead-end error page: restart
+        // the flow once — Microsoft still holds the SSO session, so the retry
+        // normally completes without prompting. The guard cookie stops a loop,
+        // and a browser sending NO cookies at all gets the page (a retry can't
+        // help when the state cookie can never come back).
+        const hadCookies = !!(req.headers.cookie && String(req.headers.cookie).length);
+        const retried = oidc.parseCookies(req.headers.cookie || "")[RETRY] === "1";
+        if (e.recoverable && hadCookies && !retried) {
+          console.warn(`auth: recoverable callback failure (${e.message}) — restarting sign-in`);
+          const { location, cookie } = oidc.beginLogin("/", req.headers);
+          return redirect(location, [cookie, retryCookie("1", 120)]);
+        }
         res.writeHead(401, { "content-type": "text/html; charset=utf-8" });
         return res.end(`<h1>Sign-in failed</h1><p>${escapeHtml(e.message)}</p><p><a href="/auth/login">Try again</a></p>`);
       }

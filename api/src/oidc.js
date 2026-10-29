@@ -100,8 +100,15 @@ const clearCookie = (name) => serializeCookie(name, "", { maxAge: 0, secure: !is
 const isLocal = () => /^http:\/\/localhost|^http:\/\/127\./.test(cfg().publicUrl || "");
 
 /* -------------------------------------------------------------- login start -- */
-/** Returns {location, cookie} — redirect the browser and set the temp state cookie. */
-function beginLogin(returnTo = "/") {
+/**
+ * Returns {location, cookie} — redirect the browser and set the temp state cookie.
+ *
+ * The cookie holds the last few PENDING attempts, not just one: a second tab
+ * hitting /auth/login used to overwrite the first tab's state, so whichever
+ * sign-in finished second came back to a cookie that no longer knew it —
+ * "state mismatch". Keeping a short stack lets parallel attempts all complete.
+ */
+function beginLogin(returnTo = "/", headers = {}) {
   const c = cfg();
   const state = crypto.randomBytes(16).toString("base64url");
   const nonce = crypto.randomBytes(16).toString("base64url");
@@ -117,10 +124,13 @@ function beginLogin(returnTo = "/") {
     code_challenge: challenge,
     code_challenge_method: "S256",
   });
-  const tmp = sign({ state, nonce, verifier, returnTo, exp: Date.now() + 10 * 60 * 1000 }, c.secret);
+  const prev = unsign(parseCookies(headers.cookie || headers.Cookie || "")[STATE_COOKIE] || "", c.secret);
+  const keep = (prev ? (Array.isArray(prev.att) ? prev.att : prev.state ? [prev] : []) : [])
+    .filter((a) => a && a.state && a.exp > Date.now()).slice(-2);   // at most 2 older pending attempts
+  const att = [...keep, { state, nonce, verifier, returnTo, exp: Date.now() + 10 * 60 * 1000 }];
   return {
     location: `${authorizeUrl(c.tenant)}?${params}`,
-    cookie: serializeCookie(STATE_COOKIE, tmp, { maxAge: 600, secure: !isLocal() }),
+    cookie: serializeCookie(STATE_COOKIE, sign({ att }, c.secret), { maxAge: 600, secure: !isLocal() }),
   };
 }
 
@@ -130,10 +140,19 @@ async function completeLogin(query, headers) {
   const c = cfg();
   if (query.error) throw new Error(`sign-in failed: ${query.error_description || query.error}`);
 
+  // Recoverable failures (lost/expired/raced state) are marked so the server
+  // can silently restart the flow — the user is already SSO'd at Microsoft, so
+  // the retry completes without another prompt. Only genuine security failures
+  // (nonce/tenant/signature) stay fatal.
+  const rec = (m) => { const e = new Error(m); e.recoverable = true; return e; };
   const tmp = unsign(parseCookies(headers.cookie || "")[STATE_COOKIE] || "", c.secret);
-  if (!tmp || Date.now() > tmp.exp) throw new Error("sign-in expired — please try again");
-  if (!query.state || query.state !== tmp.state) throw new Error("state mismatch");   // CSRF guard
+  const att = tmp ? (Array.isArray(tmp.att) ? tmp.att : tmp.state ? [tmp] : []) : [];
+  if (!att.length) throw rec("sign-in state lost — restarting");
+  const match = att.find((a) => a && a.state && query.state === a.state);
+  if (!match) throw rec("state mismatch — another sign-in attempt superseded this one");   // CSRF guard stays: unknown states never proceed
+  if (Date.now() > match.exp) throw rec("sign-in expired — please try again");
   if (!query.code) throw new Error("no authorization code returned");
+  Object.assign(tmp, match);   // downstream reads tmp.verifier / tmp.nonce / tmp.returnTo
 
   const body = new URLSearchParams({
     client_id: c.clientId,
