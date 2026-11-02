@@ -161,6 +161,9 @@
   .chgsum{margin:8px 16px 10px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2);display:flex;flex-direction:column;gap:6px;font-size:12.3px;}
   .chgsum .csrow{display:flex;gap:9px;align-items:baseline;flex-wrap:wrap;}
   .chgsum .cstag{flex:none;font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:1px 8px;border-radius:999px;white-space:nowrap;}
+  .varsum{margin:0;}
+  .varsum>summary{cursor:pointer;font-weight:700;font-size:12.5px;color:var(--ink-2);padding:8px 16px 2px;user-select:none;}
+  .varsum>summary:hover{color:var(--ink);}
   .cstag.up{background:var(--u-good);color:var(--u-good-ink);}
   .cstag.dn{background:var(--u-over);color:var(--u-over-ink);}
   .cstag.nw{background:var(--accent-wash);color:var(--accent-ink);}
@@ -1898,27 +1901,42 @@ function personActualMonth(pid,mkey){
   let t=0; set.forEach(proj=>{ t+=ACTUALS.get(`${pid}|${proj}|${mkey}`)||0; }); return t;
 }
 /* Variance cell: actual on top, (actual − forecast) beneath. Green when the forecast
-   was accurate (within 5%, or 8h — 5% of a full 160h month), amber when actual
-   overran the plan, blue when it fell short, muted when neither number exists. */
+   was accurate (within 5%, or 8h / $1,200 — 5% of a full month), amber when actual
+   overran the plan, blue when it fell short, muted when neither number exists.
+   The tab follows the global Hours/$ toggle: hours compare plan hours to logged
+   hours; dollars compare plan hours × the pair's rate (realized rate for closed
+   months, falling back to the forecast rate; milestone projects use their implied
+   rate) to actual billable revenue from Odoo. */
+const vfm=n=>isD()? money(n) : fmt(n);
+const vfm0=n=>isD()? money(n) : fmt0(n);
+const vUnit=()=>isD()? "" : "h";
+const vTol=f=>Math.max(isD()?1200:8, f*0.05);
+const vSgn=n=>`${n>=0?"+":"−"}${vfm(Math.abs(n))}${vUnit()}`;
+function varRate(pid,proj,mkey){
+  if(isMsProj(proj)) return msRate(proj,mkey);
+  const mi=MONTHS.findIndex(m=>m.key===mkey);
+  if(mi>=0 && isPastMi(mi)) return ACT_RATES.get(`${pid}|${proj}|${mkey}`)||pairRate(pid,proj);
+  return pairRate(pid,proj);
+}
 function varClass(f,a){
   if(!f && !a) return "v-zero";
   const d=a-f;
-  if(f && Math.abs(d) <= Math.max(8, f*0.05)) return "v-on";
+  if(f && Math.abs(d) <= vTol(f)) return "v-on";
   return d>0 ? "v-over" : "v-under";
 }
 function varCell(f,a,extra){
   const d=a-f, cls=varClass(f,a);
   const pct = f ? Math.round(d/f*100) : null;
   const sub = (f||a)
-    ? `<span class="pct">${d>0?"+":""}${fmt(d)}h${pct!=null?` · ${d>0?"+":""}${pct}%`:""}</span>`
+    ? `<span class="pct">${d>=0?"+":"−"}${vfm(Math.abs(d))}${vUnit()}${pct!=null?` · ${d>0?"+":""}${pct}%`:""}</span>`
     : "";
-  const tip = `Forecast ${fmt0(f)}h · Actual ${fmt0(a)}h · Variance ${d>0?"+":""}${fmt0(d)}h`;
-  const main = (f||a) ? fmt(a) : "·";
+  const tip = `Forecast ${vfm0(f)}${vUnit()} · Actual ${vfm0(a)}${vUnit()} · Variance ${d>=0?"+":"−"}${vfm0(Math.abs(d))}${vUnit()}`;
+  const main = (f||a) ? vfm(a) : "·";
   return `<td class="mcelln ${cls}${extra?" "+extra:""}" title="${tip}"><span class="h">${main}</span>${sub}</td>`;
 }
 function varTotCell(f,a,extra){
   const d=a-f;
-  return `<td class="mcelln ${varClass(f,a)}${extra?" "+extra:""}"><span class="h">${d>0?"+":""}${fmt(d)}</span></td>`;
+  return `<td class="mcelln ${varClass(f,a)}${extra?" "+extra:""}"><span class="h">${d>=0?"+":"−"}${vfm(Math.abs(d))}</span></td>`;
 }
 /* Timesheet coverage of the current month. Timesheets are due MONDAYS for the
    prior week, so mid-week the raw calendar proportion overstates what should
@@ -1943,17 +1961,20 @@ function mtdCell(f,a){
   const cov=mtdCoverage();
   if(!cov || cov.prop<=0){
     const d=a-f;
-    const sub=(f||a)?`<span class="pct">${d>0?"+":""}${fmt(d)}h${f?` · ${d>0?"+":""}${Math.round(d/f*100)}%`:""}</span>`:"";
-    return `<td class="mcelln mtd" title="Month to date — actuals synced so far vs the full-month forecast (no full timesheet week due yet, so no projection)"><span class="h">${a?fmt(a):"·"}</span>${sub}</td>`;
+    const sub=(f||a)?`<span class="pct">${d>=0?"+":"−"}${vfm(Math.abs(d))}${vUnit()}${f?` · ${d>0?"+":""}${Math.round(d/f*100)}%`:""}</span>`:"";
+    return `<td class="mcelln mtd" title="Month to date — actuals synced so far vs the full-month forecast (no full timesheet week due yet, so no projection)"><span class="h">${a?vfm(a):"·"}</span>${sub}</td>`;
   }
   const proj=a/cov.prop, pd=proj-f;
   const cls=(f||a)? varClass(f,proj) : "v-zero";
-  const sub=(f||a)?`<span class="pct">→ ${fmt(proj)||0}h · ${pd>0?"+":""}${fmt(pd)||0}h${f?` · ${pd>0?"+":""}${Math.round(pd/f*100)}%`:""}</span>`:"";
-  const tip=`Month to date: ${fmt0(a)}h logged vs ${fmt0(f)}h full-month forecast. Timesheets due through ${cov.covered} cover ${cov.due} of ${cov.total} working days (${Math.round(cov.prop*100)}%), so this paces to ${fmt0(proj)}h — ${pd>0?"+":""}${fmt0(pd)}h vs forecast. Hours already logged for the current (not yet due) week are included and flatter the pace slightly.`;
-  return `<td class="mcelln mtd ${cls}" title="${tip}"><span class="h">${a?fmt(a):"·"}</span>${sub}</td>`;
+  const u=vUnit();
+  const sub=(f||a)?`<span class="pct">→ ${vfm(proj)||0}${u} · ${pd>=0?"+":"−"}${vfm(Math.abs(pd))||0}${u}${f?` · ${pd>0?"+":""}${Math.round(pd/f*100)}%`:""}</span>`:"";
+  const tip=`Month to date: ${vfm0(a)}${u} logged vs ${vfm0(f)}${u} full-month forecast. Timesheets due through ${cov.covered} cover ${cov.due} of ${cov.total} working days (${Math.round(cov.prop*100)}%), so this paces to ${vfm0(proj)}${u} — ${pd>=0?"+":"−"}${vfm0(Math.abs(pd))}${u} vs forecast. Hours already logged for the current (not yet due) week are included and flatter the pace slightly.`;
+  return `<td class="mcelln mtd ${cls}" title="${tip}"><span class="h">${a?vfm(a):"·"}</span>${sub}</td>`;
 }
 /* Month range shown on the variance tab (keys "YYYY-MM"; null = everything). */
 const VF={from:null,to:null};
+/* Commentary section fold (persisted) */
+let VARSUM_OPEN=true; try{ VARSUM_OPEN=localStorage.getItem("tqs-rm-varsum")!=="0"; }catch(e){}
 function renderVariance(){
   if(!VAR_MONTHS.length){
     document.getElementById("viewRoot").innerHTML=
@@ -1977,6 +1998,10 @@ function renderVariance(){
     document.getElementById("vfThis")?.addEventListener("click",()=>go(MTD_MONTH.key,MTD_MONTH.key));
     document.getElementById("vfLast")?.addEventListener("click",()=>{ const lm=CLOSED_MONTHS[CLOSED_MONTHS.length-1].key; go(lm,lm); });
     document.getElementById("vfAll")?.addEventListener("click",()=>go(null,null));
+    document.getElementById("varSum")?.addEventListener("toggle",e=>{
+      VARSUM_OPEN=e.target.open;
+      try{ localStorage.setItem("tqs-rm-varsum",VARSUM_OPEN?"1":"0"); }catch(err){}
+    });
   };
   if(!VMs.length){
     document.getElementById("viewRoot").innerHTML=
@@ -1989,42 +2014,54 @@ function renderVariance(){
   const ppl=filteredPeople().filter(p=>p.type!=="tbh").filter(p=>
     VMs.some(m=> personForecastMonth(p.id,m.key) || personActualMonth(p.id,m.key)));
 
+  /* ---- mode-aware value readers: the tab follows the global Hours/$ toggle.
+     Forecast reads the RAW retained plan (never the actuals overlay); in $
+     mode plan hours are valued per pair via varRate() and actuals read real
+     billable revenue from Odoo. */
+  const fOfP=(pid,proj,mkey)=>{ const h=(state.alloc[pid]&&state.alloc[pid][proj]&&state.alloc[pid][proj][mkey])||0;
+    return isD()? h*varRate(pid,proj,mkey) : h; };
+  const aOfP=(pid,proj,mkey)=> isD()? (ACT_REV.get(`${pid}|${proj}|${mkey}`)||0) : (ACTUALS.get(`${pid}|${proj}|${mkey}`)||0);
+  const vFm=(pid,mkey)=>{ const a=state.alloc[pid]||{}; let t=0; for(const j in a) t+=fOfP(pid,j,mkey); return t; };
+  const vAm=(pid,mkey)=>{ let t=0; const set=ACT_PERSON_PROJ.get(String(pid));
+    if(set) set.forEach(j=>{ t+=aOfP(pid,j,mkey); }); return t; };
+
   /* ---- digest of the major misses, rendered above the table --------------
      Closed months only (the MTD column is neutral everywhere). "Significant"
-     uses the same tolerance as the cell shading: within ±5% (or 8h) is on
-     plan. People and projects are ranked by absolute hours missed. */
-  const sig=(f,a)=>Math.abs(a-f)>Math.max(8,f*0.05);
+     uses the same tolerance as the cell shading: within ±5% (or 8h / $1,200)
+     is on plan. Every over/under list is COMPLETE — the section collapses. */
+  const sig=(f,a)=>Math.abs(a-f)>vTol(f);
   const closed=VMs.filter(m=>!isMTD(m));
   const pStats=ppl.map(p=>{ let rf=0,ra=0;
-    closed.forEach(m=>{ rf+=personForecastMonth(p.id,m.key); ra+=personActualMonth(p.id,m.key); });
+    closed.forEach(m=>{ rf+=vFm(p.id,m.key); ra+=vAm(p.id,m.key); });
     return {p,rf,ra,d:ra-rf}; });
   const prStats=new Map();
   ppl.forEach(p=>personProjects(p.id).forEach(projid=>{
     let f=0,a=0;
-    closed.forEach(m=>{ f+=(state.alloc[p.id]&&state.alloc[p.id][projid]&&state.alloc[p.id][projid][m.key])||0;
-      a+=ACTUALS.get(`${p.id}|${projid}|${m.key}`)||0; });
+    closed.forEach(m=>{ f+=fOfP(p.id,projid,m.key); a+=aOfP(p.id,projid,m.key); });
     if(!f&&!a) return;
     const g=prStats.get(String(projid))||{projid:String(projid),f:0,a:0};
     g.f+=f; g.a+=a; prStats.set(String(projid),g);
   }));
   const pcts=(f,d)=>f?` (${d>0?"+":""}${Math.round(d/f*100)}%)`:"";
-  const cap3=(arr,render)=>arr.slice(0,3).map(render).join(" · ")+(arr.length>3?` <span class="muted">+ ${arr.length-3} more</span>`:"");
+  const cap3=(arr,render)=>arr.map(render).join(" · ");   // full lists — the section is collapsible
   const overP=pStats.filter(x=>x.d>0&&sig(x.rf,x.ra)).sort((a,b)=>b.d-a.d);
   const underP=pStats.filter(x=>x.d<0&&x.ra>0&&sig(x.rf,x.ra)).sort((a,b)=>a.d-b.d);
-  const noLog=pStats.filter(x=>x.rf>8&&x.ra===0).sort((a,b)=>b.rf-a.rf);
-  const unplanned=pStats.filter(x=>x.rf===0&&x.ra>8).sort((a,b)=>b.ra-a.ra);
+  const noLog=pStats.filter(x=>x.rf>vTol(0)&&x.ra===0).sort((a,b)=>b.rf-a.rf);
+  const unplanned=pStats.filter(x=>x.rf===0&&x.ra>vTol(0)).sort((a,b)=>b.ra-a.ra);
   const offProj=[...prStats.values()].map(g=>({...g,d:g.a-g.f,pr:projById(g.projid)}))
     .filter(g=>g.pr&&sig(g.f,g.a)).sort((a,b)=>Math.abs(b.d)-Math.abs(a.d));
+  const projOverL=offProj.filter(g=>g.d>0), projUnderL=offProj.filter(g=>g.d<0);
   const onCnt=pStats.filter(x=>(x.rf||x.ra)&&!sig(x.rf,x.ra)).length;
   const totFd=pStats.reduce((s,x)=>s+x.rf,0), totAd=pStats.reduce((s,x)=>s+x.ra,0);
   const vRows=[];
   if(closed.length){
-    vRows.push(`<div class="csrow"><span class="cstag ed">accuracy</span><span>forecast <b>${fmt0(totFd)}h</b> · actual <b>${fmt0(totAd)}h</b> · <b>${totAd-totFd>0?"+":""}${fmt0(totAd-totFd)}h</b>${pcts(totFd,totAd-totFd)} overall · ${onCnt} of ${pStats.length} people on plan (±5%)</span></div>`);
-    if(offProj.length) vRows.push(`<div class="csrow"><span class="cstag sh">projects off plan</span><span>${cap3(offProj,g=>`<b>${esc(g.pr.name)}</b> ${g.d>0?"+":""}${fmt(g.d)}h${pcts(g.f,g.d)}`)}</span></div>`);
-    if(overP.length) vRows.push(`<div class="csrow"><span class="cstag up">over plan</span><span>${cap3(overP,x=>`<b>${esc(x.p.name)}</b> +${fmt(x.d)}h${pcts(x.rf,x.d)}`)}</span></div>`);
-    if(underP.length) vRows.push(`<div class="csrow"><span class="cstag dn">under plan</span><span>${cap3(underP,x=>`<b>${esc(x.p.name)}</b> ${fmt(x.d)}h${pcts(x.rf,x.d)}`)}</span></div>`);
-    if(noLog.length) vRows.push(`<div class="csrow"><span class="cstag rm">nothing logged</span><span>${cap3(noLog,x=>`<b>${esc(x.p.name)}</b> ${fmt0(x.rf)}h forecast, 0 actual`)}</span></div>`);
-    if(unplanned.length) vRows.push(`<div class="csrow"><span class="cstag nw">unforecasted work</span><span>${cap3(unplanned,x=>`<b>${esc(x.p.name)}</b> ${fmt(x.ra)}h logged with no forecast`)}</span></div>`);
+    vRows.push(`<div class="csrow"><span class="cstag ed">accuracy</span><span>forecast <b>${vfm0(totFd)}${vUnit()}</b> · actual <b>${vfm0(totAd)}${vUnit()}</b> · <b>${vSgn(totAd-totFd)}</b>${pcts(totFd,totAd-totFd)} overall · ${onCnt} of ${pStats.length} people on plan (±5%)</span></div>`);
+    if(projOverL.length) vRows.push(`<div class="csrow"><span class="cstag up">${projOverL.length} project${projOverL.length===1?"":"s"} over</span><span>${cap3(projOverL,g=>`<b>${esc(g.pr.name)}</b> ${vSgn(g.d)}${pcts(g.f,g.d)}`)}</span></div>`);
+    if(projUnderL.length) vRows.push(`<div class="csrow"><span class="cstag dn">${projUnderL.length} project${projUnderL.length===1?"":"s"} under</span><span>${cap3(projUnderL,g=>`<b>${esc(g.pr.name)}</b> ${vSgn(g.d)}${pcts(g.f,g.d)}`)}</span></div>`);
+    if(overP.length) vRows.push(`<div class="csrow"><span class="cstag up">${overP.length} over plan</span><span>${cap3(overP,x=>`<b>${esc(x.p.name)}</b> ${vSgn(x.d)}${pcts(x.rf,x.d)}`)}</span></div>`);
+    if(underP.length) vRows.push(`<div class="csrow"><span class="cstag dn">${underP.length} under plan</span><span>${cap3(underP,x=>`<b>${esc(x.p.name)}</b> ${vSgn(x.d)}${pcts(x.rf,x.d)}`)}</span></div>`);
+    if(noLog.length) vRows.push(`<div class="csrow"><span class="cstag rm">nothing logged</span><span>${cap3(noLog,x=>`<b>${esc(x.p.name)}</b> ${vfm0(x.rf)}${vUnit()} forecast, 0 actual`)}</span></div>`);
+    if(unplanned.length) vRows.push(`<div class="csrow"><span class="cstag nw">unforecasted work</span><span>${cap3(unplanned,x=>`<b>${esc(x.p.name)}</b> ${vfm(x.ra)}${vUnit()} logged with no forecast`)}</span></div>`);
   }
   // Current-month pace, on the timesheet-due basis (Mondays): project the
   // month-end landing from the weeks that are actually DUE, never raw days.
@@ -2033,40 +2070,43 @@ function renderVariance(){
   // weeks — who is ahead, behind, hasn't submitted, or is underforecasted.
   const cov=VMs.some(isMTD)? mtdCoverage() : null;
   if(cov && cov.prop>0){
+    const u=vUnit();
     let mF=0, mA=0;
-    const mtdP=ppl.map(p=>{ const f=personForecastMonth(p.id,MTD_MONTH.key), a=personActualMonth(p.id,MTD_MONTH.key);
+    const mtdP=ppl.map(p=>{ const f=vFm(p.id,MTD_MONTH.key), a=vAm(p.id,MTD_MONTH.key);
       mF+=f; mA+=a; return {p,f,a,exp:f*cov.prop}; });
-    const sigP=(exp,a)=>Math.abs(a-exp)>Math.max(8,exp*0.05);
+    const sigP=(exp,a)=>Math.abs(a-exp)>vTol(exp);
     const onPace=mtdP.filter(x=>(x.f||x.a)&&!sigP(x.exp,x.a)).length;
     const nShown=mtdP.filter(x=>x.f||x.a).length;
     const proj=mA/cov.prop, pd=proj-mF;
-    vRows.push(`<div class="csrow"><span class="cstag sh">${MTD_MONTH.label} pace</span><span>timesheets due through <b>${cov.covered}</b> (${cov.due} of ${cov.total} working days): <b>${fmt0(mA)}h</b> logged vs <b>${fmt0(mF*cov.prop)}h</b> expected · paces to <b>${fmt0(proj)}h</b> vs <b>${fmt0(mF)}h</b> forecast (<b>${pd>0?"+":""}${fmt0(pd)}h</b>${mF?`, ${pd>0?"+":""}${Math.round(pd/mF*100)}%`:""}) · ${onPace} of ${nShown} people on pace (±5%)</span></div>`);
+    vRows.push(`<div class="csrow"><span class="cstag sh">${MTD_MONTH.label} pace</span><span>timesheets due through <b>${cov.covered}</b> (${cov.due} of ${cov.total} working days): <b>${vfm0(mA)}${u}</b> logged vs <b>${vfm0(mF*cov.prop)}${u}</b> expected · paces to <b>${vfm0(proj)}${u}</b> vs <b>${vfm0(mF)}${u}</b> forecast (<b>${vSgn(pd)}</b>${mF?`, ${pd>0?"+":""}${Math.round(pd/mF*100)}%`:""}) · ${onPace} of ${nShown} people on pace (±5%)</span></div>`);
     if(!closed.length){
       // projects off pace: expected-by-now vs submitted, per project
       const prj=new Map();
       ppl.forEach(p=>personProjects(p.id).forEach(j=>{
-        const f=(state.alloc[p.id]&&state.alloc[p.id][j]&&state.alloc[p.id][j][MTD_MONTH.key])||0;
-        const a=ACTUALS.get(`${p.id}|${j}|${MTD_MONTH.key}`)||0;
+        const f=fOfP(p.id,j,MTD_MONTH.key), a=aOfP(p.id,j,MTD_MONTH.key);
         if(!f&&!a) return;
         const g=prj.get(String(j))||{j:String(j),f:0,a:0}; g.f+=f; g.a+=a; prj.set(String(j),g);
       }));
       const offPace=[...prj.values()].map(g=>({...g,exp:g.f*cov.prop,pr:projById(g.j)}))
         .filter(g=>g.pr&&sigP(g.exp,g.a)).map(g=>({...g,d:g.a-g.exp}))
         .sort((a,b)=>Math.abs(b.d)-Math.abs(a.d));
-      if(offPace.length) vRows.push(`<div class="csrow"><span class="cstag sh">projects off pace</span><span>${cap3(offPace,g=>`<b>${esc(g.pr.name)}</b> ${fmt(g.a)||0}h of ${fmt(g.exp)}h due (${g.d>0?"+":"−"}${fmt(Math.abs(g.d))}h)`)}</span></div>`);
-      const ahead=mtdP.filter(x=>x.f>0&&x.a-x.exp>Math.max(8,x.exp*0.05)).sort((a,b)=>(b.a-b.exp)-(a.a-a.exp));
-      if(ahead.length) vRows.push(`<div class="csrow"><span class="cstag up">ahead of pace</span><span>${cap3(ahead,x=>`<b>${esc(x.p.name)}</b> ${fmt(x.a)}h of ${fmt(x.exp)}h due (+${fmt(x.a-x.exp)}h)`)}</span></div>`);
+      if(offPace.length) vRows.push(`<div class="csrow"><span class="cstag sh">projects off pace</span><span>${cap3(offPace,g=>`<b>${esc(g.pr.name)}</b> ${vfm(g.a)||0}${u} of ${vfm(g.exp)}${u} due (${vSgn(g.d)})`)}</span></div>`);
+      const ahead=mtdP.filter(x=>x.f>0&&x.a-x.exp>vTol(x.exp)).sort((a,b)=>(b.a-b.exp)-(a.a-a.exp));
+      if(ahead.length) vRows.push(`<div class="csrow"><span class="cstag up">ahead of pace</span><span>${cap3(ahead,x=>`<b>${esc(x.p.name)}</b> ${vfm(x.a)}${u} of ${vfm(x.exp)}${u} due (${vSgn(x.a-x.exp)})`)}</span></div>`);
     }
-    const behind=mtdP.filter(x=>x.a>0&&x.exp-x.a>Math.max(8,x.exp*0.05)).sort((a,b)=>(b.exp-b.a)-(a.exp-a.a));
-    if(behind.length) vRows.push(`<div class="csrow"><span class="cstag dn">behind pace</span><span>${cap3(behind,x=>`<b>${esc(x.p.name)}</b> ${fmt(x.a)||0}h of ${fmt(x.exp)}h due (−${fmt(x.exp-x.a)}h)`)}</span></div>`);
-    const noSheet=mtdP.filter(x=>x.exp>8&&x.a===0).sort((a,b)=>b.exp-a.exp);
-    if(noSheet.length) vRows.push(`<div class="csrow"><span class="cstag rm">nothing submitted</span><span>${cap3(noSheet,x=>`<b>${esc(x.p.name)}</b> ${fmt(x.exp)}h due, no timesheets`)}</span></div>`);
+    const behind=mtdP.filter(x=>x.a>0&&x.exp-x.a>vTol(x.exp)).sort((a,b)=>(b.exp-b.a)-(a.exp-a.a));
+    if(behind.length) vRows.push(`<div class="csrow"><span class="cstag dn">behind pace</span><span>${cap3(behind,x=>`<b>${esc(x.p.name)}</b> ${vfm(x.a)||0}${u} of ${vfm(x.exp)}${u} due (−${vfm(x.exp-x.a)}${u})`)}</span></div>`);
+    const noSheet=mtdP.filter(x=>x.exp>vTol(0)&&x.a===0).sort((a,b)=>b.exp-a.exp);
+    if(noSheet.length) vRows.push(`<div class="csrow"><span class="cstag rm">nothing submitted</span><span>${cap3(noSheet,x=>`<b>${esc(x.p.name)}</b> ${vfm(x.exp)}${u} due, no timesheets`)}</span></div>`);
     if(!closed.length){
-      const underF=mtdP.filter(x=>x.f===0&&x.a>8).sort((a,b)=>b.a-a.a);
-      if(underF.length) vRows.push(`<div class="csrow"><span class="cstag nw">underforecasted</span><span>${cap3(underF,x=>`<b>${esc(x.p.name)}</b> ${fmt(x.a)}h submitted with no forecast this month`)}</span></div>`);
+      const underF=mtdP.filter(x=>x.f===0&&x.a>vTol(0)).sort((a,b)=>b.a-a.a);
+      if(underF.length) vRows.push(`<div class="csrow"><span class="cstag nw">underforecasted</span><span>${cap3(underF,x=>`<b>${esc(x.p.name)}</b> ${vfm(x.a)}${u} submitted with no forecast this month`)}</span></div>`);
     }
   }
-  const varDigest=`<div class="chgsum">${vRows.join("")}</div>`;
+  // Collapsible commentary: complete over/under lists live here, so the grid
+  // stays one click away when the lists get long. Collapsed state persists.
+  const varDigest=vRows.length?
+    `<details id="varSum" class="varsum"${VARSUM_OPEN?" open":""}><summary>Commentary — over &amp; under ${isD()?"budget":"plan"} (${pStats.length} people · full lists)</summary><div class="chgsum" style="margin-top:4px">${vRows.join("")}</div></details>` : "";
   const head=`<thead><tr class="mhd"><th class="lbl" rowspan="2">Person</th>`+
     VMs.map(m=>`<th class="actual mgrp" colspan="2">${m.label}${isMTD(m)?" · MTD":""}</th>`).join("")+
     `<th class="col-tot mgrp" rowspan="2">Forecast</th><th class="col-tot" rowspan="2">Actual</th><th class="col-tot" rowspan="2">Variance</th><th class="col-tot" rowspan="2">Var %</th></tr>`+
@@ -2081,18 +2121,18 @@ function renderVariance(){
     byDept[d].forEach(p=>{
       let rf=0, ra=0;
       const A=acc[p.type]||acc.employee;
-      const tds=VMs.map((m,i)=>{ const f=personForecastMonth(p.id,m.key), a=personActualMonth(p.id,m.key);
+      const tds=VMs.map((m,i)=>{ const f=vFm(p.id,m.key), a=vAm(p.id,m.key);
         colF[i]+=f; colA[i]+=a; A.mf[i]+=f; A.ma[i]+=a;
         // the open month is display-only: it never counts toward the summary totals
         if(!isMTD(m)){ rf+=f; ra+=a; }
-        return `<td class="mcelln fcst"><span class="h">${f?fmt(f):"·"}</span></td>`+(isMTD(m)? mtdCell(f,a) : varCell(f,a)); }).join("");
+        return `<td class="mcelln fcst"><span class="h">${f?vfm(f):"·"}</span></td>`+(isMTD(m)? mtdCell(f,a) : varCell(f,a)); }).join("");
       A.f+=rf; A.a+=ra; A.n++;
       const badge=p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
       const vpct = rf? `${ra-rf>0?"+":""}${Math.round((ra-rf)/rf*100)}%` : (ra?"—":"");
       const isOpen=vfOpen.has(String(p.id));
       body+=`<tr class="lvl1${isOpen?" open":""}" data-vf="${p.id}"><td class="lbl"><span class="tw">${chev()}</span><b>${esc(p.name)}</b>${badge}<div class="muted" style="font-size:11px;padding-left:18px">${esc(p.role||"—")}</div></td>${tds}`+
-        `<td class="mcelln col-tot fcst"><span class="h">${fmt(rf)}</span></td>`+
-        `<td class="mcelln col-tot"><span class="h">${fmt(ra)}</span></td>`+
+        `<td class="mcelln col-tot fcst"><span class="h">${vfm(rf)}</span></td>`+
+        `<td class="mcelln col-tot"><span class="h">${vfm(ra)}</span></td>`+
         varTotCell(rf,ra,"col-tot")+
         `<td class="mcelln col-tot ${varClass(rf,ra)}"><span class="h">${vpct}</span></td></tr>`;
       if(!isOpen) return;
@@ -2100,19 +2140,19 @@ function renderVariance(){
       // (never the actuals overlay); actual reads the Odoo overlay for the pair.
       sortProjIds(personProjects(p.id)).forEach(projid=>{
         const pr=projById(projid); if(!pr) return;
-        const fOf=mk=>(state.alloc[p.id] && state.alloc[p.id][projid] && state.alloc[p.id][projid][mk])||0;
-        const aOf=mk=>ACTUALS.get(`${p.id}|${projid}|${mk}`)||0;
+        const fOf=mk=>fOfP(p.id,projid,mk);
+        const aOf=mk=>aOfP(p.id,projid,mk);
         if(!VMs.some(m=>fOf(m.key)||aOf(m.key))) return;   // nothing in the covered months
         let prf=0, pra=0;
         const ptds=VMs.map(m=>{ const f=fOf(m.key), a=aOf(m.key);
           if(!isMTD(m)){ prf+=f; pra+=a; }
-          return `<td class="mcelln fcst"><span class="h">${f?fmt(f):"·"}</span></td>`+(isMTD(m)? mtdCell(f,a) : varCell(f,a)); }).join("");
+          return `<td class="mcelln fcst"><span class="h">${f?vfm(f):"·"}</span></td>`+(isMTD(m)? mtdCell(f,a) : varCell(f,a)); }).join("");
         const pbadge=pr.src==="CRM"?`<span class="badge crm">CRM</span>`:`<span class="badge prj">PRJ</span>`;
         const pvpct = prf? `${pra-prf>0?"+":""}${Math.round((pra-prf)/prf*100)}%` : (pra?"—":"");
         body+=`<tr class="lvl2"><td class="lbl lvl2i">${pbadge} ${esc(pr.name)}`+
           `<div class="muted" style="font-size:11px">${esc(pr.client||"—")}</div></td>${ptds}`+
-          `<td class="mcelln col-tot fcst"><span class="h">${fmt(prf)}</span></td>`+
-          `<td class="mcelln col-tot"><span class="h">${fmt(pra)}</span></td>`+
+          `<td class="mcelln col-tot fcst"><span class="h">${vfm(prf)}</span></td>`+
+          `<td class="mcelln col-tot"><span class="h">${vfm(pra)}</span></td>`+
           varTotCell(prf,pra,"col-tot")+
           `<td class="mcelln col-tot ${varClass(prf,pra)}"><span class="h">${pvpct}</span></td></tr>`;
       });
@@ -2123,10 +2163,10 @@ function renderVariance(){
     // per-month tallies: forecast total plain, actual total with the same
     // delta/% and shading the person cells use
     const mtds=VMs.map((m,i)=>
-      `<td class="mcelln fcst"><span class="h">${mf[i]?fmt(mf[i]):"·"}</span></td>`+(isMTD(m)? mtdCell(mf[i],ma[i]) : varCell(mf[i],ma[i]))).join("");
+      `<td class="mcelln fcst"><span class="h">${mf[i]?vfm(mf[i]):"·"}</span></td>`+(isMTD(m)? mtdCell(mf[i],ma[i]) : varCell(mf[i],ma[i]))).join("");
     return `<tr class="${cls||""}"><td class="lbl">${label}</td>${mtds}`+
-      `<td class="mcelln col-tot fcst"><span class="h">${fmt(f)}</span></td>`+
-      `<td class="mcelln col-tot"><span class="h">${fmt(a)}</span></td>`+
+      `<td class="mcelln col-tot fcst"><span class="h">${vfm(f)}</span></td>`+
+      `<td class="mcelln col-tot"><span class="h">${vfm(a)}</span></td>`+
       varTotCell(f,a,"col-tot")+
       `<td class="mcelln col-tot ${varClass(f,a)}"><span class="h">${vpct}</span></td></tr>`;
   };
@@ -2141,7 +2181,7 @@ function renderVariance(){
   const hasMtd=VMs.some(isMTD);
   document.getElementById("viewRoot").innerHTML=
     `<div class="panel"><div class="panel-hd"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h2>Forecast vs actual variance</h2>${vfCtl}</div>`+
-    `<span class="hint">closed months (${range})${hasMtd?` + <b>${MTD_MONTH.label} month-to-date</b> (projected from timesheet weeks due — Mondays; excluded from totals)`:""} · <b>Fcst</b> = retained forecast · <b>Act</b> = Odoo actual with actual − forecast beneath · ${ppl.length} people · click a person to drill into their projects</span></div>`+
+    `<span class="hint">closed months (${range})${hasMtd?` + <b>${MTD_MONTH.label} month-to-date</b> (projected from timesheet weeks due — Mondays; excluded from totals)`:""} · <b>Fcst</b> = retained forecast · <b>Act</b> = Odoo actual with actual − forecast beneath · showing <b>${isD()?"dollars":"hours"}</b> (the Hours/$ toggle top-left switches${isD()?" — forecast valued at pair rates, actuals are billable revenue":""}) · ${ppl.length} people · click a person to drill into their projects</span></div>`+
     varDigest+
     `<div class="scroll"><table class="pivot">${head}<tbody>${body}</tbody>${foot}</table></div>`+
     `<div class="legend"><span>Variance = Actual − Forecast</span>`+
