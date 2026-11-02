@@ -108,7 +108,7 @@ const isLocal = () => /^http:\/\/localhost|^http:\/\/127\./.test(cfg().publicUrl
  * sign-in finished second came back to a cookie that no longer knew it —
  * "state mismatch". Keeping a short stack lets parallel attempts all complete.
  */
-function beginLogin(returnTo = "/", headers = {}) {
+function beginLogin(returnTo = "/", headers = {}, opts = {}) {
   const c = cfg();
   const state = crypto.randomBytes(16).toString("base64url");
   const nonce = crypto.randomBytes(16).toString("base64url");
@@ -124,6 +124,11 @@ function beginLogin(returnTo = "/", headers = {}) {
     code_challenge: challenge,
     code_challenge_method: "S256",
   });
+  // /auth/login?pick=1 forces Microsoft's account picker. A lingering PERSONAL
+  // Microsoft session in the browser otherwise silently wins the SSO race and
+  // dies on AADSTS90072 ("account from identity provider live.com does not
+  // exist in tenant") with no way to choose the work account.
+  if (opts.selectAccount) params.set("prompt", "select_account");
   const prev = unsign(parseCookies(headers.cookie || headers.Cookie || "")[STATE_COOKIE] || "", c.secret);
   const keep = (prev ? (Array.isArray(prev.att) ? prev.att : prev.state ? [prev] : []) : [])
     .filter((a) => a && a.state && a.exp > Date.now()).slice(-2);   // at most 2 older pending attempts

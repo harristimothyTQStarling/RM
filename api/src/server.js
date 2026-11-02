@@ -63,7 +63,8 @@ const server = http.createServer(async (req, res) => {
     /* --------------------------------------------------------------- auth -- */
     if (p === "/auth/login") {
       if (!oidc.isConfigured()) return json(500, { error: "sign-in is not configured (AAD_* / PUBLIC_URL / SESSION_SECRET)" });
-      const { location, cookie } = oidc.beginLogin(url.searchParams.get("returnTo") || "/", req.headers);
+      const { location, cookie } = oidc.beginLogin(url.searchParams.get("returnTo") || "/", req.headers,
+        { selectAccount: url.searchParams.get("pick") === "1" });
       return redirect(location, [cookie]);
     }
     if (p === "/auth/callback") {
