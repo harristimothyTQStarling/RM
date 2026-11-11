@@ -122,9 +122,26 @@
 
   /* ---------- Tabs + filters ---------- */
   .barrow{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;margin-bottom:14px;}
-  .tabs{display:inline-flex;background:var(--surface-3);border:1px solid var(--line);border-radius:10px;padding:3px;gap:2px;}
-  .tab{border:none;background:transparent;color:var(--ink-2);padding:7px 13px;border-radius:7px;font-weight:550;white-space:nowrap;}
-  .tab[aria-selected="true"]{background:var(--surface);color:var(--accent-ink);box-shadow:var(--shadow);}
+  /* ---------- Left navigation: Forecast Entry / Forecast Reporting ---------- */
+  .appbody{display:flex;align-items:flex-start;gap:14px;}
+  .maincol{flex:1;min-width:0;}
+  .sidenav{flex:none;width:212px;position:sticky;top:10px;max-height:calc(100vh - 20px);overflow-y:auto;
+    display:flex;flex-direction:column;gap:2px;padding:10px 8px;
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);}
+  .sidenav .navsec{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:10px 10px 4px;white-space:nowrap;overflow:hidden;}
+  .sidenav .tab{display:flex;align-items:center;gap:9px;width:100%;text-align:left;border:none;background:transparent;
+    color:var(--ink-2);padding:8px 10px;border-radius:8px;font-weight:550;white-space:nowrap;cursor:pointer;font-size:13px;}
+  .sidenav .tab svg{width:16px;height:16px;flex:none;}
+  .sidenav .tab span{overflow:hidden;text-overflow:ellipsis;}
+  .sidenav .tab:hover{background:var(--surface-3);color:var(--ink);}
+  .sidenav .tab[aria-selected="true"]{background:var(--accent-wash);color:var(--accent-ink);box-shadow:none;}
+  .navfold{border:none;background:transparent;color:var(--muted);cursor:pointer;font:inherit;font-size:12px;
+    display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;margin-top:6px;border-top:1px solid var(--line);}
+  .navfold:hover{color:var(--ink);background:var(--surface-3);}
+  body.navfolded .sidenav{width:52px;padding:10px 6px;}
+  body.navfolded .sidenav .tab{justify-content:center;padding:9px 0;}
+  body.navfolded .sidenav .tab span, body.navfolded .sidenav .navsec, body.navfolded .navfold span{display:none;}
+  body.navfolded .navfold{justify-content:center;}
   .filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
   select,input[type=text],input[type=number]{font-family:inherit;font-size:13px;color:var(--ink);
     background:var(--surface);border:1px solid var(--line-strong);border-radius:7px;padding:6px 9px;}
@@ -518,39 +535,46 @@
   <div class="kpis" id="kpis"></div>
   <button class="kpifold" id="kpiToggle" aria-controls="kpis" aria-expanded="true" title="Collapse or expand the KPI cards">▴ Hide KPIs</button>
 
-  <div class="barrow">
-    <div class="tabs" id="tabs" role="tablist">
-      <button class="tab" role="tab" data-view="allocate" aria-selected="true">Allocate · Person</button>
-      <button class="tab" role="tab" data-view="byProj" aria-selected="false">Allocate · Project</button>
-      <button class="tab" role="tab" data-view="byEmp" aria-selected="false">By Employee × Month</button>
-      <button class="tab" role="tab" data-view="byRole" aria-selected="false">By Role × Month</button>
-      <button class="tab" role="tab" data-view="byCust" aria-selected="false">By Customer × Month</button>
-      <button class="tab" role="tab" data-view="variance" aria-selected="false">Forecast vs Actual</button>
-      <button class="tab" role="tab" data-view="crmCheck" aria-selected="false">Mismatches</button>
-      <button class="tab" role="tab" data-view="hiring" aria-selected="false">To Be Assigned</button>
-      <button class="tab" role="tab" data-view="costing" aria-selected="false" id="tabCosting" hidden>Employee Margin</button>
-      <button class="tab" role="tab" data-view="projMargin" aria-selected="false" id="tabProjMargin" hidden>Project Margin</button>
-      <button class="tab" role="tab" data-view="changes" aria-selected="false" id="tabChanges" hidden>Changes</button>
-    </div>
-    <div class="filters" id="filters">
-      <div class="seg" id="modeSeg" role="group" aria-label="Show hours or dollars">
-        <button type="button" data-mode="hours" aria-pressed="true">Hours</button>
-        <button type="button" data-mode="dollars" aria-pressed="false">$</button>
+  <div class="appbody">
+    <nav class="sidenav" id="tabs" role="tablist" aria-label="Views">
+      <div class="navsec">Forecast Entry</div>
+      <button class="tab" role="tab" data-view="allocate" aria-selected="true" title="Allocate · Person"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><span>Allocate · Person</span></button>
+      <button class="tab" role="tab" data-view="byProj" aria-selected="false" title="Allocate · Project"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span>Allocate · Project</span></button>
+      <button class="tab" role="tab" data-view="hiring" aria-selected="false" title="To Be Assigned"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" transform="translate(2,0)"/><circle cx="10.5" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="16" y1="11" x2="22" y2="11"/></svg><span>To Be Assigned</span></button>
+      <div class="navsec">Forecast Reporting</div>
+      <button class="tab" role="tab" data-view="byEmp" aria-selected="false" title="Employee × Month"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><span>Employee × Month</span></button>
+      <button class="tab" role="tab" data-view="byRole" aria-selected="false" title="Role × Month"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg><span>Role × Month</span></button>
+      <button class="tab" role="tab" data-view="byCust" aria-selected="false" title="Customer × Month"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="1"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M8 10h.01M16 10h.01M12 6h.01M12 10h.01M8 14h.01M16 14h.01M12 14h.01"/></svg><span>Customer × Month</span></button>
+      <button class="tab" role="tab" data-view="variance" aria-selected="false" title="Forecast vs Actual"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg><span>Forecast vs Actual</span></button>
+      <button class="tab" role="tab" data-view="crmCheck" aria-selected="false" title="Mismatches"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span>Mismatches</span></button>
+      <button class="tab" role="tab" data-view="costing" aria-selected="false" id="tabCosting" hidden title="Employee Margin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><span>Employee Margin</span></button>
+      <button class="tab" role="tab" data-view="projMargin" aria-selected="false" id="tabProjMargin" hidden title="Project Margin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg><span>Project Margin</span></button>
+      <button class="tab" role="tab" data-view="changes" aria-selected="false" id="tabChanges" hidden title="Changes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span>Changes</span></button>
+      <button class="navfold" id="navToggle" title="Collapse or expand the navigation"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex:none"><polyline points="11 17 6 12 11 7"/><polyline points="18 17 13 12 18 7"/></svg><span>Collapse</span></button>
+    </nav>
+    <div class="maincol">
+      <div class="barrow">
+        <div class="filters" id="filters">
+          <div class="seg" id="modeSeg" role="group" aria-label="Show hours or dollars">
+            <button type="button" data-mode="hours" aria-pressed="true">Hours</button>
+            <button type="button" data-mode="dollars" aria-pressed="false">$</button>
+          </div>
+          <input type="text" class="search" id="fSearch" placeholder="Search name / role…" aria-label="Search">
+          <select id="fDept" aria-label="Department"></select>
+          <select id="fType" aria-label="Type">
+            <option value="all">All people</option>
+            <option value="employee">Employees</option>
+            <option value="contractor">Contractors</option>
+            <option value="tbh">To be assigned</option>
+          </select>
+        </div>
       </div>
-      <input type="text" class="search" id="fSearch" placeholder="Search name / role…" aria-label="Search">
-      <select id="fDept" aria-label="Department"></select>
-      <select id="fType" aria-label="Type">
-        <option value="all">All people</option>
-        <option value="employee">Employees</option>
-        <option value="contractor">Contractors</option>
-        <option value="tbh">To be assigned</option>
-      </select>
+
+      <div id="viewRoot"></div>
+
+      <div class="foot" id="foot"></div>
     </div>
   </div>
-
-  <div id="viewRoot"></div>
-
-  <div class="foot" id="foot"></div>
 </div>
 
 <input type="file" id="xlsxInput" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" class="hidden">
@@ -3201,6 +3225,20 @@ document.getElementById("kpiToggle").addEventListener("click",()=>{
   applyKpiFold();
 });
 applyKpiFold();
+
+/* ---------------------- Left navigation collapse ---------------------- */
+let NAV_FOLDED=false; try{ NAV_FOLDED=localStorage.getItem("tqs-rm-nav")==="0"; }catch(e){}
+function applyNavFold(){
+  document.body.classList.toggle("navfolded", NAV_FOLDED);
+  const b=document.getElementById("navToggle");
+  if(b) b.title=NAV_FOLDED? "Expand the navigation" : "Collapse the navigation to icons";
+}
+document.getElementById("navToggle").addEventListener("click",()=>{
+  NAV_FOLDED=!NAV_FOLDED;
+  try{ localStorage.setItem("tqs-rm-nav", NAV_FOLDED?"0":"1"); }catch(e){}
+  applyNavFold();
+});
+applyNavFold();
 
 /* ---------------------- Hours / Dollars toggle ---------------------- */
 document.getElementById("modeSeg").addEventListener("click",e=>{
