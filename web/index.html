@@ -159,7 +159,12 @@
   .badge.ms{background:var(--u-full);color:var(--u-full-ink);}
   /* Changes tab: plain-language digest above the grid */
   .chgsum{margin:8px 16px 10px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2);display:flex;flex-direction:column;gap:6px;font-size:12.3px;}
-  .chgsum .csrow{display:flex;gap:9px;align-items:baseline;flex-wrap:wrap;}
+  .chgsum .csrow{display:flex;gap:9px;align-items:flex-start;flex-wrap:wrap;}
+  .chgsum .cstag{margin-top:2px;}
+  /* listed items in the commentary render as bullets, flowing into columns */
+  .cslist{margin:0;padding-left:17px;flex:1;min-width:240px;columns:320px auto;column-gap:28px;}
+  .cslist li{font-size:12.3px;margin:1px 0;break-inside:avoid;}
+  .cslist li.muted{list-style:none;margin-left:-17px;}
   .chgsum .cstag{flex:none;font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:1px 8px;border-radius:999px;white-space:nowrap;}
   .varsum{margin:0;}
   .varsum>summary{cursor:pointer;font-weight:700;font-size:12.5px;color:var(--ink-2);padding:8px 16px 2px;user-select:none;}
@@ -2043,7 +2048,8 @@ function renderVariance(){
     g.f+=f; g.a+=a; prStats.set(String(projid),g);
   }));
   const pcts=(f,d)=>f?` (${d>0?"+":""}${Math.round(d/f*100)}%)`:"";
-  const cap3=(arr,render)=>arr.map(render).join(" · ");   // full lists — the section is collapsible
+  // full lists as bullets — the section is collapsible, so length is fine
+  const cap3=(arr,render)=>`<ul class="cslist">${arr.map(x=>`<li>${render(x)}</li>`).join("")}</ul>`;
   const overP=pStats.filter(x=>x.d>0&&sig(x.rf,x.ra)).sort((a,b)=>b.d-a.d);
   const underP=pStats.filter(x=>x.d<0&&x.ra>0&&sig(x.rf,x.ra)).sort((a,b)=>a.d-b.d);
   const noLog=pStats.filter(x=>x.rf>vTol(0)&&x.ra===0).sort((a,b)=>b.rf-a.rf);
@@ -2693,7 +2699,8 @@ function renderChanges(){
     else if(c.kind==="shift") shf.push({g,pg,c});
     else edits.push({g,pg});
   }));
-  const capList=(arr,render)=>arr.slice(0,3).map(render).join(" · ")+(arr.length>3?` <span class="muted">+ ${arr.length-3} more</span>`:"");
+  const capList=(arr,render)=>`<ul class="cslist">${arr.slice(0,3).map(x=>`<li>${render(x)}</li>`).join("")}`+
+    (arr.length>3?`<li class="muted">+ ${arr.length-3} more</li>`:"")+`</ul>`;
   const sumRows=[];
   if(moves.length) sumRows.push(`<div class="csrow"><span class="cstag sh">${moves.length} transferred</span><span>${capList(moves,m=>`<b>${esc(tname(m.toKey))}</b> — won-deal forecast moved to the project (${fmt(m.hours)}h, ${m.people.size} ${m.people.size===1?"person":"people"}, no net change)`)}</span></div>`);
   const grew=projs.filter(g=>g.net>0.05).sort((a,b)=>b.netD-a.netD||b.net-a.net);
