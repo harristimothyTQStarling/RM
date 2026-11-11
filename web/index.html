@@ -161,9 +161,10 @@
   .chgsum{margin:8px 16px 10px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2);display:flex;flex-direction:column;gap:6px;font-size:12.3px;}
   .chgsum .csrow{display:flex;gap:9px;align-items:flex-start;flex-wrap:wrap;}
   .chgsum .cstag{margin-top:2px;}
-  /* listed items in the commentary render as bullets, flowing into columns */
-  .cslist{margin:0;padding-left:17px;flex:1;min-width:240px;columns:320px auto;column-gap:28px;}
-  .cslist li{font-size:12.3px;margin:1px 0;break-inside:avoid;}
+  /* listed items in the commentary render as bullets across three columns,
+     filled top-to-bottom then left-to-right, everything left-aligned */
+  .cslist{margin:0;padding-left:17px;flex:1;min-width:240px;columns:3;column-gap:28px;text-align:left;}
+  .cslist li{font-size:12.3px;margin:1px 0;break-inside:avoid;text-align:left;}
   .cslist li.muted{list-style:none;margin-left:-17px;}
   .chgsum .cstag{flex:none;font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:1px 8px;border-radius:999px;white-space:nowrap;}
   .varsum{margin:0;}
