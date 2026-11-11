@@ -2441,7 +2441,10 @@ function renderCosting(){
       return costCell(c.rev,c.cost,c.kind,"");
     });
     const badge=p.type==="tbh"?" <span class='badge tbh'>TBA</span>":p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
-    const subNote=p.type==="tbh"? `${esc(p.role||"—")} · unfilled seat — ${costRateOf(p.id)?"projected cost applied":"planned revenue, no cost entered"}` : esc(p.role||"—");
+    // employment window from Odoo (costs are prorated to it); no end date = still employed
+    const subNote=p.type==="tbh"
+      ? `${esc(p.role||"—")} · unfilled seat — ${costRateOf(p.id)?"projected cost applied":"planned revenue, no cost entered"}`
+      : `${esc(p.role||"—")} · start ${p.hireDate||"—"} · end ${p.endDate||"current"}`;
     const ytds=YIDX.map(ix=>costCell(sumIdx(cells.map(c=>c.rev),ix),sumIdx(cells.map(c=>c.cost),ix),"","col-tot"));
     const isOpen=emOpen.has(String(p.id));
     body+=`<tr class="lvl1${isOpen?" open":""}" data-em="${p.id}"><td class="lbl"><span class="tw">${chev()}</span><b>${esc(p.name)}</b>${badge}<div class="muted" style="font-size:11px;padding-left:18px">${subNote}</div></td>`+withYearCols(tds,ytds)+`${costCell(rrev,rcost,"","col-tot")}</tr>`;
