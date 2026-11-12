@@ -2735,8 +2735,8 @@ function renderChanges(){
     else if(c.kind==="shift") shf.push({g,pg,c});
     else edits.push({g,pg});
   }));
-  const capList=(arr,render)=>`<ul class="cslist">${arr.slice(0,3).map(x=>`<li>${render(x)}</li>`).join("")}`+
-    (arr.length>3?`<li class="muted">+ ${arr.length-3} more</li>`:"")+`</ul>`;
+  // complete lists — every changed line is named, three-column bullets
+  const capList=(arr,render)=>`<ul class="cslist">${arr.map(x=>`<li>${render(x)}</li>`).join("")}</ul>`;
   const sumRows=[];
   if(moves.length) sumRows.push(`<div class="csrow"><span class="cstag sh">${moves.length} transferred</span><span>${capList(moves,m=>`<b>${esc(tname(m.toKey))}</b> — won-deal forecast moved to the project (${fmt(m.hours)}h, ${m.people.size} ${m.people.size===1?"person":"people"}, no net change)`)}</span></div>`);
   const grew=projs.filter(g=>g.net>0.05).sort((a,b)=>b.netD-a.netD||b.net-a.net);
