@@ -2633,7 +2633,7 @@ function renderChanges(){
       MONTHS.map(m=>`<option value="${m.key}"${CHG.month===m.key?" selected":""}>${m.label}</option>`).join("")+
     `</select></label>`+
     `<button class="btn" id="chgExport" style="padding:5px 9px">Export CSV</button></div>`+
-    `<span class="hint">what moved in the plan between two dates · hours per person × project × month, valued at current rates · daily snapshots (changes same-day net out until tomorrow's snapshot)</span></div>${bodyHtml}</div>`;
+    `<span class="hint">what moved in the plan between two dates · hours per person × project × month, valued at current rates · daily snapshots; a window ending today compares against the LIVE plan, so today's edits show immediately</span></div>${bodyHtml}</div>`;
   const root=document.getElementById("viewRoot");
   const wire=()=>{
     const go=()=>loadChanges(document.getElementById("chgFrom").value, document.getElementById("chgTo").value);

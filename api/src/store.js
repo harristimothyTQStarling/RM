@@ -829,12 +829,28 @@ async function getChanges(db, from, to) {
     return first && first.d ? String(first.d).slice(0, 10) : today;
   };
   const fromSnap = await snapAt(from || today);
-  const toSnap = await snapAt(to || today);
   const load = async (d) => {
     const rows = await db.all("SELECT resource_key, target_key, month, hours, rate FROM plan_snapshot WHERE snap_date = ?", [d]);
     return new Map(rows.map(r => [`${r.resource_key}|${r.target_key}|${String(r.month).slice(0, 7)}`, { h: Number(r.hours), rate: Number(r.rate) || 0 }]));
   };
-  const A = await load(fromSnap), B = await load(toSnap);
+  // The "to" side reads the LIVE plan when the window ends today: the nightly
+  // job snapshots at ~2am, so today's stored snapshot predates the working day
+  // and every same-day edit would net out of the diff (while still showing in
+  // the audit feed below — exactly the confusing mismatch this avoids). Stored
+  // snapshots stay morning baselines, so tomorrow's day-over-day diff still
+  // carries today's edits.
+  const toLive = !to || to >= today;
+  const loadLive = async () => {
+    const [alloc, rates] = await Promise.all([
+      db.all("SELECT resource_key, target_key, month, hours FROM allocation WHERE scenario = 'baseline'"),
+      db.all("SELECT resource_key, target_key, rate FROM bill_rate WHERE scenario = 'baseline'"),
+    ]);
+    const rateOf = new Map(rates.map(r => [`${r.resource_key}|${r.target_key}`, Number(r.rate) || 0]));
+    return new Map(alloc.map(a => [`${a.resource_key}|${a.target_key}|${String(a.month).slice(0, 7)}`,
+      { h: Number(a.hours), rate: rateOf.get(`${a.resource_key}|${a.target_key}`) || 0 }]));
+  };
+  const toSnap = toLive ? today : await snapAt(to);
+  const A = await load(fromSnap), B = toLive ? await loadLive() : await load(toSnap);
   const changes = [];
   const keys = new Set([...A.keys(), ...B.keys()]);
   for (const k of keys) {

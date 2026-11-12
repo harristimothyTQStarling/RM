@@ -108,6 +108,24 @@ test("a CRM -> project conversion reads as a zero-net transfer, not add+remove",
   assert.equal(r.body.labels["prj:777"], "Advocate Health - BCM Design");
 });
 
+test("edits made AFTER today's snapshot still show when the window ends today", async () => {
+  const db = fresh();
+  const put = (mon, hours, version) => call(db, "PUT", "/api/allocation",
+    { resourceKey: "emp:1", targetKey: "prj:9", month: mon, hours, version }, TIM);
+  assert.equal((await put(fm(1), 100, 0)).status, 200);
+  await store.takeSnapshot(db, yesterday());
+  await store.takeSnapshot(db, iso(new Date()));   // the nightly's ~2am snapshot: pre-edit
+  assert.equal((await put(fm(1), 160, 1)).status, 200);   // the working-day edit
+
+  const r = await call(db, "GET", "/api/changes", null, TIM, { from: yesterday(), to: iso(new Date()) });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.changes.map(c => [c.month, c.before, c.after]), [[fm(1), 100, 160]],
+    "the to-today side reads the live plan, not the stale morning snapshot");
+  // the stored morning snapshot is untouched: tomorrow's day-over-day diff keeps today's edit
+  const snap = await db.get("SELECT hours FROM plan_snapshot WHERE snap_date=? AND month=?", [iso(new Date()), `${fm(1)}-01`]);
+  assert.equal(Number(snap.hours), 100, "morning baseline preserved");
+});
+
 test("a range before any snapshot falls back to the earliest one", async () => {
   const db = fresh();
   await call(db, "PUT", "/api/allocation", { resourceKey: "emp:1", targetKey: "prj:9", month: fm(1), hours: 25, version: 0 }, TIM);
