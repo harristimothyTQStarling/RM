@@ -80,3 +80,22 @@ test("a billing override moves with the forecast when a CRM opp converts", async
   assert.equal(ref.projects.find(p => p.id === 119).billingType, "milestone", "tag travelled crm:301 -> prj:119");
   assert.equal((await db.all("SELECT 1 FROM billing_override WHERE target_key='crm:301'")).length, 0, "nothing stranded");
 });
+
+test("revenue targets: editor-gated upsert, round-trip via plan, clear, validation", async () => {
+  const db = fresh();
+  assert.equal((await call(db, "PUT", "/api/target", { month: "2027-01", amount: 662065 }, JANE)).status, 403, "viewers cannot set targets");
+  assert.equal((await call(db, "PUT", "/api/target", { month: "nope", amount: 1 }, TIM)).status, 400);
+  assert.equal((await call(db, "PUT", "/api/target", { month: "2027-01", amount: -5 }, TIM)).status, 400);
+
+  assert.equal((await call(db, "PUT", "/api/target", { month: "2027-01", amount: 662065 }, TIM)).status, 200);
+  assert.equal((await call(db, "PUT", "/api/target", { month: "2027-02", amount: 735859 }, TIM)).status, 200);
+  assert.equal((await call(db, "PUT", "/api/target", { month: "2027-01", amount: 700000 }, TIM)).status, 200, "upsert overwrites");
+
+  let plan = await call(db, "GET", "/api/plan", null, JANE);
+  assert.deepEqual(plan.body.targets.sort((a, b) => a.month.localeCompare(b.month)),
+    [{ month: "2027-01", amount: 700000 }, { month: "2027-02", amount: 735859 }], "targets served to every signed-in user");
+
+  assert.equal((await call(db, "PUT", "/api/target", { month: "2027-02", amount: null }, TIM)).status, 200, "null clears");
+  plan = await call(db, "GET", "/api/plan", null, TIM);
+  assert.deepEqual(plan.body.targets, [{ month: "2027-01", amount: 700000 }]);
+});

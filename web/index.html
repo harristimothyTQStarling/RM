@@ -559,6 +559,7 @@
       <button class="tab" role="tab" data-sec="rep" data-view="costing" aria-selected="false" id="tabCosting" hidden title="Employee Margin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><span>Employee Margin</span></button>
       <button class="tab" role="tab" data-sec="rep" data-view="projMargin" aria-selected="false" id="tabProjMargin" hidden title="Project Margin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg><span>Project Margin</span></button>
       <button class="tab" role="tab" data-sec="rep" data-view="changes" aria-selected="false" id="tabChanges" hidden title="Changes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span>Changes</span></button>
+      <button class="tab" role="tab" data-sec="rep" data-view="targets" aria-selected="false" title="Revenue vs Target"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg><span>Revenue vs Target</span></button>
     </nav>
     <div class="maincol">
       <div class="barrow">
@@ -2230,6 +2231,70 @@ function renderVariance(){
   wire();
 }
 
+/* ==================== REVENUE vs TARGET ==================== */
+/* Company monthly revenue targets (entered on this tab, stored server-side and
+   shared) against the plan's revenue: closed months are actual billable
+   revenue from Odoo, open months forecast hours × pair rates, milestone
+   projects their placed schedule. Company-level — the people filters are
+   deliberately ignored here. */
+function companyMonthRevenue(k){
+  let t=0;
+  allPeople().forEach(p=>personProjects(p.id).forEach(j=>{ if(isMsProj(j)) return; t+=alloc(p.id,j,k)*rateAt(p.id,j,k); }));
+  ALL_PROJECTS.forEach(pr=>{ if(isMsProj(pr.id)) t+=msRev(pr.id,k); });
+  return t;
+}
+function renderTargets(){
+  const tgt=k=>Number(state.targets[k])||0;
+  const revs={}; MKEYS.forEach(k=>{ revs[k]=companyMonthRevenue(k); });
+  const sumK=(keys,f)=>keys.reduce((s,k)=>s+f(k),0);
+  const attCls=(t,r)=>!t?"":(r/t>=0.95?"v-on":"v-under");
+  const money0=n=>"$"+Math.round(n).toLocaleString();
+
+  const tgtCells=MONTHS.map(m=> canEdit()
+    ? `<td class="mcelln"><input type="number" min="0" step="1000" value="${state.targets[m.key]??""}" data-tgt="${m.key}" style="width:86px;padding:4px 6px;text-align:right" title="Monthly revenue target for ${m.label} — saved for everyone; blank clears it"></td>`
+    : `<td class="mcelln"><span class="h">${state.targets[m.key]!=null?money0(tgt(m.key)):"·"}</span></td>`);
+  const tgtY=YIDX.map(ix=>`<td class="mcelln col-tot"><span class="h">${money0(sumIdx(MKEYS.map(tgt),ix))}</span></td>`);
+
+  const revCells=MONTHS.map(m=>`<td class="mcelln ${isPastMi(m.mi)?"actual":""}"><span class="h">${revs[m.key]?money0(revs[m.key]):"·"}</span></td>`);
+  const revY=YIDX.map(ix=>`<td class="mcelln col-tot"><span class="h">${money0(sumIdx(MKEYS.map(k=>revs[k]),ix))}</span></td>`);
+
+  const varCells=MONTHS.map(m=>{ const t=tgt(m.key); if(!t) return `<td class="mcelln"></td>`;
+    const d=revs[m.key]-t;
+    return `<td class="mcelln ${attCls(t,revs[m.key])}" title="${m.label}: plan ${money0(revs[m.key])} vs target ${money0(t)}"><span class="h">${d>=0?"+":"−"}${money0(Math.abs(d))}</span></td>`; });
+  const varY=YIDX.map(ix=>{ const t=sumIdx(MKEYS.map(tgt),ix); if(!t) return `<td class="mcelln col-tot"></td>`;
+    const d=sumIdx(MKEYS.map(k=>revs[k]),ix)-t;
+    return `<td class="mcelln col-tot ${attCls(t,t+d)}"><span class="h">${d>=0?"+":"−"}${money0(Math.abs(d))}</span></td>`; });
+
+  const attCells=MONTHS.map(m=>{ const t=tgt(m.key); if(!t) return `<td class="mcelln"></td>`;
+    const a=Math.round(revs[m.key]/t*100);
+    return `<td class="mcelln ${attCls(t,revs[m.key])}"><span class="h">${a}%</span></td>`; });
+  const attY=YIDX.map(ix=>{ const t=sumIdx(MKEYS.map(tgt),ix); if(!t) return `<td class="mcelln col-tot"></td>`;
+    return `<td class="mcelln col-tot"><span class="h">${Math.round(sumIdx(MKEYS.map(k=>revs[k]),ix)/t*100)}%</span></td>`; });
+
+  // cumulative variance, resetting at each year boundary
+  let cum=0, curYr=null;
+  const cumCells=MONTHS.map(m=>{ if(m.year!==curYr){ curYr=m.year; cum=0; }
+    if(!tgt(m.key)&&!cum) return `<td class="mcelln"></td>`;
+    cum+=tgt(m.key)? revs[m.key]-tgt(m.key) : 0;
+    return `<td class="mcelln"><span class="h">${cum>=0?"+":"−"}${money0(Math.abs(cum))}</span></td>`; });
+  const cumY=YIDX.map(()=>`<td class="mcelln col-tot"></td>`);
+
+  const totT=sumK(MKEYS,tgt), totR=sumK(MKEYS,k=>revs[k]);
+  const row=(label,cells,ycells,tot,cls)=>`<tr class="${cls||""}"><td class="lbl">${label}</td>`+withYearCols(cells,ycells)+`<td class="mcelln col-tot"><span class="h">${tot}</span></td></tr>`;
+  document.getElementById("viewRoot").innerHTML=
+    `<div class="panel"><div class="panel-hd"><h2>Revenue vs target</h2>`+
+    `<span class="hint">company-wide (people filters don't apply) · plan revenue = actual billable revenue for closed months, forecast hours × rates + the milestone schedule forward · targets are shared — ${canEdit()?"type into the target row to set them":"editors maintain the target row"} · on plan = ≥ 95% of target</span></div>`+
+    `<div class="scroll"><table class="pivot">${pivotHead("Revenue")}<tbody>`+
+    row("Target",tgtCells,tgtY,money0(totT))+
+    row("Plan revenue",revCells,revY,money0(totR))+
+    row("Variance",varCells,varY, totT? `${totR-totT>=0?"+":"−"}${money0(Math.abs(totR-totT))}`:"")+
+    row("Attainment",attCells,attY, totT? Math.round(totR/totT*100)+"%":"")+
+    row("Cumulative variance <span class='muted'>· resets each year</span>",cumCells,cumY,"","grp")+
+    `</tbody></table></div>`+
+    `<div class="legend"><span class="sw"><span class="box v-on"></span>on plan (≥ 95% of target)</span>`+
+    `<span class="sw"><span class="box v-under"></span>below target</span></div></div>`;
+}
+
 /* ==================== CRM MISMATCHES (forecast vs CRM window) ==================== */
 function renderCrmCheck(){
   const q=(F.search||"").toLowerCase();
@@ -2321,6 +2386,7 @@ function render(){
   else if(VIEW==="byCust") renderByCust();
   else if(VIEW==="projMargin") renderProjMargin();
   else if(VIEW==="changes") renderChanges();
+  else if(VIEW==="targets") renderTargets();
   else if(VIEW==="variance") renderVariance();
   else if(VIEW==="crmCheck") renderCrmCheck();
   else if(VIEW==="hiring") renderHiring();
@@ -3019,6 +3085,16 @@ document.getElementById("viewRoot").addEventListener("change",e=>{
   if(el.dataset.addproj!==undefined && el.value){ const pid=el.dataset.addproj, projid=el.value;
     if(!state.alloc[pid]) state.alloc[pid]={}; if(!state.alloc[pid][projid]) state.alloc[pid][projid]={};
     /*saved via API*/ keepScroll(renderAllocate); // keep this person open, stay where we were
+  }
+  if(el.dataset.tgt!==undefined){ // company monthly revenue target
+    if(!canEdit()) return;
+    const k=el.dataset.tgt;
+    const v=el.value===""? null : Math.max(0,Number(el.value)||0);
+    if(v===null) delete state.targets[k]; else state.targets[k]=v;
+    api("PUT","/api/target",{month:k,amount:v})
+      .then(()=>{ status("Saved"); keepScroll(renderTargets); })
+      .catch(e=>{ toast("Target not saved: "+e.message); bootstrap(); });
+    return;
   }
   if(el.dataset.msmonth!==undefined){ // place a fixed-fee milestone's revenue in a month
     if(!canEdit()) return;
@@ -4021,6 +4097,7 @@ async function bootstrap(){
   // proposed-hire names per (TBA pool × project), keyed "uiResourceId|uiProjId"
   state.proposed={};
   (plan.proposed||[]).forEach(p=>{ state.proposed[`${fromResKey(p.resourceKey)}|${fromTgtKey(p.targetKey)}`]=p.name; });
+  state.targets={}; (plan.targets||[]).forEach(t=>{ state.targets[t.month]=t.amount; });
   // The API returns remembered import mappings keyed by import_map.kind — 'person'
   // and 'project' (singular). The UI works in 'people'/'projects' (plural), so map
   // them here; without this state.importMap.people is undefined and the import

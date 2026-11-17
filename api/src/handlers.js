@@ -248,6 +248,11 @@ async function handle(db, req) {
       if (!proj) return json(400, { error: "no such active billable project" });
       return json(200, await store.mapOpportunityToProject(db, user, oppId, projectId));
     }
+    if (method === "PUT" && path === "/api/target") {
+      // Company monthly revenue target for the Revenue vs Target report.
+      if (!/^\d{4}-\d{2}(-\d{2})?$/.test(String(body.month || ""))) return json(400, { error: "month (YYYY-MM) required" });
+      return json(200, await store.putTarget(db, user, body));
+    }
     if (method === "PUT" && path === "/api/milestone/month") {
       // Place a synced milestone's revenue in a forecast month (null clears).
       if (!Number.isInteger(Number(body.milestoneId))) return json(400, { error: "milestoneId required" });

@@ -35,13 +35,14 @@ async function getPlan(db, scenario = "baseline") {
   // hidden from the app entirely: rows that target one are filtered out of every
   // read. The underlying data stays in the tables, so this is reversible.
   const notNonBillable = "NOT EXISTS (SELECT 1 FROM ref_project np WHERE np.billable = 0 AND target_key = 'prj:' || np.id)";
-  const [allocations, capacity, tbh, importMap, rates, proposed] = await Promise.all([
+  const [allocations, capacity, tbh, importMap, rates, proposed, targets] = await Promise.all([
     db.all(`SELECT resource_key, target_key, month, hours, version, updated_by, updated_at FROM allocation WHERE scenario = ? AND ${notNonBillable}`, [scenario]),
     db.all("SELECT resource_key, hours_per_month, version FROM capacity_override WHERE scenario = ?", [scenario]),
     db.all("SELECT tbh_key, name, role, dept, shore, start_month, capacity, version FROM tbh WHERE scenario = ?", [scenario]),
     db.all("SELECT kind, source_name, target_key FROM import_map WHERE scenario = ?", [scenario]),
     db.all(`SELECT resource_key, target_key, rate, version FROM bill_rate WHERE scenario = ? AND ${notNonBillable}`, [scenario]),
     db.all(`SELECT resource_key, target_key, name FROM proposed_hire WHERE scenario = ? AND ${notNonBillable}`, [scenario]),
+    db.all("SELECT month, amount FROM revenue_target"),
   ]);
   return {
     scenario,
@@ -59,7 +60,28 @@ async function getPlan(db, scenario = "baseline") {
     })),
     importMap: importMap.reduce((acc, r) => { (acc[r.kind] ||= {})[r.source_name] = r.target_key; return acc; }, { person: {}, project: {} }),
     proposed: proposed.map(r => ({ resourceKey: r.resource_key, targetKey: r.target_key, name: r.name })),
+    targets: targets.map(t => ({ month: String(t.month).slice(0, 7), amount: Number(t.amount) })),
   };
+}
+
+/* ------------------------------------------------------- revenue targets -- */
+/** Company monthly revenue target: amount null/empty clears the month. */
+async function putTarget(db, user, t) {
+  const month = monthKey(t.month);
+  const cur = await db.get("SELECT month, amount FROM revenue_target WHERE month = ?", [month]);
+  if (t.amount === null || t.amount === undefined || t.amount === "") {
+    if (cur) { await db.run("DELETE FROM revenue_target WHERE month = ?", [month]);
+      await audit(db, user.upn, "target", month.slice(0, 7), "delete", cur.amount, null); }
+    return { cleared: true };
+  }
+  const amount = Math.round(Number(t.amount) * 100) / 100;
+  if (!Number.isFinite(amount) || amount < 0) { const e = new Error("target must be a number >= 0"); e.code = "bad_request"; throw e; }
+  await db.run(
+    `INSERT INTO revenue_target (month, amount, updated_by, updated_at) VALUES (?,?,?,?)
+     ON CONFLICT (month) DO UPDATE SET amount=excluded.amount, updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
+    [month, amount, user.upn, nowIso()]);
+  if (!cur || Number(cur.amount) !== amount) await audit(db, user.upn, "target", month.slice(0, 7), cur ? "update" : "insert", cur ? cur.amount : null, amount);
+  return { amount };
 }
 
 /* --------------------------------------------------------- proposed hires -- */
@@ -932,4 +954,4 @@ async function getChanges(db, from, to) {
       oldValue: e.old_value == null ? null : String(e.old_value), newValue: e.new_value == null ? null : String(e.new_value) })) };
 }
 
-module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, mapOpportunityToProject, putCapacity, putRate, putTbh, deleteTbh, shiftTbhForecast, moveTbaTarget, transferHours, normalizeTbaPools, roleSlug, tbaName, normShore, putImportMap, putProposedHire, putMilestoneMonth, putBillingType, takeSnapshot, getChanges, Conflict, PastMonth, monthKey, currentMonthStart };
+module.exports = { getPlan, getReference, putAllocation, putAllocations, reassignAllocations, mapOpportunityToProject, putCapacity, putRate, putTbh, deleteTbh, shiftTbhForecast, moveTbaTarget, transferHours, normalizeTbaPools, roleSlug, tbaName, normShore, putImportMap, putProposedHire, putMilestoneMonth, putBillingType, putTarget, takeSnapshot, getChanges, Conflict, PastMonth, monthKey, currentMonthStart };

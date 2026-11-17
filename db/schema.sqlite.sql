@@ -244,6 +244,15 @@ CREATE TABLE IF NOT EXISTS plan_snapshot (
 );
 CREATE INDEX IF NOT EXISTS IX_PlanSnapshot_date ON plan_snapshot (snap_date);
 
+-- Company monthly revenue targets, entered in-app by editors. One row per
+-- month; the Revenue vs Target report compares the plan against these.
+CREATE TABLE IF NOT EXISTS revenue_target (
+  month      TEXT PRIMARY KEY,          -- 'YYYY-MM-01'
+  amount     REAL NOT NULL,
+  updated_by TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sync_state (
   source    TEXT PRIMARY KEY,
   synced_at TEXT NOT NULL,
