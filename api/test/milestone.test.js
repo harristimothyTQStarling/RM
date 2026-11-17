@@ -81,9 +81,17 @@ test("a billing override moves with the forecast when a CRM opp converts", async
   assert.equal((await db.all("SELECT 1 FROM billing_override WHERE target_key='crm:301'")).length, 0, "nothing stranded");
 });
 
-test("revenue targets: editor-gated upsert, round-trip via plan, clear, validation", async () => {
+test("revenue targets: TARGET_UPNS-only upsert (default tim@), round-trip via plan, clear, validation", async () => {
   const db = fresh();
+  delete process.env.TARGET_UPNS;   // default: tim only
   assert.equal((await call(db, "PUT", "/api/target", { month: "2027-01", amount: 662065 }, JANE)).status, 403, "viewers cannot set targets");
+  const AMY = as("amy@tqstarling.com");   // an EDITOR who is not tim
+  process.env.EDITOR_UPNS = "tim@tqstarling.com,amy@tqstarling.com";
+  assert.equal((await call(db, "PUT", "/api/target", { month: "2027-01", amount: 662065 }, AMY)).status, 403, "editors other than tim cannot set targets");
+  process.env.EDITOR_UPNS = "tim@tqstarling.com";
+  process.env.TARGET_UPNS = "";    // fail closed
+  assert.equal((await call(db, "PUT", "/api/target", { month: "2027-01", amount: 1 }, TIM)).status, 403, "empty allowlist denies everyone");
+  delete process.env.TARGET_UPNS;
   assert.equal((await call(db, "PUT", "/api/target", { month: "nope", amount: 1 }, TIM)).status, 400);
   assert.equal((await call(db, "PUT", "/api/target", { month: "2027-01", amount: -5 }, TIM)).status, 400);
 

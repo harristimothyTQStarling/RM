@@ -2250,7 +2250,7 @@ function renderTargets(){
   const attCls=(t,r)=>!t?"":(r/t>=0.95?"v-on":"v-under");
   const money0=n=>"$"+Math.round(n).toLocaleString();
 
-  const tgtCells=MONTHS.map(m=> canEdit()
+  const tgtCells=MONTHS.map(m=> (ME&&ME.canTarget)
     ? `<td class="mcelln"><input type="number" min="0" step="1000" value="${state.targets[m.key]??""}" data-tgt="${m.key}" style="width:86px;padding:4px 6px;text-align:right" title="Monthly revenue target for ${m.label} — saved for everyone; blank clears it"></td>`
     : `<td class="mcelln"><span class="h">${state.targets[m.key]!=null?money0(tgt(m.key)):"·"}</span></td>`);
   const tgtY=YIDX.map(ix=>`<td class="mcelln col-tot"><span class="h">${money0(sumIdx(MKEYS.map(tgt),ix))}</span></td>`);
@@ -2283,7 +2283,7 @@ function renderTargets(){
   const row=(label,cells,ycells,tot,cls)=>`<tr class="${cls||""}"><td class="lbl">${label}</td>`+withYearCols(cells,ycells)+`<td class="mcelln col-tot"><span class="h">${tot}</span></td></tr>`;
   document.getElementById("viewRoot").innerHTML=
     `<div class="panel"><div class="panel-hd"><h2>Revenue vs target</h2>`+
-    `<span class="hint">company-wide (people filters don't apply) · plan revenue = actual billable revenue for closed months, forecast hours × rates + the milestone schedule forward · targets are shared — ${canEdit()?"type into the target row to set them":"editors maintain the target row"} · on plan = ≥ 95% of target</span></div>`+
+    `<span class="hint">company-wide (people filters don't apply) · plan revenue = actual billable revenue for closed months, forecast hours × rates + the milestone schedule forward · targets are shared — ${ME&&ME.canTarget?"type into the target row to set them":"maintained by Tim Harris"} · on plan = ≥ 95% of target</span></div>`+
     `<div class="scroll"><table class="pivot">${pivotHead("Revenue")}<tbody>`+
     row("Target",tgtCells,tgtY,money0(totT))+
     row("Plan revenue",revCells,revY,money0(totR))+
@@ -3086,8 +3086,8 @@ document.getElementById("viewRoot").addEventListener("change",e=>{
     if(!state.alloc[pid]) state.alloc[pid]={}; if(!state.alloc[pid][projid]) state.alloc[pid][projid]={};
     /*saved via API*/ keepScroll(renderAllocate); // keep this person open, stay where we were
   }
-  if(el.dataset.tgt!==undefined){ // company monthly revenue target
-    if(!canEdit()) return;
+  if(el.dataset.tgt!==undefined){ // company monthly revenue target (TARGET_UPNS only)
+    if(!ME||!ME.canTarget) return;
     const k=el.dataset.tgt;
     const v=el.value===""? null : Math.max(0,Number(el.value)||0);
     if(v===null) delete state.targets[k]; else state.targets[k]=v;

@@ -102,4 +102,13 @@ function costingEditUpns() {
 const canCostEdit = (user) =>
   canCost(user) && costingEditUpns().includes(String(user.upn || "").toLowerCase());
 
-module.exports = { getUser, canEdit, canImport, canCost, canCostEdit, editorUpns, importerUpns, costingUpns, costingEditUpns, rolesFor, ROLE_EDITOR };
+/** Who may EDIT the company revenue targets (everyone signed in can SEE them).
+ *  Same idiom: unset -> tim only, empty -> nobody. */
+function targetUpns() {
+  const raw = process.env.TARGET_UPNS;
+  return (raw == null ? "tim@tqstarling.com" : raw)
+    .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+}
+const canTarget = (user) => !!user && targetUpns().includes(String(user.upn || "").toLowerCase());
+
+module.exports = { getUser, canEdit, canImport, canCost, canCostEdit, canTarget, editorUpns, importerUpns, costingUpns, costingEditUpns, targetUpns, rolesFor, ROLE_EDITOR };

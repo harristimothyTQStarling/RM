@@ -4,7 +4,7 @@
  * Azure Functions and the local dev server are both thin adapters over these,
  * so what runs in CI is what runs in Azure.
  */
-const { getUser, canEdit, canImport, canCost, canCostEdit } = require("./auth");
+const { getUser, canEdit, canImport, canCost, canCostEdit, canTarget } = require("./auth");
 const store = require("./store");
 
 const json = (status, body) => ({ status, body });
@@ -19,7 +19,7 @@ async function handle(db, req) {
   const scenario = q.scenario || body.scenario || "baseline";
 
   if (path === "/api/me") {
-    return user ? json(200, { upn: user.upn, roles: user.roles, canEdit: canEdit(user), canImport: canImport(user), canCost: canCost(user), canCostEdit: canCostEdit(user), agentEnabled: require("./agent").enabled() }) : UNAUTH;
+    return user ? json(200, { upn: user.upn, roles: user.roles, canEdit: canEdit(user), canImport: canImport(user), canCost: canCost(user), canCostEdit: canCostEdit(user), canTarget: canTarget(user), agentEnabled: require("./agent").enabled() }) : UNAUTH;
   }
   if (!user) return UNAUTH;
 
@@ -33,7 +33,7 @@ async function handle(db, req) {
   if (method === "GET" && path === "/api/bootstrap") {
     // One round-trip for page load: identity + reference + plan.
     const [reference, plan] = await Promise.all([store.getReference(db), store.getPlan(db, scenario)]);
-    return json(200, { me: { upn: user.upn, name: user.name, canEdit: canEdit(user), canImport: canImport(user), canCost: canCost(user), canCostEdit: canCostEdit(user), agentEnabled: require("./agent").enabled() }, reference, plan });
+    return json(200, { me: { upn: user.upn, name: user.name, canEdit: canEdit(user), canImport: canImport(user), canCost: canCost(user), canCostEdit: canCostEdit(user), canTarget: canTarget(user), agentEnabled: require("./agent").enabled() }, reference, plan });
   }
   if (method === "GET" && path === "/api/audit") {
     const rows = await db.all("SELECT at, actor, entity, entity_key, action, old_value, new_value FROM audit_log ORDER BY at DESC, id DESC LIMIT 200");
@@ -250,6 +250,9 @@ async function handle(db, req) {
     }
     if (method === "PUT" && path === "/api/target") {
       // Company monthly revenue target for the Revenue vs Target report.
+      // Stricter than the editor role: TARGET_UPNS only (default tim@) —
+      // everyone signed in still SEES the targets.
+      if (!canTarget(user)) return json(403, { error: "target editing is restricted" });
       if (!/^\d{4}-\d{2}(-\d{2})?$/.test(String(body.month || ""))) return json(400, { error: "month (YYYY-MM) required" });
       return json(200, await store.putTarget(db, user, body));
     }
