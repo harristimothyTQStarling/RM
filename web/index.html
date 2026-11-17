@@ -2265,6 +2265,7 @@ function crmInPlan(jid){
    start day: 4 months × $100k starting mid-month → 12.5 / 25 / 25 / 25 / 12.5. */
 const PIPE_BUCKETS=["Commit","Expected","Upside","Untagged"];
 let PIPE_MODE="full"; try{ PIPE_MODE=localStorage.getItem("tqs-rm-pipemode")==="weighted"?"weighted":"full"; }catch(e){}
+let tgOpen=new Set();   // Revenue vs Target: expanded drill rows ("crmF", "pipe:<bucket>")
 function tagBucket(tags){
   const t=(tags||[]).map(x=>String(x).toLowerCase());
   if(t.some(x=>x.includes("commit"))) return "Commit";
@@ -2275,6 +2276,7 @@ function tagBucket(tags){
 function pipelineSpread(){
   const out={}, outW={}; PIPE_BUCKETS.forEach(b=>{ out[b]={}; outW[b]={}; });
   const deals={}; PIPE_BUCKETS.forEach(b=>deals[b]=0);
+  const perDeal=[];
   CRM_PROJECTS.forEach(o=>{
     if(!(o.expectedRevenue>0) || !(o.expectedMonths>0) || !o.expectedStartDate) return;
     if(crmInPlan(o.id)) return;                      // already forecasted in the plan
@@ -2284,15 +2286,20 @@ function pipelineSpread(){
     const y=d.getFullYear(), mo=d.getMonth(), dim=new Date(y,mo+1,0).getDate();
     const f=(dim-d.getDate()+1)/dim;                 // fraction of the start month remaining
     const rate=o.expectedRevenue/o.expectedMonths, N=o.expectedMonths;
+    const deal={ id:o.id, name:o.name, client:o.client||"", bucket:b, prob:Math.round(w*100), months:{}, monthsW:{}, total:0 };
     const add=(i,amt)=>{ const dt=new Date(y,mo+i,1);
       const k=`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}`;
       if(!MKEYS.includes(k)) return;
       out[b][k]=(out[b][k]||0)+amt;
-      outW[b][k]=(outW[b][k]||0)+amt*w; };
+      outW[b][k]=(outW[b][k]||0)+amt*w;
+      deal.months[k]=(deal.months[k]||0)+amt;
+      deal.monthsW[k]=(deal.monthsW[k]||0)+amt*w;
+      deal.total+=amt; };
     if(f>=0.999){ for(let i=0;i<N;i++) add(i,rate); }
     else { add(0,rate*f); for(let i=1;i<N;i++) add(i,rate); add(N,rate*(1-f)); }
+    perDeal.push(deal);
   });
-  return {byBucket:out, byBucketW:outW, deals};
+  return {byBucket:out, byBucketW:outW, deals, perDeal};
 }
 function renderTargets(){
   const tgt=k=>Number(state.targets[k])||0;
@@ -2353,8 +2360,37 @@ function renderTargets(){
   const W=PIPE_MODE==="weighted";
   const pB=W? pipeBW : pipeB, pM=W? pipeMW : pipeM, wP=W? withPipeW : withPipe;
   const pipeLabel=W? "Weighted pipeline <span class='muted'>· × Odoo probability</span>" : "CRM pipeline <span class='muted'>· not yet in the plan</span>";
-  const pipeRows=PIPE_BUCKETS.filter(b=>pipe.deals[b]>0)
-    .map(b=>moneyRow(`<span class="muted">· ${b} <span style="font-weight:400">(${pipe.deals[b]} deal${pipe.deals[b]===1?"":"s"})</span></span>`,k=>pB(b,k))).join("");
+
+  // drill helpers: clickable category rows opening per-deal monthly dollars
+  const toggleRow=(key,label,fn,cls)=>{
+    const cells=MONTHS.map(m=>`<td class="mcelln ${isPastMi(m.mi)?"actual":""}"><span class="h">${fn(m.key)?money0(fn(m.key)):"·"}</span></td>`);
+    const y=YIDX.map(ix=>`<td class="mcelln col-tot"><span class="h">${money0(sumIdx(MKEYS.map(fn),ix))}</span></td>`);
+    return `<tr class="lvl1${tgOpen.has(key)?" open":""} ${cls||""}" data-tg="${key}" style="cursor:pointer"><td class="lbl"><span class="tw">${chev()}</span>${label}</td>`+
+      withYearCols(cells,y)+`<td class="mcelln col-tot"><span class="h">${money0(sumK(MKEYS,fn))}</span></td></tr>`;
+  };
+  const dealRow=(label,mm)=>{
+    const fn=k=>mm[k]||0;
+    const cells=MONTHS.map(m=>`<td class="mcelln"><span class="h">${fn(m.key)?money0(fn(m.key)):"·"}</span></td>`);
+    const y=YIDX.map(ix=>`<td class="mcelln col-tot"><span class="h">${money0(sumIdx(MKEYS.map(fn),ix))}</span></td>`);
+    return `<tr class="lvl2"><td class="lbl lvl2i">${label}</td>`+withYearCols(cells,y)+`<td class="mcelln col-tot"><span class="h">${money0(sumK(MKEYS,fn))}</span></td></tr>`;
+  };
+
+  // CRM forecasts per deal (same alloc × rate basis as the split row)
+  const crmDeals=(()=>{ const m=new Map();
+    allPeople().forEach(p=>personProjects(p.id).forEach(j=>{ if(!String(j).startsWith("crm-")||isMsProj(j)) return;
+      MKEYS.forEach(k=>{ const v=alloc(p.id,j,k)*rateAt(p.id,j,k); if(!v) return;
+        const g=m.get(String(j))||{jid:String(j),months:{}};
+        g.months[k]=(g.months[k]||0)+v; m.set(String(j),g); }); }));
+    return [...m.values()].map(g=>({...g,total:Object.values(g.months).reduce((s,x)=>s+x,0),pr:projById(g.jid)}))
+      .sort((a,b)=>b.total-a.total); })();
+  const crmDrill=tgOpen.has("crmF")? crmDeals.map(g=>
+    dealRow(`<span class="badge crm">CRM</span> ${esc(g.pr?g.pr.name:g.jid)}${g.pr&&g.pr.client?`<div class="muted" style="font-size:11px">${esc(g.pr.client)}</div>`:""}`,g.months)).join("") : "";
+
+  const pipeRows=PIPE_BUCKETS.filter(b=>pipe.deals[b]>0).map(b=>
+    toggleRow("pipe:"+b, `<span class="muted">· ${b} <span style="font-weight:400">(${pipe.deals[b]} deal${pipe.deals[b]===1?"":"s"})</span></span>`, k=>pB(b,k))
+    + (tgOpen.has("pipe:"+b)? pipe.perDeal.filter(d=>d.bucket===b).sort((x,z)=>z.total-x.total)
+        .map(d=>dealRow(`<span class="badge crm">CRM</span> ${esc(d.name)}<div class="muted" style="font-size:11px">${esc(d.client||"—")} · ${d.prob}% probability</div>`, W?d.monthsW:d.months)).join("") : "")
+  ).join("");
   document.getElementById("viewRoot").innerHTML=
     `<div class="panel"><div class="panel-hd"><div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><h2>Revenue vs target</h2>`+
     `<div class="seg" role="group" aria-label="Pipeline basis">`+
@@ -2366,7 +2402,8 @@ function renderTargets(){
     row("Target",tgtCells,tgtY,money0(totT),"grp")+
     moneyRow("Plan revenue",k=>revs[k],"grp")+
     moneyRow(`<span class="muted">· Projects</span>`,k=>split[k].prj)+
-    moneyRow(`<span class="muted">· CRM forecasts</span>`,k=>split[k].crm)+
+    toggleRow("crmF",`<span class="muted">· CRM forecasts <span style="font-weight:400">(${crmDeals.length} deal${crmDeals.length===1?"":"s"})</span></span>`,k=>split[k].crm)+
+    crmDrill+
     moneyRow(pipeLabel,k=>pM(k),"grp")+
     pipeRows+
     varRow("Variance <span class='muted'>· plan only</span>",k=>revs[k])+
@@ -3304,6 +3341,10 @@ document.getElementById("viewRoot").addEventListener("click",async e=>{
   const pmSeg=e.target.closest("[data-pipemode]");   // Revenue vs Target: pipeline basis
   if(pmSeg){ PIPE_MODE=pmSeg.dataset.pipemode==="weighted"?"weighted":"full";
     try{ localStorage.setItem("tqs-rm-pipemode",PIPE_MODE); }catch(err){}
+    keepScroll(renderTargets); return; }
+  const tgRow=e.target.closest("[data-tg]");   // Revenue vs Target: drill into deals
+  if(tgRow){ const k=tgRow.dataset.tg;
+    if(tgOpen.has(k)) tgOpen.delete(k); else tgOpen.add(k);
     keepScroll(renderTargets); return; }
   const tba=e.target.closest("[data-tbaopen]");   // To Be Assigned: drill into a role pool
   if(tba){ const id=String(tba.dataset.tbaopen); if(tbaOpen.has(id)) tbaOpen.delete(id); else tbaOpen.add(id); renderHiring(); return; }
