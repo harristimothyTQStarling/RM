@@ -2413,10 +2413,22 @@ function renderCrmCheck(){
     const person=allPeople().find(p=>String(p.id)===String(rid)); if(!person) return;
     Object.keys(state.alloc[rid]).forEach(jid=>{
       const pr=projById(jid); if(!pr) return;
+      if(isMsProj(jid)) return;   // fixed-fee lines carry no hourly rate by design
       let open=0; MONTHS.forEach(m=>{ if(!isPastMi(m.mi)) open+=alloc(rid,jid,m.key)||0; });
       if(open>0 && !pairRate(rid,jid)) missing.push({person,pr,open});
     });
   });
+  // ---- people without a cost card (costing role only: whether a card exists
+  //      is costing information; the values themselves stay behind /api/cost).
+  let noCost=null;   // null = section hidden for this user
+  if(ME&&ME.canCost){
+    if(!COST.rates){ loadCost(); noCost="loading"; }
+    else noCost=allPeople().filter(p=>p.type!=="tbh" && !costRateOf(p.id))
+      .filter(p=> !q || p.name.toLowerCase().includes(q) || (p.role||"").toLowerCase().includes(q))
+      .map(p=>{ let open=0; MONTHS.forEach(m=>{ if(!isPastMi(m.mi)) open+=personMonthTotal(p.id,m.key); });
+        return {p,open}; })
+      .sort((a,b)=>b.open-a.open||a.p.name.localeCompare(b.p.name));
+  }
   const missRows=missing
     .filter(x=> !q || x.pr.name.toLowerCase().includes(q) || (x.pr.client||"").toLowerCase().includes(q) || x.person.name.toLowerCase().includes(q))
     .sort((a,b)=> a.pr.name.localeCompare(b.pr.name) || a.person.name.localeCompare(b.person.name));
@@ -2430,7 +2442,7 @@ function renderCrmCheck(){
 
   document.getElementById("viewRoot").innerHTML=
     `<div class="panel"><div class="panel-hd"><h2>Mismatches</h2>`+
-    `<span class="hint">CRM window checks (forecast vs opportunity start/length, missing forecasts) plus forecast line items with no bill rate</span></div>`+
+    `<span class="hint">CRM window checks (forecast vs opportunity start/length, missing forecasts) · forecast line items with no bill rate${ME&&ME.canCost?" · people without a cost card":""}</span></div>`+
     sec("CRM window checks",rows.length)+
     (rows.length?
       `<div class="scroll"><table class="pivot"><thead><tr><th class="lbl">Opportunity</th><th style="text-align:left">Flags</th>`+
@@ -2445,6 +2457,20 @@ function renderCrmCheck(){
       `<tbody>${missBody}</tbody></table></div>`+
       `<div class="legend"><span>These line items have forecast hours from the current month onward but no $/hr bill rate on the pair, so they contribute $0 to every dollar view. Set the rate in the line's $/hr box on either Allocate tab.</span></div>`
       :`<div class="muted" style="padding:6px 16px 16px;font-size:12.5px">None — every line item with open-month forecast hours has a bill rate.</div>`)+
+    (noCost===null? "" :
+      sec("People without a cost",noCost==="loading"?"…":noCost.length)+
+      (noCost==="loading"? `<div class="muted" style="padding:6px 16px 16px;font-size:12.5px">Loading cost data…</div>`
+       : noCost.length?
+        `<div class="scroll"><table class="pivot"><thead><tr><th class="lbl">Person</th><th style="text-align:left">Flag</th><th>Start date</th><th class="col-tot">Open-month hrs</th></tr></thead><tbody>`+
+        noCost.map(x=>`<tr>`+
+          `<td class="lbl">${esc(x.p.name)}${x.p.type==="contractor"?" <span class='badge contractor'>Con</span>":""}<div class="muted" style="font-size:11px">${esc(x.p.role||"—")}${x.p.dept?" · "+esc(x.p.dept):""}</div></td>`+
+          `<td style="text-align:left"><span class="badge np">No cost card</span></td>`+
+          `<td class="mcelln">${x.p.hireDate||"—"}</td>`+
+          `<td class="mcelln col-tot">${x.open?fmt0(x.open):"—"}</td>`+
+        `</tr>`).join("")+
+        `</tbody></table></div>`+
+        `<div class="legend"><span>These people have no fully loaded cost on the Resource costs sheet, so their hours carry $0 cost and inflate every margin view. Sorted by open-month forecast hours — the top rows distort margins most.</span></div>`
+       :`<div class="muted" style="padding:6px 16px 16px;font-size:12.5px">None — every employee and contractor has a cost card.</div>`))+
     `</div>`;
 }
 
@@ -2501,6 +2527,7 @@ async function loadCost(force){
   COST.loading=false;
   if(VIEW==="costing") renderCosting();
   else if(VIEW==="projMargin") renderProjMargin();
+  else if(VIEW==="crmCheck") renderCrmCheck();
 }
 /* A month's fully loaded cost from the person's rate card: monthly wins, else
    annual ÷ 12, else bi-weekly × 26/12, else hourly × that month's hours (actual

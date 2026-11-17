@@ -107,3 +107,12 @@ test("revenue targets: TARGET_UPNS-only upsert (default tim@), round-trip via pl
   plan = await call(db, "GET", "/api/plan", null, TIM);
   assert.deepEqual(plan.body.targets, [{ month: "2027-01", amount: 700000 }]);
 });
+
+test("impossible months are rejected everywhere (no orphan rows)", async () => {
+  const db = fresh();
+  assert.equal((await call(db, "PUT", "/api/target", { month: "2027-13", amount: 5 }, TIM)).status, 400, "month 13 target refused");
+  assert.equal((await call(db, "PUT", "/api/target", { month: "2027-00", amount: 5 }, TIM)).status, 400);
+  assert.equal((await call(db, "PUT", "/api/allocation", { resourceKey: "emp:1", targetKey: "prj:9", month: "2099-13", hours: 5, version: 0 }, TIM)).status, 400, "month 13 allocation refused");
+  assert.equal((await db.all("SELECT * FROM revenue_target")).length + (await db.all("SELECT * FROM allocation")).length, 0, "nothing stored");
+  assert.equal((await call(db, "PUT", "/api/target", { month: "2027-12", amount: 5 }, TIM)).status, 200, "valid months still work");
+});

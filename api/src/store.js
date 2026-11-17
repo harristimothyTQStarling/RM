@@ -21,7 +21,19 @@ class PastMonth extends Error {
   constructor(month) { super(`month ${month} is closed — past months carry Odoo actuals, not forecast`); this.code = "past_month"; }
 }
 
-const monthKey = (m) => String(m).length === 7 ? `${m}-01` : String(m).slice(0, 10);
+/** Normalize 'YYYY-MM' / 'YYYY-MM-DD' to 'YYYY-MM-01' form — and REJECT
+ *  impossible months ('2027-13') or days, which previously stored as orphan
+ *  rows no view could ever show. Every month-accepting write flows through
+ *  here, so the validation is uniform. */
+const monthKey = (m) => {
+  const s = String(m);
+  const mt = s.match(/^(\d{4})-(\d{2})(?:-(\d{2}))?$/);
+  const mm = mt ? Number(mt[2]) : 0, dd = mt && mt[3] ? Number(mt[3]) : 1;
+  if (!mt || mm < 1 || mm > 12 || dd < 1 || dd > 31) {
+    const e = new Error(`invalid month: ${s}`); e.code = "bad_request"; throw e;
+  }
+  return s.length === 7 ? `${s}-01` : s.slice(0, 10);
+};
 /* First day of the current month (UTC — Railway runs UTC and Odoo actuals are
    aggregated by calendar month). Everything before this is closed. */
 const currentMonthStart = () => {
