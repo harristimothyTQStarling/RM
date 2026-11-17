@@ -39,6 +39,9 @@ function sqliteDriver(file) {
     "ALTER TABLE ref_person ADD COLUMN end_date TEXT",
     "ALTER TABLE cost_rate ADD COLUMN annual REAL",
     "ALTER TABLE ref_project ADD COLUMN billing_type TEXT NOT NULL DEFAULT 'tm'",
+    "ALTER TABLE ref_opportunity ADD COLUMN expected_revenue REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE ref_opportunity ADD COLUMN probability REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE ref_opportunity ADD COLUMN tags TEXT NOT NULL DEFAULT ''",
   ]) { try { db.exec(sql); } catch { /* column already exists */ } }
   return {
     kind: "sqlite",

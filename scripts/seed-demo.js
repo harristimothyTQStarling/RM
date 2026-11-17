@@ -55,14 +55,18 @@ const run = (sql, p) => db.run(sql, p);
     await run("INSERT INTO ref_milestone (id,project_id,name,amount,reached) VALUES (?,?,?,?,?)", [id, pid2, name, amount, reached]);
 
   const opps = [
-    [201, "Adventure Works - SPM Implementation", "Adventure Works", "Negotiate", 1, 0, "2026-09-01", 4],
-    [202, "Tailspin - GRC Advisory", "Tailspin Toys", "Propose", 1, 0, "2026-10-01", 3],
-    [203, "Wingtip - HRSD Phase 2", "Wingtip Airlines", "Validate", 1, 0, "2026-11-01", 2],
-    [204, "Litware - AICT Implementation", "Litware Utilities", "Won", 1, 1, "2026-07-01", 6],
+    [201, "Adventure Works - SPM Implementation", "Adventure Works", "Negotiate", 1, 0, "2026-09-01", 4, 260000, 60, "Commit"],
+    [202, "Tailspin - GRC Advisory", "Tailspin Toys", "Propose", 1, 0, "2026-10-01", 3, 120000, 40, "Expected"],
+    [203, "Wingtip - HRSD Phase 2", "Wingtip Airlines", "Validate", 1, 0, "2026-11-01", 2, 90000, 25, "Upside"],
+    [204, "Litware - AICT Implementation", "Litware Utilities", "Won", 1, 1, "2026-07-01", 6, 300000, 90, "Commit"],
+    // NOT forecasted in the plan -> pure pipeline. 205 is the worked example:
+    // $100k x 4 months from a mid-month start = 12.5 / 25 / 25 / 25 / 12.5.
+    [205, "Northwind - GRC Expansion", "Northwind Bank", "Negotiate", 1, 0, "2027-03-16", 4, 100000, 70, "Commit"],
+    [206, "Fabrikam - AI Readiness", "Fabrikam Pharma", "Qualify", 1, 0, "2027-05-01", 2, 60000, 20, "Upside"],
   ];
-  for (const [id, name, client, stage, active, np, start, months] of opps)
-    await run("INSERT INTO ref_opportunity (id,name,client,stage,active,needs_project,expected_start,expected_months) VALUES (?,?,?,?,?,?,?,?)",
-      [id, name, client, stage, active, np, start, months]);
+  for (const [id, name, client, stage, active, np, start, months, rev, prob, tags] of opps)
+    await run("INSERT INTO ref_opportunity (id,name,client,stage,active,needs_project,expected_start,expected_months,expected_revenue,probability,tags) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+      [id, name, client, stage, active, np, start, months, rev, prob, tags]);
 
   const act = [];
   const A = (emp, proj, month, hours, rate) => act.push([emp, proj, `2026-0${month}-01`, hours, rate, Math.round(hours * rate)]);

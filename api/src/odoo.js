@@ -222,9 +222,18 @@ async function readProjects(odoo) {
 async function readOpportunities(odoo) {
   const PLAN_FIELDS = ["x_studio_expected_start_date", "x_studio_projected_number_of_months"];
   const avail = await odoo.hasFields("crm.lead", PLAN_FIELDS);
-  const fields = ["name", "partner_id", "stage_id", "probability", ...PLAN_FIELDS.filter((f) => avail[f])];
+  const fields = ["name", "partner_id", "stage_id", "probability", "expected_revenue", "tag_ids",
+    ...PLAN_FIELDS.filter((f) => avail[f])];
   const rows = await odoo.searchRead("crm.lead",
     [["active", "=", true], ["type", "=", "opportunity"]], fields);
+  // Resolve tag names (Commit / Expected / Upside buckets) in one batched read.
+  const tagIds = [...new Set(rows.flatMap((r) => Array.isArray(r.tag_ids) ? r.tag_ids : []))];
+  const tagName = new Map();
+  if (tagIds.length) {
+    try { (await odoo.searchRead("crm.tag", [["id", "in", tagIds]], ["name"]))
+      .forEach((t) => tagName.set(t.id, String(t.name || "").trim())); }
+    catch { /* no crm.tag access — pipeline rows fall into Untagged */ }
+  }
   return rows
     .map((r) => ({
       id: r.id,
@@ -235,6 +244,9 @@ async function readOpportunities(odoo) {
       // Odoo returns false for unset fields; store null / 0 instead.
       expected_start: r.x_studio_expected_start_date || null,
       expected_months: Number(r.x_studio_projected_number_of_months) || 0,
+      expected_revenue: Number(r.expected_revenue) || 0,
+      probability: Number(r.probability) || 0,
+      tags: (Array.isArray(r.tag_ids) ? r.tag_ids : []).map((id) => tagName.get(id)).filter(Boolean).join(","),
     }))
     .filter((o) => !/^(won|lost)$/i.test(o.stage));
 }
@@ -531,7 +543,8 @@ async function syncAll(db, odoo, { actualsFrom, actualsTo } = {}) {
   // An opp that is open again is by definition not awaiting a project mapping,
   // so the merge clears the flag; reconcile re-flags closed ones right after.
   out.ref_opportunity = await syncMerge(db, "ref_opportunity", opps.map((o) => ({ ...o, needs_project: 0 })),
-    ["id", "name", "client", "stage", "active", "needs_project", "expected_start", "expected_months"]);
+    ["id", "name", "client", "stage", "active", "needs_project", "expected_start", "expected_months",
+     "expected_revenue", "probability", "tags"]);
   if (actualsFrom && actualsTo) {
     // Keep only actuals for people/projects we actually show. Odoo returns
     // timesheet lines for everyone (incl. "Internal" admin time and non-delivery

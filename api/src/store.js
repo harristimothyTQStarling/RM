@@ -164,7 +164,7 @@ async function getReference(db) {
   const [people, projects, opportunities, actuals, holidays, sync, milestones, overrides] = await Promise.all([
     db.all("SELECT id, name, role, dept, type, hire_date, end_date FROM ref_person WHERE active = 1 ORDER BY name"),
     db.all("SELECT id, name, client, billable, billing_type FROM ref_project WHERE active = 1 AND billable = 1 ORDER BY name"),
-    db.all("SELECT id, name, client, stage, needs_project, expected_start, expected_months FROM ref_opportunity WHERE active = 1 ORDER BY name"),
+    db.all("SELECT id, name, client, stage, needs_project, expected_start, expected_months, expected_revenue, probability, tags FROM ref_opportunity WHERE active = 1 ORDER BY name"),
     db.all("SELECT employee_id, project_id, month, hours, bill_rate, revenue FROM ref_actual a WHERE NOT EXISTS (SELECT 1 FROM ref_project np WHERE np.billable = 0 AND np.id = a.project_id)"),
     db.all("SELECT id, name, date_from, date_to FROM ref_holiday ORDER BY date_from"),
     db.all("SELECT source, synced_at, row_count, ok, message FROM sync_state"),
@@ -196,7 +196,11 @@ async function getReference(db) {
       return {
         id: o.id, name: o.name, client: o.client || "", stage: o.stage || "", needsProject: !!o.needs_project,
         expectedStart: o.expected_start ? String(o.expected_start).slice(0, 7) : null,   // YYYY-MM
+        expectedStartDate: o.expected_start ? String(o.expected_start).slice(0, 10) : null,   // full date — mid-month proration
         expectedMonths: Number(o.expected_months) || 0,
+        expectedRevenue: Number(o.expected_revenue) || 0,
+        probability: Number(o.probability) || 0,
+        tags: String(o.tags || "").split(",").map(s => s.trim()).filter(Boolean),
         billingType: (ov && ov.btype) || "tm",   // no SO yet, so only an override can mark it
       };
     }),

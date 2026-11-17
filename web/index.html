@@ -2243,6 +2243,53 @@ function companyMonthRevenue(k){
   ALL_PROJECTS.forEach(pr=>{ if(isMsProj(pr.id)) t+=msRev(pr.id,k); });
   return t;
 }
+/* Plan revenue split by target kind: delivery projects vs CRM forecasts entered
+   in the app. Milestone schedules belong to projects by construction. */
+function planRevenueSplit(k){
+  let prj=0, crm=0;
+  allPeople().forEach(p=>personProjects(p.id).forEach(j=>{ if(isMsProj(j)) return;
+    const v=alloc(p.id,j,k)*rateAt(p.id,j,k);
+    if(String(j).startsWith("crm-")) crm+=v; else prj+=v; }));
+  ALL_PROJECTS.forEach(pr=>{ if(isMsProj(pr.id)) prj+=msRev(pr.id,k); });
+  return {prj,crm};
+}
+/* Does this CRM opp already carry forecast hours in the plan? Then its revenue
+   is in Plan revenue and it must NOT be double-counted as pipeline. */
+function crmInPlan(jid){
+  for(const pid in state.alloc){ const a=state.alloc[pid][jid];
+    if(a && Object.values(a).some(h=>h>0)) return true; }
+  return false;
+}
+/* Unplanned CRM pipeline spread into months, bucketed by tag (Commit /
+   Expected / Upside). Expected revenue ÷ projected months, prorated by the
+   start day: 4 months × $100k starting mid-month → 12.5 / 25 / 25 / 25 / 12.5. */
+const PIPE_BUCKETS=["Commit","Expected","Upside","Untagged"];
+function tagBucket(tags){
+  const t=(tags||[]).map(x=>String(x).toLowerCase());
+  if(t.some(x=>x.includes("commit"))) return "Commit";
+  if(t.some(x=>x.includes("upside"))) return "Upside";
+  if(t.some(x=>x.includes("expected"))) return "Expected";
+  return "Untagged";
+}
+function pipelineSpread(){
+  const out={}; PIPE_BUCKETS.forEach(b=>out[b]={});
+  const deals={}; PIPE_BUCKETS.forEach(b=>deals[b]=0);
+  CRM_PROJECTS.forEach(o=>{
+    if(!(o.expectedRevenue>0) || !(o.expectedMonths>0) || !o.expectedStartDate) return;
+    if(crmInPlan(o.id)) return;                      // already forecasted in the plan
+    const b=tagBucket(o.tags); deals[b]++;
+    const d=new Date(o.expectedStartDate+"T00:00:00");
+    const y=d.getFullYear(), mo=d.getMonth(), dim=new Date(y,mo+1,0).getDate();
+    const f=(dim-d.getDate()+1)/dim;                 // fraction of the start month remaining
+    const rate=o.expectedRevenue/o.expectedMonths, N=o.expectedMonths;
+    const add=(i,amt)=>{ const dt=new Date(y,mo+i,1);
+      const k=`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}`;
+      if(MKEYS.includes(k)) out[b][k]=(out[b][k]||0)+amt; };
+    if(f>=0.999){ for(let i=0;i<N;i++) add(i,rate); }
+    else { add(0,rate*f); for(let i=1;i<N;i++) add(i,rate); add(N,rate*(1-f)); }
+  });
+  return {byBucket:out, deals};
+}
 function renderTargets(){
   const tgt=k=>Number(state.targets[k])||0;
   const revs={}; MKEYS.forEach(k=>{ revs[k]=companyMonthRevenue(k); });
@@ -2255,23 +2302,38 @@ function renderTargets(){
     : `<td class="mcelln"><span class="h">${state.targets[m.key]!=null?money0(tgt(m.key)):"·"}</span></td>`);
   const tgtY=YIDX.map(ix=>`<td class="mcelln col-tot"><span class="h">${money0(sumIdx(MKEYS.map(tgt),ix))}</span></td>`);
 
-  const revCells=MONTHS.map(m=>`<td class="mcelln ${isPastMi(m.mi)?"actual":""}"><span class="h">${revs[m.key]?money0(revs[m.key]):"·"}</span></td>`);
-  const revY=YIDX.map(ix=>`<td class="mcelln col-tot"><span class="h">${money0(sumIdx(MKEYS.map(k=>revs[k]),ix))}</span></td>`);
+  const split={}; MKEYS.forEach(k=>{ split[k]=planRevenueSplit(k); });
+  MKEYS.forEach(k=>{ revs[k]=split[k].prj+split[k].crm; });
+  const pipe=pipelineSpread();
+  const pipeB=(b,k)=>pipe.byBucket[b][k]||0;
+  const pipeM=k=>PIPE_BUCKETS.reduce((s,b)=>s+pipeB(b,k),0);
+  const withPipe=k=>revs[k]+pipeM(k);
 
-  const varCells=MONTHS.map(m=>{ const t=tgt(m.key); if(!t) return `<td class="mcelln"></td>`;
-    const d=revs[m.key]-t;
-    return `<td class="mcelln ${attCls(t,revs[m.key])}" title="${m.label}: plan ${money0(revs[m.key])} vs target ${money0(t)}"><span class="h">${d>=0?"+":"−"}${money0(Math.abs(d))}</span></td>`; });
-  const varY=YIDX.map(ix=>{ const t=sumIdx(MKEYS.map(tgt),ix); if(!t) return `<td class="mcelln col-tot"></td>`;
-    const d=sumIdx(MKEYS.map(k=>revs[k]),ix)-t;
-    return `<td class="mcelln col-tot ${attCls(t,t+d)}"><span class="h">${d>=0?"+":"−"}${money0(Math.abs(d))}</span></td>`; });
-
-  const attCells=MONTHS.map(m=>{ const t=tgt(m.key); if(!t) return `<td class="mcelln"></td>`;
-    const a=Math.round(revs[m.key]/t*100);
-    return `<td class="mcelln ${attCls(t,revs[m.key])}"><span class="h">${a}%</span></td>`; });
-  const attY=YIDX.map(ix=>{ const t=sumIdx(MKEYS.map(tgt),ix); if(!t) return `<td class="mcelln col-tot"></td>`;
-    return `<td class="mcelln col-tot"><span class="h">${Math.round(sumIdx(MKEYS.map(k=>revs[k]),ix)/t*100)}%</span></td>`; });
-
-  // cumulative variance, resetting at each year boundary
+  const row=(label,cells,ycells,tot,cls)=>`<tr class="${cls||""}"><td class="lbl">${label}</td>`+withYearCols(cells,ycells)+`<td class="mcelln col-tot"><span class="h">${tot}</span></td></tr>`;
+  const moneyRow=(label,fn,cls,subCls)=>{
+    const cells=MONTHS.map(m=>`<td class="mcelln ${isPastMi(m.mi)?"actual":""} ${subCls||""}"><span class="h">${fn(m.key)?money0(fn(m.key)):"·"}</span></td>`);
+    const y=YIDX.map(ix=>`<td class="mcelln col-tot"><span class="h">${money0(sumIdx(MKEYS.map(fn),ix))}</span></td>`);
+    return row(label,cells,y,money0(sumK(MKEYS,fn)),cls);
+  };
+  const varRow=(label,fn)=>{
+    const cells=MONTHS.map(m=>{ const t=tgt(m.key); if(!t) return `<td class="mcelln"></td>`;
+      const d=fn(m.key)-t;
+      return `<td class="mcelln ${attCls(t,fn(m.key))}" title="${m.label}: ${money0(fn(m.key))} vs target ${money0(t)}"><span class="h">${d>=0?"+":"−"}${money0(Math.abs(d))}</span></td>`; });
+    const y=YIDX.map(ix=>{ const t=sumIdx(MKEYS.map(tgt),ix); if(!t) return `<td class="mcelln col-tot"></td>`;
+      const d=sumIdx(MKEYS.map(fn),ix)-t;
+      return `<td class="mcelln col-tot ${attCls(t,t+d)}"><span class="h">${d>=0?"+":"−"}${money0(Math.abs(d))}</span></td>`; });
+    const tT=sumK(MKEYS,tgt), tR=sumK(MKEYS,fn);
+    return row(label,cells,y, tT? `${tR-tT>=0?"+":"−"}${money0(Math.abs(tR-tT))}`:"" );
+  };
+  const attRow=(label,fn)=>{
+    const cells=MONTHS.map(m=>{ const t=tgt(m.key); if(!t) return `<td class="mcelln"></td>`;
+      return `<td class="mcelln ${attCls(t,fn(m.key))}"><span class="h">${Math.round(fn(m.key)/t*100)}%</span></td>`; });
+    const y=YIDX.map(ix=>{ const t=sumIdx(MKEYS.map(tgt),ix); if(!t) return `<td class="mcelln col-tot"></td>`;
+      return `<td class="mcelln col-tot"><span class="h">${Math.round(sumIdx(MKEYS.map(fn),ix)/t*100)}%</span></td>`; });
+    const tT=sumK(MKEYS,tgt);
+    return row(label,cells,y, tT? Math.round(sumK(MKEYS,fn)/tT*100)+"%":"" );
+  };
+  // cumulative variance on the plan basis, resetting at each year boundary
   let cum=0, curYr=null;
   const cumCells=MONTHS.map(m=>{ if(m.year!==curYr){ curYr=m.year; cum=0; }
     if(!tgt(m.key)&&!cum) return `<td class="mcelln"></td>`;
@@ -2279,20 +2341,28 @@ function renderTargets(){
     return `<td class="mcelln"><span class="h">${cum>=0?"+":"−"}${money0(Math.abs(cum))}</span></td>`; });
   const cumY=YIDX.map(()=>`<td class="mcelln col-tot"></td>`);
 
-  const totT=sumK(MKEYS,tgt), totR=sumK(MKEYS,k=>revs[k]);
-  const row=(label,cells,ycells,tot,cls)=>`<tr class="${cls||""}"><td class="lbl">${label}</td>`+withYearCols(cells,ycells)+`<td class="mcelln col-tot"><span class="h">${tot}</span></td></tr>`;
+  const totT=sumK(MKEYS,tgt);
+  const pipeRows=PIPE_BUCKETS.filter(b=>pipe.deals[b]>0)
+    .map(b=>moneyRow(`<span class="muted">· ${b} <span style="font-weight:400">(${pipe.deals[b]} deal${pipe.deals[b]===1?"":"s"})</span></span>`,k=>pipeB(b,k))).join("");
   document.getElementById("viewRoot").innerHTML=
     `<div class="panel"><div class="panel-hd"><h2>Revenue vs target</h2>`+
-    `<span class="hint">company-wide (people filters don't apply) · plan revenue = actual billable revenue for closed months, forecast hours × rates + the milestone schedule forward · targets are shared — ${ME&&ME.canTarget?"type into the target row to set them":"maintained by Tim Harris"} · on plan = ≥ 95% of target</span></div>`+
+    `<span class="hint">company-wide (people filters don't apply) · plan revenue = actual billable revenue for closed months, forecast hours × rates + the milestone schedule forward · pipeline = Odoo expected revenue of OPEN deals not yet forecasted in the plan, spread over the projected months from the expected start date (mid-month starts prorated by day) · targets are shared — ${ME&&ME.canTarget?"type into the target row to set them":"maintained by Tim Harris"} · on plan = ≥ 95% of target</span></div>`+
     `<div class="scroll"><table class="pivot">${pivotHead("Revenue")}<tbody>`+
-    row("Target",tgtCells,tgtY,money0(totT))+
-    row("Plan revenue",revCells,revY,money0(totR))+
-    row("Variance",varCells,varY, totT? `${totR-totT>=0?"+":"−"}${money0(Math.abs(totR-totT))}`:"")+
-    row("Attainment",attCells,attY, totT? Math.round(totR/totT*100)+"%":"")+
-    row("Cumulative variance <span class='muted'>· resets each year</span>",cumCells,cumY,"","grp")+
+    row("Target",tgtCells,tgtY,money0(totT),"grp")+
+    moneyRow("Plan revenue",k=>revs[k],"grp")+
+    moneyRow(`<span class="muted">· Projects</span>`,k=>split[k].prj)+
+    moneyRow(`<span class="muted">· CRM forecasts</span>`,k=>split[k].crm)+
+    moneyRow("CRM pipeline <span class='muted'>· not yet in the plan</span>",k=>pipeM(k),"grp")+
+    pipeRows+
+    varRow("Variance <span class='muted'>· plan only</span>",k=>revs[k])+
+    varRow("Variance <span class='muted'>· plan + pipeline</span>",withPipe)+
+    attRow("Attainment <span class='muted'>· plan only</span>",k=>revs[k])+
+    attRow("Attainment <span class='muted'>· plan + pipeline</span>",withPipe)+
+    row("Cumulative variance <span class='muted'>· plan only, resets each year</span>",cumCells,cumY,"","grp")+
     `</tbody></table></div>`+
     `<div class="legend"><span class="sw"><span class="box v-on"></span>on plan (≥ 95% of target)</span>`+
-    `<span class="sw"><span class="box v-under"></span>below target</span></div></div>`;
+    `<span class="sw"><span class="box v-under"></span>below target</span>`+
+    `<span>Pipeline deals already forecasted in the plan are excluded here — their revenue is inside Plan revenue · CRM forecasts.</span></div></div>`;
 }
 
 /* ==================== CRM MISMATCHES (forecast vs CRM window) ==================== */
@@ -4064,7 +4134,8 @@ async function bootstrap(){
   CAL = {};   // capacity calendar depends on holidays — rebuild after every sync
   PROJECTS = reference.projects.map(p=>({ ...p, src:"PRJ", billingType:p.billingType||"tm" }));
   CRM_PROJECTS = reference.opportunities.map(o=>({ id:"crm-"+o.id, name:o.name, client:o.client, stage:o.stage, src:"CRM", billable:true, needsProject:!!o.needsProject,
-    expectedStart:o.expectedStart||null, expectedMonths:o.expectedMonths||0, billingType:o.billingType||"tm" }));
+    expectedStart:o.expectedStart||null, expectedStartDate:o.expectedStartDate||null, expectedMonths:o.expectedMonths||0,
+    expectedRevenue:o.expectedRevenue||0, probability:o.probability||0, tags:o.tags||[], billingType:o.billingType||"tm" }));
   rebuildProjects();
   MILESTONES = (reference.milestones||[]).map(m=>({ ...m }));
   BILL_OV = reference.billingOverrides||{};

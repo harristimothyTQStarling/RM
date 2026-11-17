@@ -180,7 +180,10 @@ CREATE TABLE IF NOT EXISTS ref_opportunity (
   -- see db/schema.postgres.sql: closed opp whose forecast has no matching project yet
   needs_project INTEGER NOT NULL DEFAULT 0,
   expected_start  TEXT,                     -- CRM expected start date (YYYY-MM-DD)
-  expected_months INTEGER NOT NULL DEFAULT 0
+  expected_months INTEGER NOT NULL DEFAULT 0,
+  expected_revenue REAL NOT NULL DEFAULT 0, -- CRM expected revenue (pipeline spread)
+  probability      REAL NOT NULL DEFAULT 0,
+  tags             TEXT NOT NULL DEFAULT '' -- comma-joined CRM tag names (Commit/Expected/Upside)
 );
 
 CREATE TABLE IF NOT EXISTS ref_actual (

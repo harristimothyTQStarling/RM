@@ -231,6 +231,9 @@ CREATE TABLE IF NOT EXISTS ref_opportunity (
 ALTER TABLE ref_opportunity ADD COLUMN IF NOT EXISTS needs_project SMALLINT NOT NULL DEFAULT 0;
 ALTER TABLE ref_opportunity ADD COLUMN IF NOT EXISTS expected_start DATE;
 ALTER TABLE ref_opportunity ADD COLUMN IF NOT EXISTS expected_months INT NOT NULL DEFAULT 0;
+ALTER TABLE ref_opportunity ADD COLUMN IF NOT EXISTS expected_revenue NUMERIC(14,2) NOT NULL DEFAULT 0;
+ALTER TABLE ref_opportunity ADD COLUMN IF NOT EXISTS probability NUMERIC(5,2) NOT NULL DEFAULT 0;
+ALTER TABLE ref_opportunity ADD COLUMN IF NOT EXISTS tags VARCHAR(256) NOT NULL DEFAULT '';
 
 -- Actual timesheet hours for closed months, by person/project/month.
 -- bill_rate is the ACTUAL realized rate from Odoo: billable revenue (hours x the
