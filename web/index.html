@@ -2264,6 +2264,7 @@ function crmInPlan(jid){
    Expected / Upside). Expected revenue ÷ projected months, prorated by the
    start day: 4 months × $100k starting mid-month → 12.5 / 25 / 25 / 25 / 12.5. */
 const PIPE_BUCKETS=["Commit","Expected","Upside","Untagged"];
+let PIPE_MODE="full"; try{ PIPE_MODE=localStorage.getItem("tqs-rm-pipemode")==="weighted"?"weighted":"full"; }catch(e){}
 function tagBucket(tags){
   const t=(tags||[]).map(x=>String(x).toLowerCase());
   if(t.some(x=>x.includes("commit"))) return "Commit";
@@ -2348,28 +2349,30 @@ function renderTargets(){
   const cumY=YIDX.map(()=>`<td class="mcelln col-tot"></td>`);
 
   const totT=sumK(MKEYS,tgt);
+  // the header toggle picks the pipeline basis: full expected revenue, or × probability
+  const W=PIPE_MODE==="weighted";
+  const pB=W? pipeBW : pipeB, pM=W? pipeMW : pipeM, wP=W? withPipeW : withPipe;
+  const pipeLabel=W? "Weighted pipeline <span class='muted'>· × Odoo probability</span>" : "CRM pipeline <span class='muted'>· not yet in the plan</span>";
   const pipeRows=PIPE_BUCKETS.filter(b=>pipe.deals[b]>0)
-    .map(b=>moneyRow(`<span class="muted">· ${b} <span style="font-weight:400">(${pipe.deals[b]} deal${pipe.deals[b]===1?"":"s"})</span></span>`,k=>pipeB(b,k))).join("");
-  const pipeRowsW=PIPE_BUCKETS.filter(b=>pipe.deals[b]>0)
-    .map(b=>moneyRow(`<span class="muted">· ${b} weighted</span>`,k=>pipeBW(b,k))).join("");
+    .map(b=>moneyRow(`<span class="muted">· ${b} <span style="font-weight:400">(${pipe.deals[b]} deal${pipe.deals[b]===1?"":"s"})</span></span>`,k=>pB(b,k))).join("");
   document.getElementById("viewRoot").innerHTML=
-    `<div class="panel"><div class="panel-hd"><h2>Revenue vs target</h2>`+
+    `<div class="panel"><div class="panel-hd"><div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><h2>Revenue vs target</h2>`+
+    `<div class="seg" role="group" aria-label="Pipeline basis">`+
+      `<button type="button" data-pipemode="full" aria-pressed="${PIPE_MODE!=="weighted"}">Full pipeline</button>`+
+      `<button type="button" data-pipemode="weighted" aria-pressed="${PIPE_MODE==="weighted"}" title="Each deal's spread × its Odoo probability">Weighted</button>`+
+    `</div></div>`+
     `<span class="hint">company-wide (people filters don't apply) · plan revenue = actual billable revenue for closed months, forecast hours × rates + the milestone schedule forward · pipeline = Odoo expected revenue of OPEN deals not yet forecasted in the plan, spread over the projected months from the expected start date (mid-month starts prorated by day) · targets are shared — ${ME&&ME.canTarget?"type into the target row to set them":"maintained by Tim Harris"} · on plan = ≥ 95% of target</span></div>`+
     `<div class="scroll"><table class="pivot">${pivotHead("Revenue")}<tbody>`+
     row("Target",tgtCells,tgtY,money0(totT),"grp")+
     moneyRow("Plan revenue",k=>revs[k],"grp")+
     moneyRow(`<span class="muted">· Projects</span>`,k=>split[k].prj)+
     moneyRow(`<span class="muted">· CRM forecasts</span>`,k=>split[k].crm)+
-    moneyRow("CRM pipeline <span class='muted'>· not yet in the plan</span>",k=>pipeM(k),"grp")+
+    moneyRow(pipeLabel,k=>pM(k),"grp")+
     pipeRows+
-    moneyRow("Weighted pipeline <span class='muted'>· × Odoo probability</span>",k=>pipeMW(k),"grp")+
-    pipeRowsW+
     varRow("Variance <span class='muted'>· plan only</span>",k=>revs[k])+
-    varRow("Variance <span class='muted'>· plan + pipeline</span>",withPipe)+
-    varRow("Variance <span class='muted'>· plan + weighted pipeline</span>",withPipeW)+
+    varRow(`Variance <span class='muted'>· plan + ${W?"weighted ":""}pipeline</span>`,wP)+
     attRow("Attainment <span class='muted'>· plan only</span>",k=>revs[k])+
-    attRow("Attainment <span class='muted'>· plan + pipeline</span>",withPipe)+
-    attRow("Attainment <span class='muted'>· plan + weighted pipeline</span>",withPipeW)+
+    attRow(`Attainment <span class='muted'>· plan + ${W?"weighted ":""}pipeline</span>`,wP)+
     row("Cumulative variance <span class='muted'>· plan only, resets each year</span>",cumCells,cumY,"","grp")+
     `</tbody></table></div>`+
     `<div class="legend"><span class="sw"><span class="box v-on"></span>on plan (≥ 95% of target)</span>`+
@@ -3271,6 +3274,10 @@ document.getElementById("viewRoot").addEventListener("click",async e=>{
       .then(r=>{ toast(`Moved ${r.moved} month${r.moved===1?"":"s"} to the ${shore} pool${r.merged?` (${r.merged} merged)`:""}.`); tbaOpen.add("tbh-"+r.destKey); return bootstrap(); })
       .catch(err=>{ toast("Move failed: "+err.message); smv.disabled=false; });
     return; }
+  const pmSeg=e.target.closest("[data-pipemode]");   // Revenue vs Target: pipeline basis
+  if(pmSeg){ PIPE_MODE=pmSeg.dataset.pipemode==="weighted"?"weighted":"full";
+    try{ localStorage.setItem("tqs-rm-pipemode",PIPE_MODE); }catch(err){}
+    keepScroll(renderTargets); return; }
   const tba=e.target.closest("[data-tbaopen]");   // To Be Assigned: drill into a role pool
   if(tba){ const id=String(tba.dataset.tbaopen); if(tbaOpen.has(id)) tbaOpen.delete(id); else tbaOpen.add(id); renderHiring(); return; }
   const sh=e.target.closest("[data-shifttbh]");   // move a role pool's forecast to the assigned person
