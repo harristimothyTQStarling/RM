@@ -1247,7 +1247,7 @@ function personRow(p){
       `<div class="p-ident" data-toggle="${p.id}">`+
         `<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>`+
         `<div class="avatar" style="background:${deptColor(p.dept)}">${initials(p.name)}</div>`+
-        `<div style="min-width:0"><div class="p-name">${p.name} ${badge}${rateBadge}</div><div class="p-role">${p.role||"—"} · ${p.dept}</div></div>`+
+        `<div style="min-width:0"><div class="p-name">${esc(p.name)} ${badge}${rateBadge}</div><div class="p-role">${esc(p.role||"—")} · ${esc(p.dept)}</div></div>`+
       `</div>`+
       `<div class="mgrid p-meta">`+withYearCols(cells,yCells)+`<div class="mcell tot" data-yr="${p.id}">${yr?fmtHD0(yr,yrD):"·"}</div></div>`+
     `</div>`+
@@ -1409,7 +1409,7 @@ function renderByEmp(){
       grand+=rt; grandCap+=rcap; grandD+=rd; a.g+=rt; a.gc+=rcap; a.gd+=rd;
       const ytds=YIDX.map(ix=>hpCell(sumIdx(rT,ix),sumIdx(rC,ix),"","col-tot",null,sumIdx(rD,ix),true));
       const badge=p.type==="tbh"?" <span class='badge tbh'>TBA</span>":p.type==="contractor"?" <span class='badge contractor'>Con</span>":"";
-      body+=`<tr><td class="lbl">${p.name}${badge}<div class="muted" style="font-size:11px">${p.role||"—"}</div></td>`+withYearCols(tds,ytds)+`${hpCell(rt,rcap,"","col-tot",null,rd,true)}</tr>`;
+      body+=`<tr><td class="lbl">${esc(p.name)}${badge}<div class="muted" style="font-size:11px">${esc(p.role||"—")}</div></td>`+withYearCols(tds,ytds)+`${hpCell(rt,rcap,"","col-tot",null,rd,true)}</tr>`;
     });
   });
   const footRow=(label,a,cls)=>{ let pu=null;
