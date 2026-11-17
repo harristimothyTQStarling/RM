@@ -2272,23 +2272,26 @@ function tagBucket(tags){
   return "Untagged";
 }
 function pipelineSpread(){
-  const out={}; PIPE_BUCKETS.forEach(b=>out[b]={});
+  const out={}, outW={}; PIPE_BUCKETS.forEach(b=>{ out[b]={}; outW[b]={}; });
   const deals={}; PIPE_BUCKETS.forEach(b=>deals[b]=0);
   CRM_PROJECTS.forEach(o=>{
     if(!(o.expectedRevenue>0) || !(o.expectedMonths>0) || !o.expectedStartDate) return;
     if(crmInPlan(o.id)) return;                      // already forecasted in the plan
     const b=tagBucket(o.tags); deals[b]++;
+    const w=Math.max(0,Math.min(100,Number(o.probability)||0))/100;   // Odoo probability
     const d=new Date(o.expectedStartDate+"T00:00:00");
     const y=d.getFullYear(), mo=d.getMonth(), dim=new Date(y,mo+1,0).getDate();
     const f=(dim-d.getDate()+1)/dim;                 // fraction of the start month remaining
     const rate=o.expectedRevenue/o.expectedMonths, N=o.expectedMonths;
     const add=(i,amt)=>{ const dt=new Date(y,mo+i,1);
       const k=`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}`;
-      if(MKEYS.includes(k)) out[b][k]=(out[b][k]||0)+amt; };
+      if(!MKEYS.includes(k)) return;
+      out[b][k]=(out[b][k]||0)+amt;
+      outW[b][k]=(outW[b][k]||0)+amt*w; };
     if(f>=0.999){ for(let i=0;i<N;i++) add(i,rate); }
     else { add(0,rate*f); for(let i=1;i<N;i++) add(i,rate); add(N,rate*(1-f)); }
   });
-  return {byBucket:out, deals};
+  return {byBucket:out, byBucketW:outW, deals};
 }
 function renderTargets(){
   const tgt=k=>Number(state.targets[k])||0;
@@ -2306,8 +2309,11 @@ function renderTargets(){
   MKEYS.forEach(k=>{ revs[k]=split[k].prj+split[k].crm; });
   const pipe=pipelineSpread();
   const pipeB=(b,k)=>pipe.byBucket[b][k]||0;
+  const pipeBW=(b,k)=>pipe.byBucketW[b][k]||0;
   const pipeM=k=>PIPE_BUCKETS.reduce((s,b)=>s+pipeB(b,k),0);
+  const pipeMW=k=>PIPE_BUCKETS.reduce((s,b)=>s+pipeBW(b,k),0);
   const withPipe=k=>revs[k]+pipeM(k);
+  const withPipeW=k=>revs[k]+pipeMW(k);
 
   const row=(label,cells,ycells,tot,cls)=>`<tr class="${cls||""}"><td class="lbl">${label}</td>`+withYearCols(cells,ycells)+`<td class="mcelln col-tot"><span class="h">${tot}</span></td></tr>`;
   const moneyRow=(label,fn,cls,subCls)=>{
@@ -2344,6 +2350,8 @@ function renderTargets(){
   const totT=sumK(MKEYS,tgt);
   const pipeRows=PIPE_BUCKETS.filter(b=>pipe.deals[b]>0)
     .map(b=>moneyRow(`<span class="muted">· ${b} <span style="font-weight:400">(${pipe.deals[b]} deal${pipe.deals[b]===1?"":"s"})</span></span>`,k=>pipeB(b,k))).join("");
+  const pipeRowsW=PIPE_BUCKETS.filter(b=>pipe.deals[b]>0)
+    .map(b=>moneyRow(`<span class="muted">· ${b} weighted</span>`,k=>pipeBW(b,k))).join("");
   document.getElementById("viewRoot").innerHTML=
     `<div class="panel"><div class="panel-hd"><h2>Revenue vs target</h2>`+
     `<span class="hint">company-wide (people filters don't apply) · plan revenue = actual billable revenue for closed months, forecast hours × rates + the milestone schedule forward · pipeline = Odoo expected revenue of OPEN deals not yet forecasted in the plan, spread over the projected months from the expected start date (mid-month starts prorated by day) · targets are shared — ${ME&&ME.canTarget?"type into the target row to set them":"maintained by Tim Harris"} · on plan = ≥ 95% of target</span></div>`+
@@ -2354,10 +2362,14 @@ function renderTargets(){
     moneyRow(`<span class="muted">· CRM forecasts</span>`,k=>split[k].crm)+
     moneyRow("CRM pipeline <span class='muted'>· not yet in the plan</span>",k=>pipeM(k),"grp")+
     pipeRows+
+    moneyRow("Weighted pipeline <span class='muted'>· × Odoo probability</span>",k=>pipeMW(k),"grp")+
+    pipeRowsW+
     varRow("Variance <span class='muted'>· plan only</span>",k=>revs[k])+
     varRow("Variance <span class='muted'>· plan + pipeline</span>",withPipe)+
+    varRow("Variance <span class='muted'>· plan + weighted pipeline</span>",withPipeW)+
     attRow("Attainment <span class='muted'>· plan only</span>",k=>revs[k])+
     attRow("Attainment <span class='muted'>· plan + pipeline</span>",withPipe)+
+    attRow("Attainment <span class='muted'>· plan + weighted pipeline</span>",withPipeW)+
     row("Cumulative variance <span class='muted'>· plan only, resets each year</span>",cumCells,cumY,"","grp")+
     `</tbody></table></div>`+
     `<div class="legend"><span class="sw"><span class="box v-on"></span>on plan (≥ 95% of target)</span>`+
